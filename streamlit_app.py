@@ -2084,7 +2084,16 @@ if scan_button:
             st.session_state.raw_books_count = raw_books_count
             st.session_state.latest_filtered_events = filtered_events
             st.session_state.latest_sport_key = sport_key
-# AUTO SAVE AI PICKS
+
+    st.session_state.ai_perf_df
+)
+
+st.session_state.ai_perf_df = updated_df
+st.session_state.auto_saved_ai_count = auto_saved
+st.session_state.duplicate_ai_skipped_count = duplicates
+        except Exception as e:
+            st.error(f"Error fetching live odds: {e}")
+# AUTO SAVE AI PICKS (MUST BE OUTSIDE TRY BLOCK)
 updated_df, auto_saved, duplicates = auto_save_ai_picks_to_v8(
     filtered_events,
     sport_key,
@@ -2094,9 +2103,6 @@ updated_df, auto_saved, duplicates = auto_save_ai_picks_to_v8(
 st.session_state.ai_perf_df = updated_df
 st.session_state.auto_saved_ai_count = auto_saved
 st.session_state.duplicate_ai_skipped_count = duplicates
-        except Exception as e:
-            st.error(f"Error fetching live odds: {e}")
-
 # -----------------------------
 # TABS
 # -----------------------------

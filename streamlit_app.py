@@ -15,19 +15,16 @@ st.markdown("""
     padding-bottom: 2rem;
     max-width: 1400px;
 }
-
 .main-title {
     font-size: 2rem;
     font-weight: 800;
     margin-bottom: 0.2rem;
     color: #111827;
 }
-
 .sub-title {
     color: #475569;
     margin-bottom: 1rem;
 }
-
 .section-card {
     background: #0F172A;
     border: 1px solid #334155;
@@ -36,7 +33,6 @@ st.markdown("""
     margin-bottom: 14px;
     color: #F8FAFC;
 }
-
 .play-card {
     background: #111827;
     border: 1px solid #475569;
@@ -47,11 +43,7 @@ st.markdown("""
     line-height: 1.6;
     font-size: 0.98rem;
 }
-
-.play-card b {
-    color: #FFFFFF;
-}
-
+.play-card b { color: #FFFFFF; }
 .bet-slip {
     background: #0B1220;
     border: 2px solid #334155;
@@ -63,14 +55,12 @@ st.markdown("""
     line-height: 1.7;
     font-size: 1rem;
 }
-
 .bet-slip-title {
     font-size: 1.2rem;
     font-weight: 800;
     margin-bottom: 10px;
     color: #FFFFFF;
 }
-
 .bet-leg {
     background: #111827;
     border: 1px solid #475569;
@@ -79,7 +69,6 @@ st.markdown("""
     margin-top: 10px;
     margin-bottom: 10px;
 }
-
 .ai-card {
     background: #111827;
     border: 1px solid #475569;
@@ -89,14 +78,12 @@ st.markdown("""
     color: #F8FAFC;
     line-height: 1.6;
 }
-
 .ai-card-title {
     font-size: 1.05rem;
     font-weight: 800;
     margin-bottom: 8px;
     color: #FFFFFF;
 }
-
 .best-bet-card {
     background: #052e16;
     border: 2px solid #22c55e;
@@ -106,7 +93,6 @@ st.markdown("""
     color: #DCFCE7;
     line-height: 1.7;
 }
-
 .alert-green {
     background: #052e16;
     border: 1px solid #166534;
@@ -116,7 +102,6 @@ st.markdown("""
     margin-bottom: 10px;
     font-weight: 600;
 }
-
 .alert-yellow {
     background: #3f2f00;
     border: 1px solid #a16207;
@@ -126,7 +111,6 @@ st.markdown("""
     margin-bottom: 10px;
     font-weight: 600;
 }
-
 .alert-blue {
     background: #172554;
     border: 1px solid #1d4ed8;
@@ -136,28 +120,19 @@ st.markdown("""
     margin-bottom: 10px;
     font-weight: 600;
 }
-
 div[data-testid="stMetric"] {
     background-color: #111827;
     border: 1px solid #374151;
     padding: 14px;
     border-radius: 14px;
 }
-
-div[data-testid="stMetric"] label {
-    color: #D1D5DB !important;
-}
-
-div[data-testid="stMetric"] div {
-    color: white !important;
-}
-
+div[data-testid="stMetric"] label { color: #D1D5DB !important; }
+div[data-testid="stMetric"] div { color: white !important; }
 .stButton > button {
     border-radius: 12px;
     font-weight: 700;
     padding: 0.7rem 1rem;
 }
-
 .small-note {
     color: #CBD5E1;
     font-size: 0.9rem;
@@ -186,7 +161,7 @@ if not API_KEY:
     st.stop()
 
 # -----------------------------
-# GENERAL HELPERS
+# HELPERS
 # -----------------------------
 def american_to_decimal(odds):
     if odds is None:
@@ -195,7 +170,6 @@ def american_to_decimal(odds):
         odds = float(odds)
     except Exception:
         return None
-
     if odds > 0:
         return (odds / 100.0) + 1.0
     if odds < 0:
@@ -230,6 +204,24 @@ def clamp(value, low, high):
     return max(low, min(high, value))
 
 
+def confidence_tier(conf):
+    if conf >= 80:
+        return "💎 Elite"
+    if conf >= 70:
+        return "🟢 Strong"
+    if conf >= 60:
+        return "🟡 Medium"
+    return "🔴 Low"
+
+
+def grade_play(conf):
+    if conf >= 80:
+        return "A"
+    if conf >= 70:
+        return "B"
+    return "C"
+
+
 def calculate_arb_stakes(odds_a, odds_b, bankroll):
     dec_a = american_to_decimal(odds_a)
     dec_b = american_to_decimal(odds_b)
@@ -260,7 +252,6 @@ def fetch_odds(sport_key, regions="us", markets="h2h,spreads,totals"):
         "markets": markets,
         "oddsFormat": "american",
     }
-
     response = requests.get(url, params=params, timeout=30)
     if response.status_code != 200:
         raise Exception(f"API error {response.status_code}: {response.text}")
@@ -361,7 +352,6 @@ def build_middle_distribution(raw_mid_df):
     rows = []
     for label, mask in bins:
         rows.append({"Gap Range": label, "Count": int(mask.sum())})
-
     return pd.DataFrame(rows)
 
 
@@ -460,28 +450,8 @@ def get_tracker_summary(tracker_df):
     }
 
 # -----------------------------
-# NBA AI ENGINE V4
+# NBA AI ENGINE V5
 # -----------------------------
-def confidence_tier(conf):
-    if conf >= 80:
-        return "💎 Elite"
-    elif conf >= 70:
-        return "🟢 Strong"
-    elif conf >= 60:
-        return "🟡 Medium"
-    else:
-        return "🔴 Low"
-
-
-def grade_play(conf):
-    if conf >= 80:
-        return "A"
-    elif conf >= 70:
-        return "B"
-    else:
-        return "C"
-
-
 def extract_nba_game_features(event):
     home_team = event.get("home_team")
     away_team = event.get("away_team")
@@ -490,7 +460,6 @@ def extract_nba_game_features(event):
     away_ml_odds = []
     home_ml_probs = []
     away_ml_probs = []
-
     home_spread_points = []
     away_spread_points = []
     totals_points = []
@@ -578,7 +547,7 @@ def extract_nba_game_features(event):
     }
 
 
-def nba_stats_ai_v4(features):
+def nba_stats_ai_v5(features):
     home_team = features["home_team"]
     away_team = features["away_team"]
 
@@ -609,11 +578,6 @@ def nba_stats_ai_v4(features):
             total_pick = f"Lean Pass / Slight Under {round(total_line, 1)}"
         total_conf = clamp(round(52 + features["totals_strength"] * 0.9, 1), 50, 85)
 
-    reason = (
-        f"Home strength score {features['home_strength_score']} vs away strength score {features['away_strength_score']}. "
-        f"Form gap is {features['form_gap']:+.2f}. Pace factor is {features['pace_factor']:+.2f}."
-    )
-
     return {
         "name": "Stats AI",
         "ml_pick": ml_pick,
@@ -622,11 +586,14 @@ def nba_stats_ai_v4(features):
         "ml_confidence": ml_conf,
         "spread_confidence": spread_conf,
         "total_confidence": total_conf,
-        "reason": reason,
+        "reason": (
+            f"Home strength {features['home_strength_score']} vs away strength {features['away_strength_score']}. "
+            f"Form gap {features['form_gap']:+.2f}. Pace factor {features['pace_factor']:+.2f}."
+        ),
     }
 
 
-def nba_matchup_ai_v4(features):
+def nba_matchup_ai_v5(features):
     home_team = features["home_team"]
     away_team = features["away_team"]
 
@@ -661,10 +628,6 @@ def nba_matchup_ai_v4(features):
             total_pick = f"Lean Under {round(total_line, 1)}"
         total_conf = clamp(round(52 + abs(features["pace_factor"]) * 4.5, 1), 50, 83)
 
-    reason = (
-        f"Matchup edge is {matchup_edge:+.2f}. This model adds home-court context and uses pace for totals."
-    )
-
     return {
         "name": "Matchup AI",
         "ml_pick": ml_pick,
@@ -673,11 +636,14 @@ def nba_matchup_ai_v4(features):
         "ml_confidence": ml_conf,
         "spread_confidence": spread_conf,
         "total_confidence": total_conf,
-        "reason": reason,
+        "reason": (
+            f"Matchup edge {matchup_edge:+.2f}. Home-court/context bump applied. "
+            f"Pace factor {features['pace_factor']:+.2f}."
+        ),
     }
 
 
-def nba_market_ai_v4(features):
+def nba_market_ai_v5(features):
     home_team = features["home_team"]
     away_team = features["away_team"]
 
@@ -728,12 +694,6 @@ def nba_market_ai_v4(features):
             total_pick = f"Lean Pass {round(features['consensus_total'], 1)}"
             total_conf = 52
 
-    reason = (
-        f"Market value model compares consensus against best prices. "
-        f"ML value home={round(home_value, 4) if home_value is not None else 'N/A'}, "
-        f"away={round(away_value, 4) if away_value is not None else 'N/A'}."
-    )
-
     return {
         "name": "Market AI",
         "ml_pick": ml_pick,
@@ -742,11 +702,15 @@ def nba_market_ai_v4(features):
         "ml_confidence": ml_conf,
         "spread_confidence": spread_conf,
         "total_confidence": total_conf,
-        "reason": reason,
+        "reason": (
+            f"Market value compares consensus against best prices. "
+            f"ML value home={round(home_value, 4) if home_value is not None else 'N/A'}, "
+            f"away={round(away_value, 4) if away_value is not None else 'N/A'}."
+        ),
     }
 
 
-def nba_risk_ai_v4(features):
+def nba_risk_ai_v5(features):
     risk_score = 0
     if features["books_count"] < 5:
         risk_score += 2
@@ -767,32 +731,20 @@ def nba_risk_ai_v4(features):
         risk_level = "High"
         confidence_adj = -10
 
-    reason = (
-        f"Books sampled: {features['books_count']}. "
-        f"ML std: {round(features['home_prob_std'], 3)}. "
-        f"Spread std: {round(features['spread_std'], 2)}. "
-        f"Total std: {round(features['total_std'], 2)}. "
-        f"Risk level: {risk_level}."
-    )
-
     return {
         "name": "Risk AI",
         "risk_level": risk_level,
         "confidence_adjustment": confidence_adj,
-        "reason": reason,
+        "reason": (
+            f"Books {features['books_count']}. "
+            f"ML std {round(features['home_prob_std'], 3)}. "
+            f"Spread std {round(features['spread_std'], 2)}. "
+            f"Total std {round(features['total_std'], 2)}."
+        ),
     }
 
 
-def parse_team_from_pick(pick_text, home_team, away_team):
-    if isinstance(pick_text, str):
-        if home_team in pick_text:
-            return home_team
-        if away_team in pick_text:
-            return away_team
-    return None
-
-
-def nba_final_ai_v4(features, stats_ai, matchup_ai, market_ai, risk_ai):
+def nba_final_ai_v5(features, stats_ai, matchup_ai, market_ai, risk_ai):
     home_team = features["home_team"]
     away_team = features["away_team"]
 
@@ -855,12 +807,31 @@ def nba_final_ai_v4(features, stats_ai, matchup_ai, market_ai, risk_ai):
         ),
     }
 
+
+def run_nba_ai_engine_v5(event):
+    features = extract_nba_game_features(event)
+    stats_ai = nba_stats_ai_v5(features)
+    matchup_ai = nba_matchup_ai_v5(features)
+    market_ai = nba_market_ai_v5(features)
+    risk_ai = nba_risk_ai_v5(features)
+    final_ai = nba_final_ai_v5(features, stats_ai, matchup_ai, market_ai, risk_ai)
+
+    return {
+        "features": features,
+        "stats_ai": stats_ai,
+        "matchup_ai": matchup_ai,
+        "market_ai": market_ai,
+        "risk_ai": risk_ai,
+        "final_ai": final_ai,
+    }
+
+
 def build_nba_v5_ranking_board(events):
     rows = []
 
     for event in events:
         try:
-            result = run_nba_ai_engine_v4(event)
+            result = run_nba_ai_engine_v5(event)
             final_ai = result["final_ai"]
             features = result["features"]
             best_bet = final_ai["best_bet"]
@@ -884,11 +855,7 @@ def build_nba_v5_ranking_board(events):
 
     board = pd.DataFrame(rows)
     if not board.empty:
-        board = board.sort_values(
-            by=["engine_score", "confidence"],
-            ascending=[False, False]
-        ).reset_index(drop=True)
-
+        board = board.sort_values(by=["engine_score", "confidence"], ascending=[False, False]).reset_index(drop=True)
     return board
 
 
@@ -896,43 +863,12 @@ def get_nba_v5_top_plays(board_df):
     if board_df.empty:
         return None, None, None, None
 
-    best_overall = board_df.sort_values(
-        by=["engine_score", "confidence"],
-        ascending=[False, False]
-    ).iloc[0]
-
-    best_ml = board_df.sort_values(
-        by=["ml_conf", "engine_score"],
-        ascending=[False, False]
-    ).iloc[0]
-
-    best_spread = board_df.sort_values(
-        by=["spread_conf", "engine_score"],
-        ascending=[False, False]
-    ).iloc[0]
-
-    best_total = board_df.sort_values(
-        by=["total_conf", "engine_score"],
-        ascending=[False, False]
-    ).iloc[0]
+    best_overall = board_df.sort_values(by=["engine_score", "confidence"], ascending=[False, False]).iloc[0]
+    best_ml = board_df.sort_values(by=["ml_conf", "engine_score"], ascending=[False, False]).iloc[0]
+    best_spread = board_df.sort_values(by=["spread_conf", "engine_score"], ascending=[False, False]).iloc[0]
+    best_total = board_df.sort_values(by=["total_conf", "engine_score"], ascending=[False, False]).iloc[0]
 
     return best_overall, best_ml, best_spread, best_total
-def run_nba_ai_engine_v4(event):
-    features = extract_nba_game_features(event)
-    stats_ai = nba_stats_ai_v4(features)
-    matchup_ai = nba_matchup_ai_v4(features)
-    market_ai = nba_market_ai_v4(features)
-    risk_ai = nba_risk_ai_v4(features)
-    final_ai = nba_final_ai_v4(features, stats_ai, matchup_ai, market_ai, risk_ai)
-
-    return {
-        "features": features,
-        "stats_ai": stats_ai,
-        "matchup_ai": matchup_ai,
-        "market_ai": market_ai,
-        "risk_ai": risk_ai,
-        "final_ai": final_ai,
-    }
 
 # -----------------------------
 # UI RENDER HELPERS
@@ -1146,7 +1082,6 @@ def detect_arbitrage(events, bankroll, min_profit=0.0, min_profit_dollars=0.0, m
 
                 p1 = implied_prob_from_american(home_offer["odds"])
                 p2 = implied_prob_from_american(away_offer["odds"])
-
                 if p1 is None or p2 is None:
                     continue
 
@@ -1223,8 +1158,7 @@ def detect_spread_middles(
             away_data = spreads.get(away_team)
 
             if (
-                home_data
-                and away_data
+                home_data and away_data
                 and home_data.get("point") is not None
                 and away_data.get("point") is not None
             ):
@@ -1569,7 +1503,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "Middle Plays",
     "Arbitrage Plays",
     "Bet Tracker",
-    "NBA AI Engine V4"
+    "NBA AI Engine V5"
 ])
 
 with tab1:
@@ -1630,6 +1564,8 @@ with tab1:
                 st.info("No middle gap distribution available for this scan.")
 
             st.success(f"Found {len(final_df)} opportunity rows.")
+        else:
+            st.warning("No live opportunities found with the current settings and selected sportsbooks.")
     else:
         st.info("Run a scan to populate the dashboard.")
 
@@ -1655,10 +1591,7 @@ with tab2:
 
             display_mid_df = mid_df[middle_display_columns].reset_index(drop=True)
             st.success(f"Found {len(display_mid_df)} middle rows.")
-            st.dataframe(
-                display_mid_df.style.apply(highlight_rows, axis=1),
-                use_container_width=True,
-            )
+            st.dataframe(display_mid_df.style.apply(highlight_rows, axis=1), use_container_width=True)
 
             st.markdown("### Middle Gap Distribution")
             if not distribution_df.empty:
@@ -1684,10 +1617,7 @@ with tab3:
 
             display_arb_df = arb_df[arb_display_columns].reset_index(drop=True)
             st.success(f"Found {len(display_arb_df)} arbitrage rows.")
-            st.dataframe(
-                display_arb_df.style.apply(highlight_rows, axis=1),
-                use_container_width=True,
-            )
+            st.dataframe(display_arb_df.style.apply(highlight_rows, axis=1), use_container_width=True)
         else:
             st.warning("No arbitrage plays found for the current scan.")
     else:
@@ -1763,7 +1693,7 @@ with tab4:
         st.dataframe(st.session_state.tracker_df[tracker_display_columns], use_container_width=True)
 
 with tab5:
-    st.subheader("NBA AI Engine V4")
+    st.subheader("NBA AI Engine V5")
 
     if not st.session_state.scan_complete:
         st.info("Run a scan first so the NBA AI Engine has games to analyze.")
@@ -1775,6 +1705,74 @@ with tab5:
         if not nba_events:
             st.warning("No NBA games are currently available in the latest scan.")
         else:
+            ranking_board = build_nba_v5_ranking_board(nba_events)
+
+            st.markdown("### NBA Slate Ranking Board")
+            if not ranking_board.empty:
+                st.dataframe(ranking_board, use_container_width=True)
+
+                best_overall, best_ml, best_spread, best_total = get_nba_v5_top_plays(ranking_board)
+
+                st.markdown("### Top Overall Plays Across NBA Slate")
+
+                c1, c2, c3, c4 = st.columns(4)
+                with c1:
+                    st.markdown(
+                        f"""
+                        <div class="best-bet-card">
+                            <b>Best Overall Play</b><br>
+                            <b>Game:</b> {best_overall['game']}<br>
+                            <b>Type:</b> {best_overall['best_bet_type']}<br>
+                            <b>Pick:</b> {best_overall['best_pick']}<br>
+                            <b>Confidence:</b> {best_overall['confidence']} ({confidence_tier(best_overall['confidence'])})<br>
+                            <b>Grade:</b> {best_overall['grade']}<br>
+                            <b>Engine Score:</b> {best_overall['engine_score']}
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
+
+                with c2:
+                    st.markdown(
+                        f"""
+                        <div class="ai-card">
+                            <div class="ai-card-title">Best Moneyline</div>
+                            <div><b>Game:</b> {best_ml['game']}</div>
+                            <div><b>Pick:</b> {best_ml['ml_pick']}</div>
+                            <div><b>Confidence:</b> {best_ml['ml_conf']} ({confidence_tier(best_ml['ml_conf'])})</div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
+
+                with c3:
+                    st.markdown(
+                        f"""
+                        <div class="ai-card">
+                            <div class="ai-card-title">Best Spread</div>
+                            <div><b>Game:</b> {best_spread['game']}</div>
+                            <div><b>Pick:</b> {best_spread['spread_pick']}</div>
+                            <div><b>Confidence:</b> {best_spread['spread_conf']} ({confidence_tier(best_spread['spread_conf'])})</div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
+
+                with c4:
+                    st.markdown(
+                        f"""
+                        <div class="ai-card">
+                            <div class="ai-card-title">Best Total</div>
+                            <div><b>Game:</b> {best_total['game']}</div>
+                            <div><b>Pick:</b> {best_total['total_pick']}</div>
+                            <div><b>Confidence:</b> {best_total['total_conf']} ({confidence_tier(best_total['total_conf'])})</div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
+            else:
+                st.info("No ranking board available for the current scan.")
+
             nba_game_labels = [
                 f"{event.get('away_team')} @ {event.get('home_team')}"
                 for event in nba_events
@@ -1784,7 +1782,7 @@ with tab5:
             selected_game_index = nba_game_labels.index(selected_game_label)
             selected_event = nba_events[selected_game_index]
 
-            ai_results = run_nba_ai_engine_v4(selected_event)
+            ai_results = run_nba_ai_engine_v5(selected_event)
             features = ai_results["features"]
             stats_ai = ai_results["stats_ai"]
             matchup_ai = ai_results["matchup_ai"]
@@ -1802,13 +1800,24 @@ with tab5:
             st.markdown(
                 f"""
                 <div class="best-bet-card">
-                    <b>Best Bet:</b> {best_bet['type']}<br>
+                    <b>Selected Game Best Bet:</b> {best_bet['type']}<br>
                     <b>Pick:</b> {best_bet['pick']}<br>
                     <b>Confidence:</b> {best_bet['confidence']} ({confidence_tier(best_bet['confidence'])})<br>
                     <b>Grade:</b> {best_bet['grade']}
                 </div>
                 """,
                 unsafe_allow_html=True
+            )
+
+            render_ai_card(
+                "Final Scorecards",
+                [
+                    f"<b>Moneyline:</b> {final_ai['ml']['pick']} | {final_ai['ml']['confidence']} | {final_ai['ml']['tier']}",
+                    f"<b>Spread:</b> {final_ai['spread']['pick']} | {final_ai['spread']['confidence']} | {final_ai['spread']['tier']}",
+                    f"<b>Total:</b> {final_ai['total']['pick']} | {final_ai['total']['confidence']} | {final_ai['total']['tier']}",
+                    f"<b>Engine Score:</b> {final_ai['final_score']}",
+                    f"<b>Summary:</b> {final_ai['summary_reason']}",
+                ]
             )
 
             render_ai_card(
@@ -1847,17 +1856,6 @@ with tab5:
                     f"<b>Risk Level:</b> {risk_ai['risk_level']}",
                     f"<b>Confidence Adjustment:</b> {risk_ai['confidence_adjustment']}",
                     f"<b>Reason:</b> {risk_ai['reason']}",
-                ]
-            )
-
-            render_ai_card(
-                "Final AI Consensus",
-                [
-                    f"<b>Final ML:</b> {final_ai['ml']['pick']} ({final_ai['ml']['confidence']}) {final_ai['ml']['tier']}",
-                    f"<b>Final Spread:</b> {final_ai['spread']['pick']} ({final_ai['spread']['confidence']}) {final_ai['spread']['tier']}",
-                    f"<b>Final Total:</b> {final_ai['total']['pick']} ({final_ai['total']['confidence']}) {final_ai['total']['tier']}",
-                    f"<b>Engine Score:</b> {final_ai['final_score']}",
-                    f"<b>Summary:</b> {final_ai['summary_reason']}",
                 ]
             )
 

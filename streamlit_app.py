@@ -2,10 +2,13 @@ import streamlit as st
 import pandas as pd
 import os
 
+st.set_page_config(page_title="Sports AI Betting Dashboard", layout="wide")
+
 st.title("Sports AI Betting Dashboard")
 
 file_path = "Bet_log.csv"
 
+# Load CSV
 if os.path.exists(file_path):
     df = pd.read_csv(file_path)
     st.success("Data loaded successfully.")
@@ -31,8 +34,10 @@ def prepare_data(df):
     missing_cols = [col for col in required_cols if col not in df.columns]
     if missing_cols:
         st.error(f"Missing required columns in CSV: {missing_cols}")
+        st.write("Columns found in CSV:", list(df.columns))
         st.stop()
 
+    # Standardize fields for detection logic
     df["game_id"] = (
         df["date"].astype(str)
         + " | "
@@ -41,7 +46,7 @@ def prepare_data(df):
         + df["away_team"].astype(str)
     )
 
-    df["team"] = df["pick"].astype(str)
+    df["team"] = df["pick"].astype(str).str.strip()
     df["market"] = df["bet_type"].astype(str).str.lower().str.strip()
     df["point"] = pd.to_numeric(df["line"], errors="coerce")
     df["odds"] = pd.to_numeric(df["odds"], errors="coerce")
@@ -55,14 +60,15 @@ def american_to_decimal(odds):
 
     try:
         odds = float(odds)
-    except:
+    except Exception:
         return None
 
     if odds > 0:
         return (odds / 100) + 1
     elif odds < 0:
         return (100 / abs(odds)) + 1
-    return None
+    else:
+        return None
 
 
 def detect_opportunities(df):
@@ -79,7 +85,7 @@ def detect_opportunities(df):
                 dec_a = american_to_decimal(row_a["odds"])
                 dec_b = american_to_decimal(row_b["odds"])
 
-                # Arbitrage
+                # Arbitrage check
                 if (
                     row_a["team"] != row_b["team"]
                     and dec_a is not None
@@ -103,9 +109,10 @@ def detect_opportunities(df):
                                 "bet_b": row_b["team"],
                                 "book_b": row_b["bookmaker"],
                                 "odds_b": row_b["odds"],
+                                "spread": None,
                             })
 
-                # Middle
+                # Middle check
                 if (
                     row_a["team"] != row_b["team"]
                     and row_a["market"] == "spread"
@@ -117,6 +124,7 @@ def detect_opportunities(df):
                         opportunities.append({
                             "type": "Middle",
                             "game": game,
+                            "profit_%": None,
                             "bet_a": row_a["team"],
                             "book_a": row_a["bookmaker"],
                             "odds_a": row_a["odds"],
@@ -129,6 +137,15 @@ def detect_opportunities(df):
     return pd.DataFrame(opportunities)
 
 
+def highlight_rows(row):
+    if row["type"] == "Arbitrage":
+        return ["background-color: #90EE90"] * len(row)  # light green
+    elif row["type"] == "Middle":
+        return ["background-color: #FFFACD"] * len(row)  # light yellow
+    return [""] * len(row)
+
+
+# Prepare and scan data
 clean_df = prepare_data(df)
 opps = detect_opportunities(clean_df)
 
@@ -137,4 +154,17 @@ st.subheader("Detected Opportunities")
 if opps.empty:
     st.warning("No strong opportunities found in this CSV.")
 else:
-    st.dataframe(opps)
+    st.success(f"Found {len(opps)} opportunity rows.")
+
+    arb_rows = opps[opps["type"] == "Arbitrage"].copy()
+    middle_rows = opps[opps["type"] == "Middle"].copy()
+
+    if not arb_rows.empty:
+        arb_rows = arb_rows.sort_values(by="profit_%", ascending=False)
+
+    final_df = pd.concat([arb_rows, middle_rows], ignore_index=True)
+
+    st.dataframe(
+        final_df.style.apply(highlight_rows, axis=1),
+        use_container_width=True
+    )

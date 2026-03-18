@@ -855,7 +855,68 @@ def nba_final_ai_v4(features, stats_ai, matchup_ai, market_ai, risk_ai):
         ),
     }
 
+def build_nba_v5_ranking_board(events):
+    rows = []
 
+    for event in events:
+        try:
+            result = run_nba_ai_engine_v4(event)
+            final_ai = result["final_ai"]
+            features = result["features"]
+            best_bet = final_ai["best_bet"]
+
+            rows.append({
+                "game": f"{features['away_team']} @ {features['home_team']}",
+                "best_bet_type": best_bet["type"],
+                "best_pick": best_bet["pick"],
+                "confidence": best_bet["confidence"],
+                "grade": best_bet["grade"],
+                "ml_pick": final_ai["ml"]["pick"],
+                "ml_conf": final_ai["ml"]["confidence"],
+                "spread_pick": final_ai["spread"]["pick"],
+                "spread_conf": final_ai["spread"]["confidence"],
+                "total_pick": final_ai["total"]["pick"],
+                "total_conf": final_ai["total"]["confidence"],
+                "engine_score": final_ai["final_score"],
+            })
+        except Exception:
+            continue
+
+    board = pd.DataFrame(rows)
+    if not board.empty:
+        board = board.sort_values(
+            by=["engine_score", "confidence"],
+            ascending=[False, False]
+        ).reset_index(drop=True)
+
+    return board
+
+
+def get_nba_v5_top_plays(board_df):
+    if board_df.empty:
+        return None, None, None, None
+
+    best_overall = board_df.sort_values(
+        by=["engine_score", "confidence"],
+        ascending=[False, False]
+    ).iloc[0]
+
+    best_ml = board_df.sort_values(
+        by=["ml_conf", "engine_score"],
+        ascending=[False, False]
+    ).iloc[0]
+
+    best_spread = board_df.sort_values(
+        by=["spread_conf", "engine_score"],
+        ascending=[False, False]
+    ).iloc[0]
+
+    best_total = board_df.sort_values(
+        by=["total_conf", "engine_score"],
+        ascending=[False, False]
+    ).iloc[0]
+
+    return best_overall, best_ml, best_spread, best_total
 def run_nba_ai_engine_v4(event):
     features = extract_nba_game_features(event)
     stats_ai = nba_stats_ai_v4(features)

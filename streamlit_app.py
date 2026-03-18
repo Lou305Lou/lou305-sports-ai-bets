@@ -2093,7 +2093,7 @@ st.session_state.auto_saved_ai_count = auto_saved
 st.session_state.duplicate_ai_skipped_count = duplicates
         except Exception as e:
             st.error(f"Error fetching live odds: {e}")
-# AUTO SAVE AI PICKS (MUST BE OUTSIDE TRY BLOCK)
+# AUTO SAVE AI PICKS (OUTSIDE TRY BLOCK)
 updated_df, auto_saved, duplicates = auto_save_ai_picks_to_v8(
     filtered_events,
     sport_key,

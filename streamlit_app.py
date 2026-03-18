@@ -211,10 +211,10 @@ def score_middle_row(middle_gap, odds_a, odds_b):
     return round(score, 2)
 
 
-def classify_middle_strength(gap):
-    if gap >= 4:
+def classify_middle_strength(gap, medium_threshold, strong_threshold):
+    if gap >= strong_threshold:
         return "Strong"
-    if gap >= 2:
+    if gap >= medium_threshold:
         return "Medium"
     return "Weak"
 
@@ -322,6 +322,8 @@ def detect_spread_middles(
     middle_edge_pct=2.0,
     middle_kelly_bankroll=500.0,
     kelly_multiplier=0.5,
+    medium_threshold=1.5,
+    strong_threshold=3.0,
 ):
     rows = []
 
@@ -367,7 +369,7 @@ def detect_spread_middles(
                 home_gap = a["home_point"] - b["home_point"]
                 if home_gap >= min_gap:
                     gap = round(home_gap, 2)
-                    strength = classify_middle_strength(gap)
+                    strength = classify_middle_strength(gap, medium_threshold, strong_threshold)
                     score = score_middle_row(gap, a["home_price"], b["away_price"])
 
                     rows.append({
@@ -394,7 +396,7 @@ def detect_spread_middles(
                 away_gap = a["away_point"] - b["away_point"]
                 if away_gap >= min_gap:
                     gap = round(away_gap, 2)
-                    strength = classify_middle_strength(gap)
+                    strength = classify_middle_strength(gap, medium_threshold, strong_threshold)
                     score = score_middle_row(gap, a["away_price"], b["home_price"])
 
                     rows.append({
@@ -500,6 +502,28 @@ with col10:
 with col11:
     middle_kelly_bankroll = st.number_input("Middle Kelly Bankroll ($)", min_value=1.0, value=500.0, step=25.0)
 
+col12, col13 = st.columns(2)
+
+with col12:
+    medium_threshold = st.number_input(
+        "Medium Middle Threshold",
+        min_value=0.5,
+        value=1.5,
+        step=0.5
+    )
+
+with col13:
+    strong_threshold = st.number_input(
+        "Strong Middle Threshold",
+        min_value=0.5,
+        value=3.0,
+        step=0.5
+    )
+
+if strong_threshold <= medium_threshold:
+    st.warning("Strong Middle Threshold must be greater than Medium Middle Threshold.")
+    st.stop()
+
 kelly_mode = st.selectbox("Kelly Mode", ["Quarter Kelly", "Half Kelly", "Full Kelly"], index=1)
 
 if kelly_mode == "Quarter Kelly":
@@ -588,6 +612,8 @@ if scan_button:
                     middle_edge_pct=middle_edge_pct,
                     middle_kelly_bankroll=middle_kelly_bankroll,
                     kelly_multiplier=kelly_multiplier,
+                    medium_threshold=medium_threshold,
+                    strong_threshold=strong_threshold,
                 )
 
                 mid_df = raw_mid_df.copy()
@@ -692,8 +718,8 @@ with tab2:
         mid_df = st.session_state.mid_df
 
         if len(raw_mid_df) > 0 and len(mid_df) == 0 and middle_focus_mode:
-            st.warning("Middle Focus Mode is ON, and all current middle plays were Weak, so none are being shown.")
-            st.info("Turn off Middle Focus Mode and scan again to view all middle plays.")
+            st.warning("Middle Focus Mode is ON, and all current middle plays were below your Medium threshold.")
+            st.info("Lower the Medium Middle Threshold or turn off Middle Focus Mode and scan again.")
 
         elif not mid_df.empty:
             if middle_focus_mode:

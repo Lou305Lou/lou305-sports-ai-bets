@@ -1,0 +1,1379 @@
+date,sport,home_team,away_team,bet_type,pick,bookmaker,odds,confidence,stake,result,profit,line
+2026-03-17,basketball_nba,Los Angeles Lakers,Denver Nuggets,moneyline,Los Angeles Lakers,DraftKings,130,4/5,100,Win,130.0,
+2026-03-17,icehockey_nhl,Boston Bruins,New York Rangers,moneyline,Boston Bruins,FanDuel,-120,5/5,100,Loss,-100.0,
+2026-03-17,soccer_epl,Arsenal,Chelsea,moneyline,Arsenal,BetMGM,145,3/5,100,Win,145.0,
+2026-03-17,basketball_nba,Washington Wizards,Detroit Pistons,moneyline,Washington Wizards,FanDuel,1100,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Washington Wizards,Detroit Pistons,moneyline,Washington Wizards,Bovada,950,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Washington Wizards,Detroit Pistons,moneyline,Washington Wizards,DraftKings,950,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Washington Wizards,Detroit Pistons,moneyline,Washington Wizards,LowVig.ag,950,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Washington Wizards,Detroit Pistons,moneyline,Washington Wizards,BetOnline.ag,910,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Washington Wizards,Detroit Pistons,moneyline,Washington Wizards,BetUS,900,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Washington Wizards,Detroit Pistons,moneyline,Washington Wizards,BetMGM,900,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Washington Wizards,Detroit Pistons,moneyline,Washington Wizards,BetRivers,900,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Washington Wizards,Detroit Pistons,moneyline,Washington Wizards,MyBookie.ag,877,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Arsenal,Bournemouth,moneyline,Bournemouth,LowVig.ag,900,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Arsenal,Bournemouth,moneyline,Bournemouth,BetOnline.ag,900,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Arsenal,Bournemouth,moneyline,Bournemouth,Bovada,825,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Arsenal,Bournemouth,moneyline,Bournemouth,BetRivers,800,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Sacramento Kings,San Antonio Spurs,moneyline,Sacramento Kings,FanDuel,640,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Arsenal,Bournemouth,moneyline,Bournemouth,DraftKings,750,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Sacramento Kings,San Antonio Spurs,moneyline,Sacramento Kings,LowVig.ag,606,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Sacramento Kings,San Antonio Spurs,moneyline,Sacramento Kings,BetMGM,600,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Sacramento Kings,San Antonio Spurs,moneyline,Sacramento Kings,DraftKings,600,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Arsenal,Bournemouth,moneyline,Bournemouth,FanDuel,700,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Sacramento Kings,San Antonio Spurs,moneyline,Sacramento Kings,BetOnline.ag,588,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Sacramento Kings,San Antonio Spurs,moneyline,Sacramento Kings,BetUS,585,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Sacramento Kings,San Antonio Spurs,moneyline,Sacramento Kings,BetRivers,575,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,New York Knicks,Indiana Pacers,moneyline,Indiana Pacers,FanDuel,660,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,New York Knicks,Indiana Pacers,moneyline,Indiana Pacers,BetMGM,650,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Arsenal,Bournemouth,moneyline,Bournemouth,MyBookie.ag,650,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,New York Knicks,Indiana Pacers,moneyline,Indiana Pacers,MyBookie.ag,645,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Sacramento Kings,San Antonio Spurs,moneyline,Sacramento Kings,MyBookie.ag,544,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,New York Knicks,Indiana Pacers,moneyline,Indiana Pacers,DraftKings,625,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Denver Nuggets,Philadelphia 76ers,moneyline,Philadelphia 76ers,FanDuel,810,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Sacramento Kings,San Antonio Spurs,moneyline,Sacramento Kings,Bovada,525,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Denver Nuggets,Philadelphia 76ers,moneyline,Philadelphia 76ers,LowVig.ag,781,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,New York Knicks,Indiana Pacers,moneyline,Indiana Pacers,Bovada,600,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,New York Knicks,Indiana Pacers,moneyline,Indiana Pacers,BetUS,600,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Denver Nuggets,Philadelphia 76ers,moneyline,Philadelphia 76ers,BetOnline.ag,754,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Denver Nuggets,Philadelphia 76ers,moneyline,Philadelphia 76ers,BetMGM,750,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Denver Nuggets,Philadelphia 76ers,moneyline,Philadelphia 76ers,BetUS,750,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Denver Nuggets,Philadelphia 76ers,moneyline,Philadelphia 76ers,DraftKings,750,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Denver Nuggets,Philadelphia 76ers,moneyline,Philadelphia 76ers,Bovada,700,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Denver Nuggets,Philadelphia 76ers,moneyline,Philadelphia 76ers,MyBookie.ag,694,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,New York Knicks,Indiana Pacers,moneyline,Indiana Pacers,BetRivers,525,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Fulham,Burnley,moneyline,Burnley,BetRivers,525,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Denver Nuggets,Philadelphia 76ers,moneyline,Philadelphia 76ers,BetRivers,650,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Fulham,Burnley,moneyline,Burnley,LowVig.ag,510,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Fulham,Burnley,moneyline,Burnley,BetOnline.ag,510,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Fulham,Burnley,moneyline,Burnley,BetMGM,500,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Liverpool,Fulham,moneyline,Fulham,BetOnline.ag,495,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Liverpool,Fulham,moneyline,Fulham,LowVig.ag,495,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Fulham,Burnley,moneyline,Burnley,FanDuel,490,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Liverpool,Fulham,moneyline,Fulham,BetRivers,480,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Liverpool,Fulham,moneyline,Fulham,FanDuel,480,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Liverpool,Fulham,moneyline,Fulham,Bovada,475,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Fulham,Burnley,moneyline,Burnley,BetUS,475,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Fulham,Burnley,moneyline,Burnley,DraftKings,475,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Manchester United,Leeds United,moneyline,Leeds United,LowVig.ag,475,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Fulham,Burnley,moneyline,Burnley,Bovada,475,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Manchester United,Leeds United,moneyline,Leeds United,BetOnline.ag,475,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Fulham,Burnley,moneyline,Burnley,MyBookie.ag,460,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Liverpool,Fulham,moneyline,Fulham,DraftKings,450,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Manchester United,Leeds United,moneyline,Leeds United,Bovada,440,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Manchester United,Leeds United,moneyline,Leeds United,BetRivers,440,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Manchester United,Leeds United,moneyline,Leeds United,FanDuel,440,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Newcastle United,Sunderland,moneyline,Sunderland,LowVig.ag,434,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Newcastle United,Sunderland,moneyline,Sunderland,BetOnline.ag,434,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Newcastle United,Sunderland,moneyline,Sunderland,BetRivers,430,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Newcastle United,Sunderland,moneyline,Sunderland,FanDuel,430,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Newcastle United,Sunderland,moneyline,Sunderland,BetUS,425,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Newcastle United,Sunderland,moneyline,Sunderland,Bovada,425,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Newcastle United,Sunderland,moneyline,Sunderland,DraftKings,425,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Milwaukee Bucks,Cleveland Cavaliers,moneyline,Milwaukee Bucks,BetUS,375,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Liverpool,Fulham,moneyline,Fulham,MyBookie.ag,420,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Milwaukee Bucks,Cleveland Cavaliers,moneyline,Milwaukee Bucks,LowVig.ag,374,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Milwaukee Bucks,Cleveland Cavaliers,moneyline,Milwaukee Bucks,BetOnline.ag,367,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Orlando Magic,Oklahoma City Thunder,moneyline,Orlando Magic,LowVig.ag,360,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Orlando Magic,Oklahoma City Thunder,moneyline,Orlando Magic,BetUS,360,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Orlando Magic,Oklahoma City Thunder,moneyline,Orlando Magic,BetMGM,360,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Milwaukee Bucks,Cleveland Cavaliers,moneyline,Milwaukee Bucks,DraftKings,360,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Milwaukee Bucks,Cleveland Cavaliers,moneyline,Milwaukee Bucks,BetMGM,360,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Manchester United,Leeds United,moneyline,Leeds United,DraftKings,400,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Manchester United,Leeds United,moneyline,Leeds United,MyBookie.ag,400,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Newcastle United,Sunderland,moneyline,Sunderland,BetMGM,400,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Orlando Magic,Oklahoma City Thunder,moneyline,Orlando Magic,BetOnline.ag,354,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Orlando Magic,Oklahoma City Thunder,moneyline,Orlando Magic,DraftKings,350,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Milwaukee Bucks,Cleveland Cavaliers,moneyline,Milwaukee Bucks,FanDuel,350,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Orlando Magic,Oklahoma City Thunder,moneyline,Orlando Magic,FanDuel,350,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Newcastle United,Sunderland,moneyline,Sunderland,MyBookie.ag,390,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Milwaukee Bucks,Cleveland Cavaliers,moneyline,Milwaukee Bucks,MyBookie.ag,347,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Milwaukee Bucks,Cleveland Cavaliers,moneyline,Milwaukee Bucks,BetRivers,340,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Milwaukee Bucks,Cleveland Cavaliers,moneyline,Milwaukee Bucks,Bovada,340,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,West Ham United,Wolverhampton Wanderers,moneyline,Wolverhampton Wanderers,BetOnline.ag,375,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,West Ham United,Wolverhampton Wanderers,moneyline,Wolverhampton Wanderers,LowVig.ag,375,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Orlando Magic,Oklahoma City Thunder,moneyline,Orlando Magic,MyBookie.ag,324,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Burnley,Brighton and Hove Albion,moneyline,Burnley,BetRivers,320,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Orlando Magic,Oklahoma City Thunder,moneyline,Orlando Magic,Bovada,320,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Burnley,Brighton and Hove Albion,moneyline,Burnley,LowVig.ag,320,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Burnley,Brighton and Hove Albion,moneyline,Burnley,BetOnline.ag,320,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Burnley,Brighton and Hove Albion,moneyline,Burnley,FanDuel,320,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Burnley,Brighton and Hove Albion,moneyline,Burnley,Bovada,310,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,West Ham United,Wolverhampton Wanderers,moneyline,Wolverhampton Wanderers,BetRivers,340,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,West Ham United,Wolverhampton Wanderers,moneyline,Wolverhampton Wanderers,Bovada,340,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Orlando Magic,Oklahoma City Thunder,moneyline,Orlando Magic,BetRivers,300,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Burnley,Brighton and Hove Albion,moneyline,Burnley,MyBookie.ag,300,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Burnley,Brighton and Hove Albion,moneyline,Burnley,DraftKings,300,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,West Ham United,Wolverhampton Wanderers,moneyline,Wolverhampton Wanderers,DraftKings,320,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,West Ham United,Wolverhampton Wanderers,moneyline,Wolverhampton Wanderers,MyBookie.ag,310,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,West Ham United,Wolverhampton Wanderers,moneyline,Wolverhampton Wanderers,FanDuel,310,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Aston Villa,West Ham United,moneyline,West Ham United,LowVig.ag,307,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Aston Villa,West Ham United,moneyline,West Ham United,BetOnline.ag,307,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Aston Villa,West Ham United,moneyline,West Ham United,Bovada,305,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Aston Villa,West Ham United,moneyline,West Ham United,BetUS,305,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Aston Villa,West Ham United,moneyline,West Ham United,BetRivers,295,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Everton,Chelsea,moneyline,Everton,LowVig.ag,263,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Everton,Chelsea,moneyline,Everton,BetOnline.ag,263,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Everton,Chelsea,moneyline,Everton,BetMGM,260,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Aston Villa,West Ham United,moneyline,West Ham United,FanDuel,280,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Aston Villa,West Ham United,moneyline,West Ham United,DraftKings,280,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Everton,Chelsea,moneyline,Everton,BetUS,255,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Everton,Chelsea,moneyline,Everton,BetRivers,255,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Everton,Chelsea,moneyline,Everton,Bovada,255,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Aston Villa,West Ham United,moneyline,West Ham United,BetMGM,275,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Everton,Chelsea,moneyline,Everton,DraftKings,250,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Everton,Chelsea,moneyline,Everton,FanDuel,240,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Brentford,Everton,moneyline,Everton,BetOnline.ag,260,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Aston Villa,West Ham United,moneyline,West Ham United,MyBookie.ag,260,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Brentford,Everton,moneyline,Everton,LowVig.ag,260,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Everton,Chelsea,moneyline,Everton,MyBookie.ag,234,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Brentford,Everton,moneyline,Everton,Bovada,250,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Brentford,Everton,moneyline,Everton,BetRivers,245,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Brentford,Everton,moneyline,Everton,DraftKings,245,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Bournemouth,Manchester United,moneyline,Bournemouth,LowVig.ag,221,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Bournemouth,Manchester United,moneyline,Bournemouth,BetOnline.ag,221,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Brentford,Everton,moneyline,Everton,FanDuel,240,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Brentford,Everton,moneyline,Everton,MyBookie.ag,238,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Bournemouth,Manchester United,moneyline,Bournemouth,BetUS,215,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Bournemouth,Manchester United,moneyline,Bournemouth,Bovada,215,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Brighton and Hove Albion,Liverpool,moneyline,Brighton and Hove Albion,Bovada,212,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Brighton and Hove Albion,Liverpool,moneyline,Brighton and Hove Albion,BetUS,212,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Brighton and Hove Albion,Liverpool,moneyline,Brighton and Hove Albion,BetRivers,210,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Bournemouth,Manchester United,moneyline,Bournemouth,DraftKings,210,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Bournemouth,Manchester United,moneyline,Bournemouth,BetMGM,210,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Bournemouth,Manchester United,moneyline,Bournemouth,MyBookie.ag,210,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Bournemouth,Manchester United,moneyline,Bournemouth,FanDuel,210,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Brighton and Hove Albion,Liverpool,moneyline,Brighton and Hove Albion,BetOnline.ag,208,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Brighton and Hove Albion,Liverpool,moneyline,Brighton and Hove Albion,LowVig.ag,208,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Bournemouth,Manchester United,moneyline,Bournemouth,BetRivers,205,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Brighton and Hove Albion,Liverpool,moneyline,Brighton and Hove Albion,DraftKings,205,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Brighton and Hove Albion,Liverpool,moneyline,Brighton and Hove Albion,BetMGM,200,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Brighton and Hove Albion,Liverpool,moneyline,Brighton and Hove Albion,FanDuel,200,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Brighton and Hove Albion,Liverpool,moneyline,Brighton and Hove Albion,MyBookie.ag,197,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Crystal Palace,Newcastle United,moneyline,Crystal Palace,LowVig.ag,188,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Crystal Palace,Newcastle United,moneyline,Crystal Palace,BetOnline.ag,188,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Crystal Palace,Newcastle United,moneyline,Crystal Palace,Bovada,180,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Tottenham Hotspur,Nottingham Forest,moneyline,Nottingham Forest,FanDuel,190,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Crystal Palace,Newcastle United,moneyline,Crystal Palace,DraftKings,175,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Sunderland,Tottenham Hotspur,moneyline,Sunderland,FanDuel,175,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Chelsea,Manchester City,moneyline,Chelsea,BetOnline.ag,173,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Chelsea,Manchester City,moneyline,Chelsea,LowVig.ag,173,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Leeds United,Brentford,moneyline,Brentford,BetOnline.ag,187,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Leeds United,Brentford,moneyline,Brentford,LowVig.ag,187,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Crystal Palace,Newcastle United,moneyline,Crystal Palace,MyBookie.ag,171,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Tottenham Hotspur,Nottingham Forest,moneyline,Nottingham Forest,Bovada,185,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Leeds United,Brentford,moneyline,Brentford,FanDuel,185,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Tottenham Hotspur,Nottingham Forest,moneyline,Nottingham Forest,BetUS,185,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Sunderland,Tottenham Hotspur,moneyline,Sunderland,LowVig.ag,170,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Sunderland,Tottenham Hotspur,moneyline,Sunderland,DraftKings,170,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Crystal Palace,Newcastle United,moneyline,Crystal Palace,BetRivers,170,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Crystal Palace,Newcastle United,moneyline,Crystal Palace,FanDuel,170,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Sunderland,Tottenham Hotspur,moneyline,Sunderland,BetRivers,170,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Chelsea,Manchester City,moneyline,Chelsea,FanDuel,170,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Sunderland,Tottenham Hotspur,moneyline,Sunderland,BetOnline.ag,170,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Nottingham Forest,Aston Villa,moneyline,Aston Villa,LowVig.ag,183,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Nottingham Forest,Aston Villa,moneyline,Aston Villa,BetOnline.ag,183,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Leeds United,Brentford,moneyline,Brentford,Bovada,183,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Leeds United,Brentford,moneyline,Brentford,BetUS,183,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Chelsea,Manchester City,moneyline,Chelsea,Bovada,167,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Sunderland,Tottenham Hotspur,moneyline,Sunderland,MyBookie.ag,167,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Leeds United,Brentford,moneyline,Brentford,BetRivers,180,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Tottenham Hotspur,Nottingham Forest,moneyline,Nottingham Forest,BetOnline.ag,180,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Tottenham Hotspur,Nottingham Forest,moneyline,Nottingham Forest,BetRivers,180,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Tottenham Hotspur,Nottingham Forest,moneyline,Nottingham Forest,LowVig.ag,180,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Tottenham Hotspur,Nottingham Forest,moneyline,Nottingham Forest,DraftKings,180,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Leeds United,Brentford,moneyline,Brentford,DraftKings,180,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Chelsea,Manchester City,moneyline,Chelsea,MyBookie.ag,166,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Chelsea,Manchester City,moneyline,Chelsea,BetRivers,165,5/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Seattle Kraken,Tampa Bay Lightning,moneyline,Seattle Kraken,BetRivers,165,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Chelsea,Manchester City,moneyline,Chelsea,DraftKings,165,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Sunderland,Tottenham Hotspur,moneyline,Sunderland,Bovada,165,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Nottingham Forest,Aston Villa,moneyline,Aston Villa,Bovada,176,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Nottingham Forest,Aston Villa,moneyline,Nottingham Forest,LowVig.ag,162,5/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Seattle Kraken,Tampa Bay Lightning,moneyline,Seattle Kraken,BetOnline.ag,162,5/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Seattle Kraken,Tampa Bay Lightning,moneyline,Seattle Kraken,LowVig.ag,162,5/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Seattle Kraken,Tampa Bay Lightning,moneyline,Seattle Kraken,FanDuel,162,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Nottingham Forest,Aston Villa,moneyline,Nottingham Forest,BetOnline.ag,162,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Leeds United,Brentford,moneyline,Brentford,BetMGM,175,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Tottenham Hotspur,Nottingham Forest,moneyline,Nottingham Forest,MyBookie.ag,175,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Nottingham Forest,Aston Villa,moneyline,Aston Villa,DraftKings,175,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Nottingham Forest,Aston Villa,moneyline,Aston Villa,FanDuel,175,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Tottenham Hotspur,Nottingham Forest,moneyline,Nottingham Forest,BetMGM,175,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Nottingham Forest,Aston Villa,moneyline,Aston Villa,BetRivers,175,5/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Seattle Kraken,Tampa Bay Lightning,moneyline,Seattle Kraken,DraftKings,160,5/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Seattle Kraken,Tampa Bay Lightning,moneyline,Seattle Kraken,Bovada,160,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Leeds United,Brentford,moneyline,Brentford,MyBookie.ag,173,5/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Seattle Kraken,Tampa Bay Lightning,moneyline,Seattle Kraken,BetUS,159,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Nottingham Forest,Aston Villa,moneyline,Aston Villa,MyBookie.ag,170,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Nottingham Forest,Aston Villa,moneyline,Nottingham Forest,Bovada,157,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Charlotte Hornets,Miami Heat,moneyline,Miami Heat,LowVig.ag,152,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Tottenham Hotspur,Nottingham Forest,moneyline,Tottenham Hotspur,BetOnline.ag,155,5/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Seattle Kraken,Tampa Bay Lightning,moneyline,Seattle Kraken,BetMGM,155,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Tottenham Hotspur,Nottingham Forest,moneyline,Tottenham Hotspur,LowVig.ag,155,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Charlotte Hornets,Miami Heat,moneyline,Miami Heat,BetOnline.ag,151,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Charlotte Hornets,Miami Heat,moneyline,Miami Heat,Bovada,150,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Charlotte Hornets,Miami Heat,moneyline,Miami Heat,DraftKings,150,5/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Seattle Kraken,Tampa Bay Lightning,moneyline,Seattle Kraken,MyBookie.ag,153,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Sunderland,Tottenham Hotspur,moneyline,Tottenham Hotspur,LowVig.ag,165,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Sunderland,Tottenham Hotspur,moneyline,Tottenham Hotspur,BetOnline.ag,165,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Leeds United,Brentford,moneyline,Leeds United,LowVig.ag,151,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Leeds United,Brentford,moneyline,Leeds United,BetOnline.ag,151,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Nottingham Forest,Aston Villa,moneyline,Nottingham Forest,DraftKings,150,5/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Chicago Blackhawks,Minnesota Wild,moneyline,Chicago Blackhawks,BetRivers,150,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Nottingham Forest,Aston Villa,moneyline,Nottingham Forest,BetRivers,150,5/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Chicago Blackhawks,Minnesota Wild,moneyline,Chicago Blackhawks,BetUS,150,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Leeds United,Brentford,moneyline,Leeds United,BetMGM,150,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Tottenham Hotspur,Nottingham Forest,moneyline,Tottenham Hotspur,BetMGM,150,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Charlotte Hornets,Miami Heat,moneyline,Miami Heat,BetUS,146,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Charlotte Hornets,Miami Heat,moneyline,Miami Heat,FanDuel,146,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Sunderland,Tottenham Hotspur,moneyline,Tottenham Hotspur,Bovada,161,5/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Chicago Blackhawks,Minnesota Wild,moneyline,Chicago Blackhawks,BetOnline.ag,149,5/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Chicago Blackhawks,Minnesota Wild,moneyline,Chicago Blackhawks,LowVig.ag,149,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Charlotte Hornets,Miami Heat,moneyline,Miami Heat,BetMGM,145,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Charlotte Hornets,Miami Heat,moneyline,Miami Heat,MyBookie.ag,145,5/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Carolina Hurricanes,Pittsburgh Penguins,moneyline,Pittsburgh Penguins,BetRivers,160,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Tottenham Hotspur,Nottingham Forest,moneyline,Tottenham Hotspur,Bovada,148,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Leeds United,Brentford,moneyline,Leeds United,BetRivers,148,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Tottenham Hotspur,Nottingham Forest,moneyline,Tottenham Hotspur,BetUS,148,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Tottenham Hotspur,Nottingham Forest,moneyline,Tottenham Hotspur,BetRivers,148,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Nottingham Forest,Aston Villa,moneyline,Nottingham Forest,MyBookie.ag,147,5/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Chicago Blackhawks,Minnesota Wild,moneyline,Chicago Blackhawks,FanDuel,146,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Leeds United,Brentford,moneyline,Leeds United,Bovada,146,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Leeds United,Brentford,moneyline,Leeds United,BetUS,146,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Tottenham Hotspur,Nottingham Forest,moneyline,Tottenham Hotspur,DraftKings,145,5/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Chicago Blackhawks,Minnesota Wild,moneyline,Chicago Blackhawks,DraftKings,145,5/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Chicago Blackhawks,Minnesota Wild,moneyline,Chicago Blackhawks,BetMGM,145,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Nottingham Forest,Aston Villa,moneyline,Nottingham Forest,FanDuel,145,5/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Chicago Blackhawks,Minnesota Wild,moneyline,Chicago Blackhawks,Bovada,145,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Leeds United,Brentford,moneyline,Leeds United,FanDuel,145,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Leeds United,Brentford,moneyline,Leeds United,DraftKings,145,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Leeds United,Brentford,moneyline,Leeds United,MyBookie.ag,141,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Tottenham Hotspur,Nottingham Forest,moneyline,Tottenham Hotspur,MyBookie.ag,141,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Tottenham Hotspur,Nottingham Forest,moneyline,Tottenham Hotspur,FanDuel,140,5/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Edmonton Oilers,San Jose Sharks,moneyline,San Jose Sharks,BetRivers,150,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Sunderland,Tottenham Hotspur,moneyline,Tottenham Hotspur,MyBookie.ag,150,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Sunderland,Tottenham Hotspur,moneyline,Tottenham Hotspur,DraftKings,150,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Crystal Palace,Newcastle United,moneyline,Newcastle United,LowVig.ag,150,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Sunderland,Tottenham Hotspur,moneyline,Tottenham Hotspur,FanDuel,150,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Crystal Palace,Newcastle United,moneyline,Newcastle United,BetOnline.ag,150,5/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Carolina Hurricanes,Pittsburgh Penguins,moneyline,Pittsburgh Penguins,FanDuel,150,5/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Chicago Blackhawks,Minnesota Wild,moneyline,Chicago Blackhawks,MyBookie.ag,139,5/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Charlotte Hornets,Miami Heat,moneyline,Miami Heat,BetRivers,135,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Sunderland,Tottenham Hotspur,moneyline,Tottenham Hotspur,BetRivers,148,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Crystal Palace,Newcastle United,moneyline,Newcastle United,Bovada,146,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Crystal Palace,Newcastle United,moneyline,Newcastle United,BetRivers,145,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Crystal Palace,Newcastle United,moneyline,Newcastle United,FanDuel,145,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Crystal Palace,Newcastle United,moneyline,Newcastle United,DraftKings,145,5/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Edmonton Oilers,San Jose Sharks,moneyline,San Jose Sharks,DraftKings,145,5/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Edmonton Oilers,San Jose Sharks,moneyline,San Jose Sharks,LowVig.ag,145,5/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Edmonton Oilers,San Jose Sharks,moneyline,San Jose Sharks,BetOnline.ag,145,5/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Edmonton Oilers,San Jose Sharks,moneyline,San Jose Sharks,BetMGM,145,5/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Chelsea,Manchester City,moneyline,Manchester City,LowVig.ag,142,4/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Edmonton Oilers,San Jose Sharks,moneyline,San Jose Sharks,Bovada,142,4/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Crystal Palace,Newcastle United,moneyline,Newcastle United,MyBookie.ag,142,4/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Carolina Hurricanes,Pittsburgh Penguins,moneyline,Pittsburgh Penguins,DraftKings,142,4/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Edmonton Oilers,San Jose Sharks,moneyline,San Jose Sharks,BetUS,142,4/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Chelsea,Manchester City,moneyline,Manchester City,BetOnline.ag,142,4/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Vancouver Canucks,Florida Panthers,moneyline,Vancouver Canucks,DraftKings,130,4/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Vancouver Canucks,Florida Panthers,moneyline,Vancouver Canucks,Bovada,130,4/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Vancouver Canucks,Florida Panthers,moneyline,Vancouver Canucks,LowVig.ag,130,4/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Vancouver Canucks,Florida Panthers,moneyline,Vancouver Canucks,BetOnline.ag,130,4/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Edmonton Oilers,San Jose Sharks,moneyline,San Jose Sharks,FanDuel,140,4/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Minnesota Timberwolves,Phoenix Suns,moneyline,Phoenix Suns,Bovada,140,4/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Montréal Canadiens,Boston Bruins,moneyline,Boston Bruins,BetRivers,140,4/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Minnesota Timberwolves,Phoenix Suns,moneyline,Phoenix Suns,LowVig.ag,140,4/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Vancouver Canucks,Florida Panthers,moneyline,Vancouver Canucks,BetUS,129,4/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Minnesota Timberwolves,Phoenix Suns,moneyline,Phoenix Suns,BetOnline.ag,139,4/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Colorado Avalanche,Dallas Stars,moneyline,Dallas Stars,BetRivers,138,4/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Minnesota Timberwolves,Phoenix Suns,moneyline,Phoenix Suns,BetUS,138,4/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Edmonton Oilers,San Jose Sharks,moneyline,San Jose Sharks,MyBookie.ag,138,4/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Chelsea,Manchester City,moneyline,Manchester City,BetRivers,138,4/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Montréal Canadiens,Boston Bruins,moneyline,Boston Bruins,BetUS,138,4/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Vancouver Canucks,Florida Panthers,moneyline,Vancouver Canucks,BetRivers,128,4/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Montréal Canadiens,Boston Bruins,moneyline,Boston Bruins,Bovada,137,4/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Chelsea,Manchester City,moneyline,Manchester City,Bovada,137,4/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Montréal Canadiens,Boston Bruins,moneyline,Boston Bruins,BetOnline.ag,136,4/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Colorado Avalanche,Dallas Stars,moneyline,Dallas Stars,FanDuel,136,4/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Colorado Avalanche,Dallas Stars,moneyline,Dallas Stars,DraftKings,136,4/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Montréal Canadiens,Boston Bruins,moneyline,Boston Bruins,LowVig.ag,136,4/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Minnesota Timberwolves,Phoenix Suns,moneyline,Phoenix Suns,MyBookie.ag,135,4/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Chelsea,Manchester City,moneyline,Manchester City,FanDuel,135,4/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Minnesota Timberwolves,Phoenix Suns,moneyline,Phoenix Suns,BetMGM,135,4/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Montréal Canadiens,Boston Bruins,moneyline,Boston Bruins,BetMGM,135,4/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Chelsea,Manchester City,moneyline,Manchester City,DraftKings,135,4/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Vancouver Canucks,Florida Panthers,moneyline,Vancouver Canucks,FanDuel,125,4/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Vancouver Canucks,Florida Panthers,moneyline,Vancouver Canucks,BetMGM,125,4/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Toronto Maple Leafs,New York Islanders,moneyline,Toronto Maple Leafs,BetUS,125,4/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Chelsea,Manchester City,moneyline,Manchester City,MyBookie.ag,134,4/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Montréal Canadiens,Boston Bruins,moneyline,Boston Bruins,FanDuel,134,4/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Minnesota Timberwolves,Phoenix Suns,moneyline,Phoenix Suns,FanDuel,134,4/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Minnesota Timberwolves,Phoenix Suns,moneyline,Phoenix Suns,BetRivers,132,4/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Toronto Maple Leafs,New York Islanders,moneyline,Toronto Maple Leafs,FanDuel,122,4/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Toronto Maple Leafs,New York Islanders,moneyline,Toronto Maple Leafs,Bovada,122,4/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Montréal Canadiens,Boston Bruins,moneyline,Boston Bruins,MyBookie.ag,131,4/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Toronto Maple Leafs,New York Islanders,moneyline,Toronto Maple Leafs,BetOnline.ag,121,4/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Toronto Maple Leafs,New York Islanders,moneyline,Toronto Maple Leafs,LowVig.ag,121,4/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Minnesota Timberwolves,Phoenix Suns,moneyline,Phoenix Suns,DraftKings,130,4/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Montréal Canadiens,Boston Bruins,moneyline,Boston Bruins,DraftKings,130,4/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Brighton and Hove Albion,Liverpool,moneyline,Liverpool,LowVig.ag,130,4/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Anaheim Ducks,Philadelphia Flyers,moneyline,Philadelphia Flyers,DraftKings,130,4/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Anaheim Ducks,Philadelphia Flyers,moneyline,Philadelphia Flyers,FanDuel,130,4/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Brighton and Hove Albion,Liverpool,moneyline,Liverpool,BetOnline.ag,130,4/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Toronto Maple Leafs,New York Islanders,moneyline,Toronto Maple Leafs,DraftKings,120,4/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Brentford,Everton,moneyline,Brentford,BetOnline.ag,120,4/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Brentford,Everton,moneyline,Brentford,LowVig.ag,120,4/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Toronto Maple Leafs,New York Islanders,moneyline,Toronto Maple Leafs,BetMGM,120,4/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Vancouver Canucks,Florida Panthers,moneyline,Vancouver Canucks,MyBookie.ag,119,4/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Anaheim Ducks,Philadelphia Flyers,moneyline,Philadelphia Flyers,BetRivers,128,4/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Brentford,Everton,moneyline,Brentford,Bovada,117,3/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Toronto Maple Leafs,New York Islanders,moneyline,Toronto Maple Leafs,BetRivers,116,3/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Columbus Blue Jackets,Carolina Hurricanes,moneyline,Columbus Blue Jackets,BetUS,115,3/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Columbus Blue Jackets,Carolina Hurricanes,moneyline,Columbus Blue Jackets,FanDuel,115,3/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Brentford,Everton,moneyline,Brentford,DraftKings,115,3/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Columbus Blue Jackets,Carolina Hurricanes,moneyline,Columbus Blue Jackets,BetRivers,114,3/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Columbus Blue Jackets,Carolina Hurricanes,moneyline,Columbus Blue Jackets,DraftKings,114,3/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Columbus Blue Jackets,Carolina Hurricanes,moneyline,Columbus Blue Jackets,BetOnline.ag,113,3/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Columbus Blue Jackets,Carolina Hurricanes,moneyline,Columbus Blue Jackets,LowVig.ag,113,3/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Columbus Blue Jackets,Carolina Hurricanes,moneyline,Columbus Blue Jackets,Bovada,112,3/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Toronto Maple Leafs,New York Islanders,moneyline,Toronto Maple Leafs,MyBookie.ag,112,3/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Brentford,Everton,moneyline,Brentford,MyBookie.ag,112,3/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Brentford,Everton,moneyline,Brentford,BetRivers,112,3/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Brighton and Hove Albion,Liverpool,moneyline,Liverpool,BetMGM,120,3/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Brighton and Hove Albion,Liverpool,moneyline,Liverpool,DraftKings,120,3/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Brighton and Hove Albion,Liverpool,moneyline,Liverpool,FanDuel,120,3/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Brighton and Hove Albion,Liverpool,moneyline,Liverpool,MyBookie.ag,119,3/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Columbus Blue Jackets,Carolina Hurricanes,moneyline,Columbus Blue Jackets,BetMGM,110,3/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Brentford,Everton,moneyline,Brentford,FanDuel,110,3/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Columbus Blue Jackets,Carolina Hurricanes,moneyline,Columbus Blue Jackets,MyBookie.ag,110,3/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Brighton and Hove Albion,Liverpool,moneyline,Liverpool,Bovada,118,3/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Brighton and Hove Albion,Liverpool,moneyline,Liverpool,BetRivers,118,3/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Brighton and Hove Albion,Liverpool,moneyline,Liverpool,BetUS,118,3/5,100,Pending,0.0,
+2026-03-17,icehockey_nhl,Winnipeg Jets,Nashville Predators,moneyline,Nashville Predators,BetRivers,118,3/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Bournemouth,Manchester United,moneyline,Manchester United,BetOnline.ag,118,3/5,100,Pending,0.0,
+2026-03-17,soccer_epl,Bournemouth,Manchester United,moneyline,Manchester United,LowVig.ag,118,3/5,100,Pending,0.0,
+2026-03-17,basketball_nba,Charlotte Hornets,Miami Heat,spread,Charlotte Hornets,FanDuel,-106,3/5,100,Pending,0.0,-4.0
+2026-03-17,basketball_nba,Charlotte Hornets,Miami Heat,spread,Miami Heat,FanDuel,-114,3/5,100,Pending,0.0,4.0
+2026-03-17,basketball_nba,Charlotte Hornets,Miami Heat,spread,Charlotte Hornets,DraftKings,-112,3/5,100,Pending,0.0,-3.5
+2026-03-17,basketball_nba,Charlotte Hornets,Miami Heat,spread,Miami Heat,DraftKings,-108,3/5,100,Pending,0.0,3.5
+2026-03-17,basketball_nba,Charlotte Hornets,Miami Heat,spread,Charlotte Hornets,MyBookie.ag,-110,3/5,100,Pending,0.0,-4.0
+2026-03-17,basketball_nba,Charlotte Hornets,Miami Heat,spread,Miami Heat,MyBookie.ag,-110,3/5,100,Pending,0.0,4.0
+2026-03-17,basketball_nba,Charlotte Hornets,Miami Heat,spread,Charlotte Hornets,BetRivers,-110,3/5,100,Pending,0.0,-4.0
+2026-03-17,basketball_nba,Charlotte Hornets,Miami Heat,spread,Miami Heat,BetRivers,-113,3/5,100,Pending,0.0,4.0
+2026-03-17,basketball_nba,Charlotte Hornets,Miami Heat,spread,Charlotte Hornets,LowVig.ag,-106,3/5,100,Pending,0.0,-4.0
+2026-03-17,basketball_nba,Charlotte Hornets,Miami Heat,spread,Miami Heat,LowVig.ag,-106,3/5,100,Pending,0.0,4.0
+2026-03-17,basketball_nba,Charlotte Hornets,Miami Heat,spread,Charlotte Hornets,BetOnline.ag,-110,3/5,100,Pending,0.0,-4.0
+2026-03-17,basketball_nba,Charlotte Hornets,Miami Heat,spread,Miami Heat,BetOnline.ag,-110,3/5,100,Pending,0.0,4.0
+2026-03-17,basketball_nba,Charlotte Hornets,Miami Heat,spread,Charlotte Hornets,BetUS,-110,3/5,100,Pending,0.0,-4.0
+2026-03-17,basketball_nba,Charlotte Hornets,Miami Heat,spread,Miami Heat,BetUS,-110,3/5,100,Pending,0.0,4.0
+2026-03-17,basketball_nba,Charlotte Hornets,Miami Heat,spread,Charlotte Hornets,BetMGM,-115,3/5,100,Pending,0.0,-3.5
+2026-03-17,basketball_nba,Charlotte Hornets,Miami Heat,spread,Miami Heat,BetMGM,-105,3/5,100,Pending,0.0,3.5
+2026-03-17,basketball_nba,Charlotte Hornets,Miami Heat,spread,Charlotte Hornets,Bovada,-115,3/5,100,Pending,0.0,-4.0
+2026-03-17,basketball_nba,Charlotte Hornets,Miami Heat,spread,Miami Heat,Bovada,-105,3/5,100,Pending,0.0,4.0
+2026-03-17,basketball_nba,Washington Wizards,Detroit Pistons,spread,Detroit Pistons,FanDuel,-114,3/5,100,Pending,0.0,-17.5
+2026-03-17,basketball_nba,Washington Wizards,Detroit Pistons,spread,Washington Wizards,FanDuel,-106,3/5,100,Pending,0.0,17.5
+2026-03-17,basketball_nba,Washington Wizards,Detroit Pistons,spread,Detroit Pistons,BetOnline.ag,-113,3/5,100,Pending,0.0,-18.0
+2026-03-17,basketball_nba,Washington Wizards,Detroit Pistons,spread,Washington Wizards,BetOnline.ag,-107,3/5,100,Pending,0.0,18.0
+2026-03-17,basketball_nba,Washington Wizards,Detroit Pistons,spread,Detroit Pistons,BetUS,-110,3/5,100,Pending,0.0,-18.0
+2026-03-17,basketball_nba,Washington Wizards,Detroit Pistons,spread,Washington Wizards,BetUS,-110,3/5,100,Pending,0.0,18.0
+2026-03-17,basketball_nba,Washington Wizards,Detroit Pistons,spread,Detroit Pistons,LowVig.ag,-109,3/5,100,Pending,0.0,-18.0
+2026-03-17,basketball_nba,Washington Wizards,Detroit Pistons,spread,Washington Wizards,LowVig.ag,-103,3/5,100,Pending,0.0,18.0
+2026-03-17,basketball_nba,Washington Wizards,Detroit Pistons,spread,Detroit Pistons,DraftKings,-105,3/5,100,Pending,0.0,-18.5
+2026-03-17,basketball_nba,Washington Wizards,Detroit Pistons,spread,Washington Wizards,DraftKings,-115,3/5,100,Pending,0.0,18.5
+2026-03-17,basketball_nba,Washington Wizards,Detroit Pistons,spread,Detroit Pistons,BetMGM,-105,3/5,100,Pending,0.0,-18.5
+2026-03-17,basketball_nba,Washington Wizards,Detroit Pistons,spread,Washington Wizards,BetMGM,-115,3/5,100,Pending,0.0,18.5
+2026-03-17,basketball_nba,Washington Wizards,Detroit Pistons,spread,Detroit Pistons,BetRivers,-113,3/5,100,Pending,0.0,-18.0
+2026-03-17,basketball_nba,Washington Wizards,Detroit Pistons,spread,Washington Wizards,BetRivers,-110,3/5,100,Pending,0.0,18.0
+2026-03-17,basketball_nba,Washington Wizards,Detroit Pistons,spread,Detroit Pistons,MyBookie.ag,-110,3/5,100,Pending,0.0,-18.0
+2026-03-17,basketball_nba,Washington Wizards,Detroit Pistons,spread,Washington Wizards,MyBookie.ag,-110,3/5,100,Pending,0.0,18.0
+2026-03-17,basketball_nba,Washington Wizards,Detroit Pistons,spread,Detroit Pistons,Bovada,-110,3/5,100,Pending,0.0,-18.0
+2026-03-17,basketball_nba,Washington Wizards,Detroit Pistons,spread,Washington Wizards,Bovada,-110,3/5,100,Pending,0.0,18.0
+2026-03-17,basketball_nba,Orlando Magic,Oklahoma City Thunder,spread,Oklahoma City Thunder,FanDuel,-108,3/5,100,Pending,0.0,-10.0
+2026-03-17,basketball_nba,Orlando Magic,Oklahoma City Thunder,spread,Orlando Magic,FanDuel,-112,3/5,100,Pending,0.0,10.0
+2026-03-17,basketball_nba,Orlando Magic,Oklahoma City Thunder,spread,Oklahoma City Thunder,LowVig.ag,-104,3/5,100,Pending,0.0,-10.0
+2026-03-17,basketball_nba,Orlando Magic,Oklahoma City Thunder,spread,Orlando Magic,LowVig.ag,-108,3/5,100,Pending,0.0,10.0
+2026-03-17,basketball_nba,Orlando Magic,Oklahoma City Thunder,spread,Oklahoma City Thunder,BetOnline.ag,-108,3/5,100,Pending,0.0,-10.0
+2026-03-17,basketball_nba,Orlando Magic,Oklahoma City Thunder,spread,Orlando Magic,BetOnline.ag,-112,3/5,100,Pending,0.0,10.0
+2026-03-17,basketball_nba,Orlando Magic,Oklahoma City Thunder,spread,Oklahoma City Thunder,DraftKings,-115,3/5,100,Pending,0.0,-9.5
+2026-03-17,basketball_nba,Orlando Magic,Oklahoma City Thunder,spread,Orlando Magic,DraftKings,-105,3/5,100,Pending,0.0,9.5
+2026-03-17,basketball_nba,Orlando Magic,Oklahoma City Thunder,spread,Oklahoma City Thunder,BetUS,-110,3/5,100,Pending,0.0,-10.0
+2026-03-17,basketball_nba,Orlando Magic,Oklahoma City Thunder,spread,Orlando Magic,BetUS,-110,3/5,100,Pending,0.0,10.0
+2026-03-17,basketball_nba,Orlando Magic,Oklahoma City Thunder,spread,Oklahoma City Thunder,BetRivers,-112,3/5,100,Pending,0.0,-9.5
+2026-03-17,basketball_nba,Orlando Magic,Oklahoma City Thunder,spread,Orlando Magic,BetRivers,-112,3/5,100,Pending,0.0,9.5
+2026-03-17,basketball_nba,Orlando Magic,Oklahoma City Thunder,spread,Oklahoma City Thunder,Bovada,-110,3/5,100,Pending,0.0,-10.0
+2026-03-17,basketball_nba,Orlando Magic,Oklahoma City Thunder,spread,Orlando Magic,Bovada,-110,3/5,100,Pending,0.0,10.0
+2026-03-17,basketball_nba,Orlando Magic,Oklahoma City Thunder,spread,Oklahoma City Thunder,MyBookie.ag,-110,3/5,100,Pending,0.0,-9.5
+2026-03-17,basketball_nba,Orlando Magic,Oklahoma City Thunder,spread,Orlando Magic,MyBookie.ag,-110,3/5,100,Pending,0.0,9.5
+2026-03-17,basketball_nba,Orlando Magic,Oklahoma City Thunder,spread,Oklahoma City Thunder,BetMGM,-115,3/5,100,Pending,0.0,-9.5
+2026-03-17,basketball_nba,Orlando Magic,Oklahoma City Thunder,spread,Orlando Magic,BetMGM,-105,3/5,100,Pending,0.0,9.5
+2026-03-17,basketball_nba,New York Knicks,Indiana Pacers,spread,Indiana Pacers,FanDuel,-110,3/5,100,Pending,0.0,14.5
+2026-03-17,basketball_nba,New York Knicks,Indiana Pacers,spread,New York Knicks,FanDuel,-110,3/5,100,Pending,0.0,-14.5
+2026-03-17,basketball_nba,New York Knicks,Indiana Pacers,spread,Indiana Pacers,MyBookie.ag,-110,3/5,100,Pending,0.0,15.0
+2026-03-17,basketball_nba,New York Knicks,Indiana Pacers,spread,New York Knicks,MyBookie.ag,-110,3/5,100,Pending,0.0,-15.0
+2026-03-17,basketball_nba,New York Knicks,Indiana Pacers,spread,Indiana Pacers,DraftKings,-115,3/5,100,Pending,0.0,15.5
+2026-03-17,basketball_nba,New York Knicks,Indiana Pacers,spread,New York Knicks,DraftKings,-105,3/5,100,Pending,0.0,-15.5
+2026-03-17,basketball_nba,New York Knicks,Indiana Pacers,spread,Indiana Pacers,BetRivers,-110,3/5,100,Pending,0.0,14.0
+2026-03-17,basketball_nba,New York Knicks,Indiana Pacers,spread,New York Knicks,BetRivers,-113,3/5,100,Pending,0.0,-14.0
+2026-03-17,basketball_nba,New York Knicks,Indiana Pacers,spread,Indiana Pacers,LowVig.ag,-103,3/5,100,Pending,0.0,14.5
+2026-03-17,basketball_nba,New York Knicks,Indiana Pacers,spread,New York Knicks,LowVig.ag,-109,3/5,100,Pending,0.0,-14.5
+2026-03-17,basketball_nba,New York Knicks,Indiana Pacers,spread,Indiana Pacers,BetOnline.ag,-102,3/5,100,Pending,0.0,14.5
+2026-03-17,basketball_nba,New York Knicks,Indiana Pacers,spread,New York Knicks,BetOnline.ag,-118,3/5,100,Pending,0.0,-14.5
+2026-03-17,basketball_nba,New York Knicks,Indiana Pacers,spread,Indiana Pacers,BetUS,-110,3/5,100,Pending,0.0,15.0
+2026-03-17,basketball_nba,New York Knicks,Indiana Pacers,spread,New York Knicks,BetUS,-110,3/5,100,Pending,0.0,-15.0
+2026-03-17,basketball_nba,New York Knicks,Indiana Pacers,spread,Indiana Pacers,BetMGM,-115,3/5,100,Pending,0.0,15.5
+2026-03-17,basketball_nba,New York Knicks,Indiana Pacers,spread,New York Knicks,BetMGM,-105,3/5,100,Pending,0.0,-15.5
+2026-03-17,basketball_nba,New York Knicks,Indiana Pacers,spread,Indiana Pacers,Bovada,-115,3/5,100,Pending,0.0,15.0
+2026-03-17,basketball_nba,New York Knicks,Indiana Pacers,spread,New York Knicks,Bovada,-105,3/5,100,Pending,0.0,-15.0
+2026-03-17,basketball_nba,Milwaukee Bucks,Cleveland Cavaliers,spread,Cleveland Cavaliers,FanDuel,-112,3/5,100,Pending,0.0,-10.0
+2026-03-17,basketball_nba,Milwaukee Bucks,Cleveland Cavaliers,spread,Milwaukee Bucks,FanDuel,-108,3/5,100,Pending,0.0,10.0
+2026-03-17,basketball_nba,Milwaukee Bucks,Cleveland Cavaliers,spread,Cleveland Cavaliers,DraftKings,-108,3/5,100,Pending,0.0,-10.5
+2026-03-17,basketball_nba,Milwaukee Bucks,Cleveland Cavaliers,spread,Milwaukee Bucks,DraftKings,-112,3/5,100,Pending,0.0,10.5
+2026-03-17,basketball_nba,Milwaukee Bucks,Cleveland Cavaliers,spread,Cleveland Cavaliers,BetRivers,-115,3/5,100,Pending,0.0,-10.0
+2026-03-17,basketball_nba,Milwaukee Bucks,Cleveland Cavaliers,spread,Milwaukee Bucks,BetRivers,-108,3/5,100,Pending,0.0,10.0
+2026-03-17,basketball_nba,Milwaukee Bucks,Cleveland Cavaliers,spread,Cleveland Cavaliers,LowVig.ag,-109,3/5,100,Pending,0.0,-10.5
+2026-03-17,basketball_nba,Milwaukee Bucks,Cleveland Cavaliers,spread,Milwaukee Bucks,LowVig.ag,-103,3/5,100,Pending,0.0,10.5
+2026-03-17,basketball_nba,Milwaukee Bucks,Cleveland Cavaliers,spread,Cleveland Cavaliers,BetOnline.ag,-113,3/5,100,Pending,0.0,-10.5
+2026-03-17,basketball_nba,Milwaukee Bucks,Cleveland Cavaliers,spread,Milwaukee Bucks,BetOnline.ag,-107,3/5,100,Pending,0.0,10.5
+2026-03-17,basketball_nba,Milwaukee Bucks,Cleveland Cavaliers,spread,Cleveland Cavaliers,BetUS,-110,3/5,100,Pending,0.0,-10.5
+2026-03-17,basketball_nba,Milwaukee Bucks,Cleveland Cavaliers,spread,Milwaukee Bucks,BetUS,-110,3/5,100,Pending,0.0,10.5
+2026-03-17,basketball_nba,Milwaukee Bucks,Cleveland Cavaliers,spread,Cleveland Cavaliers,BetMGM,-110,3/5,100,Pending,0.0,-10.5
+2026-03-17,basketball_nba,Milwaukee Bucks,Cleveland Cavaliers,spread,Milwaukee Bucks,BetMGM,-110,3/5,100,Pending,0.0,10.5
+2026-03-17,basketball_nba,Milwaukee Bucks,Cleveland Cavaliers,spread,Cleveland Cavaliers,Bovada,-115,3/5,100,Pending,0.0,-10.0
+2026-03-17,basketball_nba,Milwaukee Bucks,Cleveland Cavaliers,spread,Milwaukee Bucks,Bovada,-105,3/5,100,Pending,0.0,10.0
+2026-03-17,basketball_nba,Milwaukee Bucks,Cleveland Cavaliers,spread,Cleveland Cavaliers,MyBookie.ag,-110,3/5,100,Pending,0.0,-10.0
+2026-03-17,basketball_nba,Milwaukee Bucks,Cleveland Cavaliers,spread,Milwaukee Bucks,MyBookie.ag,-110,3/5,100,Pending,0.0,10.0
+2026-03-17,basketball_nba,Minnesota Timberwolves,Phoenix Suns,spread,Minnesota Timberwolves,FanDuel,-110,3/5,100,Pending,0.0,-3.5
+2026-03-17,basketball_nba,Minnesota Timberwolves,Phoenix Suns,spread,Phoenix Suns,FanDuel,-110,3/5,100,Pending,0.0,3.5
+2026-03-17,basketball_nba,Minnesota Timberwolves,Phoenix Suns,spread,Minnesota Timberwolves,BetUS,-110,3/5,100,Pending,0.0,-3.5
+2026-03-17,basketball_nba,Minnesota Timberwolves,Phoenix Suns,spread,Phoenix Suns,BetUS,-110,3/5,100,Pending,0.0,3.5
+2026-03-17,basketball_nba,Minnesota Timberwolves,Phoenix Suns,spread,Minnesota Timberwolves,LowVig.ag,-106,3/5,100,Pending,0.0,-3.5
+2026-03-17,basketball_nba,Minnesota Timberwolves,Phoenix Suns,spread,Phoenix Suns,LowVig.ag,-106,3/5,100,Pending,0.0,3.5
+2026-03-17,basketball_nba,Minnesota Timberwolves,Phoenix Suns,spread,Minnesota Timberwolves,BetOnline.ag,-110,3/5,100,Pending,0.0,-3.5
+2026-03-17,basketball_nba,Minnesota Timberwolves,Phoenix Suns,spread,Phoenix Suns,BetOnline.ag,-110,3/5,100,Pending,0.0,3.5
+2026-03-17,basketball_nba,Minnesota Timberwolves,Phoenix Suns,spread,Minnesota Timberwolves,DraftKings,-102,3/5,100,Pending,0.0,-3.5
+2026-03-17,basketball_nba,Minnesota Timberwolves,Phoenix Suns,spread,Phoenix Suns,DraftKings,-118,3/5,100,Pending,0.0,3.5
+2026-03-17,basketball_nba,Minnesota Timberwolves,Phoenix Suns,spread,Minnesota Timberwolves,BetRivers,-112,3/5,100,Pending,0.0,-3.5
+2026-03-17,basketball_nba,Minnesota Timberwolves,Phoenix Suns,spread,Phoenix Suns,BetRivers,-112,3/5,100,Pending,0.0,3.5
+2026-03-17,basketball_nba,Minnesota Timberwolves,Phoenix Suns,spread,Minnesota Timberwolves,BetMGM,-110,3/5,100,Pending,0.0,-3.5
+2026-03-17,basketball_nba,Minnesota Timberwolves,Phoenix Suns,spread,Phoenix Suns,BetMGM,-110,3/5,100,Pending,0.0,3.5
+2026-03-17,basketball_nba,Minnesota Timberwolves,Phoenix Suns,spread,Minnesota Timberwolves,MyBookie.ag,-110,3/5,100,Pending,0.0,-3.5
+2026-03-17,basketball_nba,Minnesota Timberwolves,Phoenix Suns,spread,Phoenix Suns,MyBookie.ag,-110,3/5,100,Pending,0.0,3.5
+2026-03-17,basketball_nba,Minnesota Timberwolves,Phoenix Suns,spread,Minnesota Timberwolves,Bovada,-115,3/5,100,Pending,0.0,-3.5
+2026-03-17,basketball_nba,Minnesota Timberwolves,Phoenix Suns,spread,Phoenix Suns,Bovada,-105,3/5,100,Pending,0.0,3.5
+2026-03-17,basketball_nba,Denver Nuggets,Philadelphia 76ers,spread,Denver Nuggets,FanDuel,-110,3/5,100,Pending,0.0,-15.5
+2026-03-17,basketball_nba,Denver Nuggets,Philadelphia 76ers,spread,Philadelphia 76ers,FanDuel,-110,3/5,100,Pending,0.0,15.5
+2026-03-17,basketball_nba,Denver Nuggets,Philadelphia 76ers,spread,Denver Nuggets,DraftKings,-108,3/5,100,Pending,0.0,-15.5
+2026-03-17,basketball_nba,Denver Nuggets,Philadelphia 76ers,spread,Philadelphia 76ers,DraftKings,-112,3/5,100,Pending,0.0,15.5
+2026-03-17,basketball_nba,Denver Nuggets,Philadelphia 76ers,spread,Denver Nuggets,LowVig.ag,-106,3/5,100,Pending,0.0,-15.5
+2026-03-17,basketball_nba,Denver Nuggets,Philadelphia 76ers,spread,Philadelphia 76ers,LowVig.ag,-106,3/5,100,Pending,0.0,15.5
+2026-03-17,basketball_nba,Denver Nuggets,Philadelphia 76ers,spread,Denver Nuggets,BetOnline.ag,-110,3/5,100,Pending,0.0,-15.5
+2026-03-17,basketball_nba,Denver Nuggets,Philadelphia 76ers,spread,Philadelphia 76ers,BetOnline.ag,-110,3/5,100,Pending,0.0,15.5
+2026-03-17,basketball_nba,Denver Nuggets,Philadelphia 76ers,spread,Denver Nuggets,BetRivers,-110,3/5,100,Pending,0.0,-15.5
+2026-03-17,basketball_nba,Denver Nuggets,Philadelphia 76ers,spread,Philadelphia 76ers,BetRivers,-113,3/5,100,Pending,0.0,15.5
+2026-03-17,basketball_nba,Denver Nuggets,Philadelphia 76ers,spread,Denver Nuggets,BetUS,-110,3/5,100,Pending,0.0,-15.5
+2026-03-17,basketball_nba,Denver Nuggets,Philadelphia 76ers,spread,Philadelphia 76ers,BetUS,-110,3/5,100,Pending,0.0,15.5
+2026-03-17,basketball_nba,Denver Nuggets,Philadelphia 76ers,spread,Denver Nuggets,BetMGM,-110,3/5,100,Pending,0.0,-15.5
+2026-03-17,basketball_nba,Denver Nuggets,Philadelphia 76ers,spread,Philadelphia 76ers,BetMGM,-110,3/5,100,Pending,0.0,15.5
+2026-03-17,basketball_nba,Denver Nuggets,Philadelphia 76ers,spread,Denver Nuggets,Bovada,-110,3/5,100,Pending,0.0,-15.0
+2026-03-17,basketball_nba,Denver Nuggets,Philadelphia 76ers,spread,Philadelphia 76ers,Bovada,-110,3/5,100,Pending,0.0,15.0
+2026-03-17,basketball_nba,Denver Nuggets,Philadelphia 76ers,spread,Denver Nuggets,MyBookie.ag,-110,3/5,100,Pending,0.0,-15.5
+2026-03-17,basketball_nba,Denver Nuggets,Philadelphia 76ers,spread,Philadelphia 76ers,MyBookie.ag,-110,3/5,100,Pending,0.0,15.5
+2026-03-17,basketball_nba,Sacramento Kings,San Antonio Spurs,spread,Sacramento Kings,FanDuel,-110,3/5,100,Pending,0.0,13.5
+2026-03-17,basketball_nba,Sacramento Kings,San Antonio Spurs,spread,San Antonio Spurs,FanDuel,-110,3/5,100,Pending,0.0,-13.5
+2026-03-17,basketball_nba,Sacramento Kings,San Antonio Spurs,spread,Sacramento Kings,BetOnline.ag,-110,3/5,100,Pending,0.0,13.5
+2026-03-17,basketball_nba,Sacramento Kings,San Antonio Spurs,spread,San Antonio Spurs,BetOnline.ag,-110,3/5,100,Pending,0.0,-13.5
+2026-03-17,basketball_nba,Sacramento Kings,San Antonio Spurs,spread,Sacramento Kings,LowVig.ag,-106,3/5,100,Pending,0.0,13.5
+2026-03-17,basketball_nba,Sacramento Kings,San Antonio Spurs,spread,San Antonio Spurs,LowVig.ag,-106,3/5,100,Pending,0.0,-13.5
+2026-03-17,basketball_nba,Sacramento Kings,San Antonio Spurs,spread,Sacramento Kings,BetUS,-110,3/5,100,Pending,0.0,13.5
+2026-03-17,basketball_nba,Sacramento Kings,San Antonio Spurs,spread,San Antonio Spurs,BetUS,-110,3/5,100,Pending,0.0,-13.5
+2026-03-17,basketball_nba,Sacramento Kings,San Antonio Spurs,spread,Sacramento Kings,DraftKings,-112,3/5,100,Pending,0.0,13.5
+2026-03-17,basketball_nba,Sacramento Kings,San Antonio Spurs,spread,San Antonio Spurs,DraftKings,-108,3/5,100,Pending,0.0,-13.5
+2026-03-17,basketball_nba,Sacramento Kings,San Antonio Spurs,spread,Sacramento Kings,BetMGM,-110,3/5,100,Pending,0.0,13.5
+2026-03-17,basketball_nba,Sacramento Kings,San Antonio Spurs,spread,San Antonio Spurs,BetMGM,-110,3/5,100,Pending,0.0,-13.5
+2026-03-17,basketball_nba,Sacramento Kings,San Antonio Spurs,spread,Sacramento Kings,MyBookie.ag,-110,3/5,100,Pending,0.0,13.0
+2026-03-17,basketball_nba,Sacramento Kings,San Antonio Spurs,spread,San Antonio Spurs,MyBookie.ag,-110,3/5,100,Pending,0.0,-13.0
+2026-03-17,basketball_nba,Sacramento Kings,San Antonio Spurs,spread,Sacramento Kings,BetRivers,-112,3/5,100,Pending,0.0,13.5
+2026-03-17,basketball_nba,Sacramento Kings,San Antonio Spurs,spread,San Antonio Spurs,BetRivers,-112,3/5,100,Pending,0.0,-13.5
+2026-03-17,basketball_nba,Sacramento Kings,San Antonio Spurs,spread,Sacramento Kings,Bovada,-110,3/5,100,Pending,0.0,13.5
+2026-03-17,basketball_nba,Sacramento Kings,San Antonio Spurs,spread,San Antonio Spurs,Bovada,-110,3/5,100,Pending,0.0,-13.5
+2026-03-17,icehockey_nhl,Montréal Canadiens,Boston Bruins,spread,Boston Bruins,BetRivers,-190,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Montréal Canadiens,Boston Bruins,spread,Montréal Canadiens,BetRivers,145,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Montréal Canadiens,Boston Bruins,spread,Boston Bruins,FanDuel,-188,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Montréal Canadiens,Boston Bruins,spread,Montréal Canadiens,FanDuel,148,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Montréal Canadiens,Boston Bruins,spread,Boston Bruins,DraftKings,-185,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Montréal Canadiens,Boston Bruins,spread,Montréal Canadiens,DraftKings,154,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Montréal Canadiens,Boston Bruins,spread,Boston Bruins,BetMGM,-175,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Montréal Canadiens,Boston Bruins,spread,Montréal Canadiens,BetMGM,145,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Montréal Canadiens,Boston Bruins,spread,Boston Bruins,Bovada,-180,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Montréal Canadiens,Boston Bruins,spread,Montréal Canadiens,Bovada,155,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Montréal Canadiens,Boston Bruins,spread,Boston Bruins,MyBookie.ag,-188,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Montréal Canadiens,Boston Bruins,spread,Montréal Canadiens,MyBookie.ag,151,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Montréal Canadiens,Boston Bruins,spread,Boston Bruins,LowVig.ag,-177,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Montréal Canadiens,Boston Bruins,spread,Montréal Canadiens,LowVig.ag,155,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Montréal Canadiens,Boston Bruins,spread,Boston Bruins,BetOnline.ag,-177,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Montréal Canadiens,Boston Bruins,spread,Montréal Canadiens,BetOnline.ag,155,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Montréal Canadiens,Boston Bruins,spread,Boston Bruins,BetUS,-175,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Montréal Canadiens,Boston Bruins,spread,Montréal Canadiens,BetUS,152,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Columbus Blue Jackets,Carolina Hurricanes,spread,Carolina Hurricanes,BetRivers,175,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Columbus Blue Jackets,Carolina Hurricanes,spread,Columbus Blue Jackets,BetRivers,-230,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Columbus Blue Jackets,Carolina Hurricanes,spread,Carolina Hurricanes,FanDuel,176,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Columbus Blue Jackets,Carolina Hurricanes,spread,Columbus Blue Jackets,FanDuel,-220,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Columbus Blue Jackets,Carolina Hurricanes,spread,Carolina Hurricanes,DraftKings,180,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Columbus Blue Jackets,Carolina Hurricanes,spread,Columbus Blue Jackets,DraftKings,-218,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Columbus Blue Jackets,Carolina Hurricanes,spread,Carolina Hurricanes,BetMGM,170,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Columbus Blue Jackets,Carolina Hurricanes,spread,Columbus Blue Jackets,BetMGM,-210,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Columbus Blue Jackets,Carolina Hurricanes,spread,Carolina Hurricanes,BetOnline.ag,182,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Columbus Blue Jackets,Carolina Hurricanes,spread,Columbus Blue Jackets,BetOnline.ag,-213,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Columbus Blue Jackets,Carolina Hurricanes,spread,Carolina Hurricanes,LowVig.ag,182,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Columbus Blue Jackets,Carolina Hurricanes,spread,Columbus Blue Jackets,LowVig.ag,-213,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Columbus Blue Jackets,Carolina Hurricanes,spread,Carolina Hurricanes,BetUS,184,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Columbus Blue Jackets,Carolina Hurricanes,spread,Columbus Blue Jackets,BetUS,-215,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Columbus Blue Jackets,Carolina Hurricanes,spread,Carolina Hurricanes,Bovada,180,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Columbus Blue Jackets,Carolina Hurricanes,spread,Columbus Blue Jackets,Bovada,-220,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Columbus Blue Jackets,Carolina Hurricanes,spread,Carolina Hurricanes,MyBookie.ag,176,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Columbus Blue Jackets,Carolina Hurricanes,spread,Columbus Blue Jackets,MyBookie.ag,-220,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Toronto Maple Leafs,New York Islanders,spread,New York Islanders,BetRivers,175,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Toronto Maple Leafs,New York Islanders,spread,Toronto Maple Leafs,BetRivers,-230,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Toronto Maple Leafs,New York Islanders,spread,New York Islanders,FanDuel,164,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Toronto Maple Leafs,New York Islanders,spread,Toronto Maple Leafs,FanDuel,-205,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Toronto Maple Leafs,New York Islanders,spread,New York Islanders,DraftKings,180,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Toronto Maple Leafs,New York Islanders,spread,Toronto Maple Leafs,DraftKings,-218,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Toronto Maple Leafs,New York Islanders,spread,New York Islanders,BetMGM,165,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Toronto Maple Leafs,New York Islanders,spread,Toronto Maple Leafs,BetMGM,-200,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Toronto Maple Leafs,New York Islanders,spread,New York Islanders,BetOnline.ag,177,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Toronto Maple Leafs,New York Islanders,spread,Toronto Maple Leafs,BetOnline.ag,-205,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Toronto Maple Leafs,New York Islanders,spread,New York Islanders,LowVig.ag,177,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Toronto Maple Leafs,New York Islanders,spread,Toronto Maple Leafs,LowVig.ag,-205,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Toronto Maple Leafs,New York Islanders,spread,New York Islanders,BetUS,188,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Toronto Maple Leafs,New York Islanders,spread,Toronto Maple Leafs,BetUS,-220,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Toronto Maple Leafs,New York Islanders,spread,New York Islanders,Bovada,180,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Toronto Maple Leafs,New York Islanders,spread,Toronto Maple Leafs,Bovada,-220,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Toronto Maple Leafs,New York Islanders,spread,New York Islanders,MyBookie.ag,174,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Toronto Maple Leafs,New York Islanders,spread,Toronto Maple Leafs,MyBookie.ag,-218,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Chicago Blackhawks,Minnesota Wild,spread,Chicago Blackhawks,BetRivers,-167,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Chicago Blackhawks,Minnesota Wild,spread,Minnesota Wild,BetRivers,133,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Chicago Blackhawks,Minnesota Wild,spread,Chicago Blackhawks,FanDuel,-178,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Chicago Blackhawks,Minnesota Wild,spread,Minnesota Wild,FanDuel,144,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Chicago Blackhawks,Minnesota Wild,spread,Chicago Blackhawks,DraftKings,-170,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Chicago Blackhawks,Minnesota Wild,spread,Minnesota Wild,DraftKings,142,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Chicago Blackhawks,Minnesota Wild,spread,Chicago Blackhawks,BetMGM,-160,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Chicago Blackhawks,Minnesota Wild,spread,Minnesota Wild,BetMGM,135,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Chicago Blackhawks,Minnesota Wild,spread,Chicago Blackhawks,LowVig.ag,-168,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Chicago Blackhawks,Minnesota Wild,spread,Minnesota Wild,LowVig.ag,148,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Chicago Blackhawks,Minnesota Wild,spread,Chicago Blackhawks,BetOnline.ag,-168,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Chicago Blackhawks,Minnesota Wild,spread,Minnesota Wild,BetOnline.ag,148,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Chicago Blackhawks,Minnesota Wild,spread,Chicago Blackhawks,BetUS,-165,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Chicago Blackhawks,Minnesota Wild,spread,Minnesota Wild,BetUS,144,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Chicago Blackhawks,Minnesota Wild,spread,Chicago Blackhawks,Bovada,-172,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Chicago Blackhawks,Minnesota Wild,spread,Minnesota Wild,Bovada,147,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Chicago Blackhawks,Minnesota Wild,spread,Chicago Blackhawks,MyBookie.ag,-172,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Chicago Blackhawks,Minnesota Wild,spread,Minnesota Wild,MyBookie.ag,140,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Winnipeg Jets,Nashville Predators,spread,Nashville Predators,BetRivers,-225,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Winnipeg Jets,Nashville Predators,spread,Winnipeg Jets,BetRivers,170,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Winnipeg Jets,Nashville Predators,spread,Nashville Predators,FanDuel,-225,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Winnipeg Jets,Nashville Predators,spread,Winnipeg Jets,FanDuel,180,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Winnipeg Jets,Nashville Predators,spread,Nashville Predators,DraftKings,-230,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Winnipeg Jets,Nashville Predators,spread,Winnipeg Jets,DraftKings,190,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Winnipeg Jets,Nashville Predators,spread,Nashville Predators,BetMGM,-220,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Winnipeg Jets,Nashville Predators,spread,Winnipeg Jets,BetMGM,180,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Winnipeg Jets,Nashville Predators,spread,Nashville Predators,LowVig.ag,-223,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Winnipeg Jets,Nashville Predators,spread,Winnipeg Jets,LowVig.ag,188,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Winnipeg Jets,Nashville Predators,spread,Nashville Predators,BetOnline.ag,-223,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Winnipeg Jets,Nashville Predators,spread,Winnipeg Jets,BetOnline.ag,188,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Winnipeg Jets,Nashville Predators,spread,Nashville Predators,BetUS,-225,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Winnipeg Jets,Nashville Predators,spread,Winnipeg Jets,BetUS,192,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Winnipeg Jets,Nashville Predators,spread,Nashville Predators,Bovada,-225,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Winnipeg Jets,Nashville Predators,spread,Winnipeg Jets,Bovada,185,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Winnipeg Jets,Nashville Predators,spread,Nashville Predators,MyBookie.ag,-226,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Winnipeg Jets,Nashville Predators,spread,Winnipeg Jets,MyBookie.ag,181,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Edmonton Oilers,San Jose Sharks,spread,Edmonton Oilers,BetRivers,132,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Edmonton Oilers,San Jose Sharks,spread,San Jose Sharks,BetRivers,-167,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Edmonton Oilers,San Jose Sharks,spread,Edmonton Oilers,FanDuel,138,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Edmonton Oilers,San Jose Sharks,spread,San Jose Sharks,FanDuel,-170,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Edmonton Oilers,San Jose Sharks,spread,Edmonton Oilers,DraftKings,136,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Edmonton Oilers,San Jose Sharks,spread,San Jose Sharks,DraftKings,-162,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Edmonton Oilers,San Jose Sharks,spread,Edmonton Oilers,BetMGM,125,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Edmonton Oilers,San Jose Sharks,spread,San Jose Sharks,BetMGM,-155,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Edmonton Oilers,San Jose Sharks,spread,Edmonton Oilers,Bovada,137,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Edmonton Oilers,San Jose Sharks,spread,San Jose Sharks,Bovada,-163,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Edmonton Oilers,San Jose Sharks,spread,Edmonton Oilers,MyBookie.ag,136,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Edmonton Oilers,San Jose Sharks,spread,San Jose Sharks,MyBookie.ag,-167,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Edmonton Oilers,San Jose Sharks,spread,Edmonton Oilers,BetOnline.ag,135,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Edmonton Oilers,San Jose Sharks,spread,San Jose Sharks,BetOnline.ag,-155,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Edmonton Oilers,San Jose Sharks,spread,Edmonton Oilers,LowVig.ag,135,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Edmonton Oilers,San Jose Sharks,spread,San Jose Sharks,LowVig.ag,-155,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Edmonton Oilers,San Jose Sharks,spread,Edmonton Oilers,BetUS,135,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Edmonton Oilers,San Jose Sharks,spread,San Jose Sharks,BetUS,-155,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Vegas Golden Knights,Buffalo Sabres,spread,Buffalo Sabres,BetRivers,-265,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Vegas Golden Knights,Buffalo Sabres,spread,Vegas Golden Knights,BetRivers,195,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Vegas Golden Knights,Buffalo Sabres,spread,Buffalo Sabres,FanDuel,-235,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Vegas Golden Knights,Buffalo Sabres,spread,Vegas Golden Knights,FanDuel,186,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Vegas Golden Knights,Buffalo Sabres,spread,Buffalo Sabres,DraftKings,-218,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Vegas Golden Knights,Buffalo Sabres,spread,Vegas Golden Knights,DraftKings,180,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Vegas Golden Knights,Buffalo Sabres,spread,Buffalo Sabres,BetMGM,-220,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Vegas Golden Knights,Buffalo Sabres,spread,Vegas Golden Knights,BetMGM,180,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Vegas Golden Knights,Buffalo Sabres,spread,Buffalo Sabres,LowVig.ag,-218,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Vegas Golden Knights,Buffalo Sabres,spread,Vegas Golden Knights,LowVig.ag,185,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Vegas Golden Knights,Buffalo Sabres,spread,Buffalo Sabres,BetOnline.ag,-218,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Vegas Golden Knights,Buffalo Sabres,spread,Vegas Golden Knights,BetOnline.ag,185,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Vegas Golden Knights,Buffalo Sabres,spread,Buffalo Sabres,BetUS,-220,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Vegas Golden Knights,Buffalo Sabres,spread,Vegas Golden Knights,BetUS,188,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Vegas Golden Knights,Buffalo Sabres,spread,Buffalo Sabres,Bovada,-230,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Vegas Golden Knights,Buffalo Sabres,spread,Vegas Golden Knights,Bovada,190,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Vegas Golden Knights,Buffalo Sabres,spread,Buffalo Sabres,MyBookie.ag,-226,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Vegas Golden Knights,Buffalo Sabres,spread,Vegas Golden Knights,MyBookie.ag,180,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Vancouver Canucks,Florida Panthers,spread,Florida Panthers,BetRivers,160,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Vancouver Canucks,Florida Panthers,spread,Vancouver Canucks,BetRivers,-205,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Vancouver Canucks,Florida Panthers,spread,Florida Panthers,FanDuel,156,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Vancouver Canucks,Florida Panthers,spread,Vancouver Canucks,FanDuel,-194,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Vancouver Canucks,Florida Panthers,spread,Florida Panthers,DraftKings,170,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Vancouver Canucks,Florida Panthers,spread,Vancouver Canucks,DraftKings,-205,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Vancouver Canucks,Florida Panthers,spread,Florida Panthers,BetMGM,155,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Vancouver Canucks,Florida Panthers,spread,Vancouver Canucks,BetMGM,-190,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Vancouver Canucks,Florida Panthers,spread,Florida Panthers,LowVig.ag,170,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Vancouver Canucks,Florida Panthers,spread,Vancouver Canucks,LowVig.ag,-195,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Vancouver Canucks,Florida Panthers,spread,Florida Panthers,BetOnline.ag,170,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Vancouver Canucks,Florida Panthers,spread,Vancouver Canucks,BetOnline.ag,-195,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Vancouver Canucks,Florida Panthers,spread,Florida Panthers,BetUS,172,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Vancouver Canucks,Florida Panthers,spread,Vancouver Canucks,BetUS,-200,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Vancouver Canucks,Florida Panthers,spread,Florida Panthers,Bovada,168,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Vancouver Canucks,Florida Panthers,spread,Vancouver Canucks,Bovada,-198,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Vancouver Canucks,Florida Panthers,spread,Florida Panthers,MyBookie.ag,165,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Vancouver Canucks,Florida Panthers,spread,Vancouver Canucks,MyBookie.ag,-206,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Seattle Kraken,Tampa Bay Lightning,spread,Seattle Kraken,BetRivers,-159,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Seattle Kraken,Tampa Bay Lightning,spread,Tampa Bay Lightning,BetRivers,125,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Seattle Kraken,Tampa Bay Lightning,spread,Seattle Kraken,FanDuel,-164,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Seattle Kraken,Tampa Bay Lightning,spread,Tampa Bay Lightning,FanDuel,134,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Seattle Kraken,Tampa Bay Lightning,spread,Seattle Kraken,DraftKings,-155,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Seattle Kraken,Tampa Bay Lightning,spread,Tampa Bay Lightning,DraftKings,130,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Seattle Kraken,Tampa Bay Lightning,spread,Seattle Kraken,BetMGM,-155,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Seattle Kraken,Tampa Bay Lightning,spread,Tampa Bay Lightning,BetMGM,125,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Seattle Kraken,Tampa Bay Lightning,spread,Seattle Kraken,BetOnline.ag,-150,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Seattle Kraken,Tampa Bay Lightning,spread,Tampa Bay Lightning,BetOnline.ag,130,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Seattle Kraken,Tampa Bay Lightning,spread,Seattle Kraken,LowVig.ag,-150,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Seattle Kraken,Tampa Bay Lightning,spread,Tampa Bay Lightning,LowVig.ag,130,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Seattle Kraken,Tampa Bay Lightning,spread,Seattle Kraken,BetUS,-150,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Seattle Kraken,Tampa Bay Lightning,spread,Tampa Bay Lightning,BetUS,130,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Seattle Kraken,Tampa Bay Lightning,spread,Seattle Kraken,Bovada,-155,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Seattle Kraken,Tampa Bay Lightning,spread,Tampa Bay Lightning,Bovada,133,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Seattle Kraken,Tampa Bay Lightning,spread,Seattle Kraken,MyBookie.ag,-154,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Seattle Kraken,Tampa Bay Lightning,spread,Tampa Bay Lightning,MyBookie.ag,126,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Carolina Hurricanes,Pittsburgh Penguins,spread,Carolina Hurricanes,FanDuel,134,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Carolina Hurricanes,Pittsburgh Penguins,spread,Pittsburgh Penguins,FanDuel,-164,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Carolina Hurricanes,Pittsburgh Penguins,spread,Carolina Hurricanes,DraftKings,145,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Carolina Hurricanes,Pittsburgh Penguins,spread,Pittsburgh Penguins,DraftKings,-175,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,New York Rangers,New Jersey Devils,spread,New Jersey Devils,FanDuel,194,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,New York Rangers,New Jersey Devils,spread,New York Rangers,FanDuel,-245,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,New York Rangers,New Jersey Devils,spread,New Jersey Devils,DraftKings,215,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,New York Rangers,New Jersey Devils,spread,New York Rangers,DraftKings,-265,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Washington Capitals,Ottawa Senators,spread,Ottawa Senators,FanDuel,198,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Washington Capitals,Ottawa Senators,spread,Washington Capitals,FanDuel,-260,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Washington Capitals,Ottawa Senators,spread,Ottawa Senators,DraftKings,205,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Washington Capitals,Ottawa Senators,spread,Washington Capitals,DraftKings,-250,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Calgary Flames,St Louis Blues,spread,Calgary Flames,FanDuel,-245,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Calgary Flames,St Louis Blues,spread,St Louis Blues,FanDuel,194,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Calgary Flames,St Louis Blues,spread,Calgary Flames,DraftKings,-265,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Calgary Flames,St Louis Blues,spread,St Louis Blues,DraftKings,215,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Colorado Avalanche,Dallas Stars,spread,Colorado Avalanche,FanDuel,144,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Colorado Avalanche,Dallas Stars,spread,Dallas Stars,FanDuel,-178,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Colorado Avalanche,Dallas Stars,spread,Colorado Avalanche,DraftKings,154,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Colorado Avalanche,Dallas Stars,spread,Dallas Stars,DraftKings,-185,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Anaheim Ducks,Philadelphia Flyers,spread,Anaheim Ducks,FanDuel,158,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Anaheim Ducks,Philadelphia Flyers,spread,Philadelphia Flyers,FanDuel,-196,3/5,100,Pending,0.0,1.5
+2026-03-17,icehockey_nhl,Anaheim Ducks,Philadelphia Flyers,spread,Anaheim Ducks,DraftKings,164,3/5,100,Pending,0.0,-1.5
+2026-03-17,icehockey_nhl,Anaheim Ducks,Philadelphia Flyers,spread,Philadelphia Flyers,DraftKings,-198,3/5,100,Pending,0.0,1.5
+2026-03-17,soccer_epl,Bournemouth,Manchester United,spread,Bournemouth,MyBookie.ag,-147,3/5,100,Pending,0.0,0.5
+2026-03-17,soccer_epl,Bournemouth,Manchester United,spread,Manchester United,MyBookie.ag,106,3/5,100,Pending,0.0,-0.5
+2026-03-17,soccer_epl,Bournemouth,Manchester United,spread,Bournemouth,Bovada,-105,3/5,100,Pending,0.0,0.25
+2026-03-17,soccer_epl,Bournemouth,Manchester United,spread,Manchester United,Bovada,-115,3/5,100,Pending,0.0,-0.25
+2026-03-17,soccer_epl,Bournemouth,Manchester United,spread,Bournemouth,LowVig.ag,-106,3/5,100,Pending,0.0,0.25
+2026-03-17,soccer_epl,Bournemouth,Manchester United,spread,Manchester United,LowVig.ag,-114,3/5,100,Pending,0.0,-0.25
+2026-03-17,soccer_epl,Bournemouth,Manchester United,spread,Bournemouth,BetOnline.ag,-106,3/5,100,Pending,0.0,0.25
+2026-03-17,soccer_epl,Bournemouth,Manchester United,spread,Manchester United,BetOnline.ag,-114,3/5,100,Pending,0.0,-0.25
+2026-03-17,soccer_epl,Brighton and Hove Albion,Liverpool,spread,Brighton and Hove Albion,MyBookie.ag,-159,3/5,100,Pending,0.0,0.5
+2026-03-17,soccer_epl,Brighton and Hove Albion,Liverpool,spread,Liverpool,MyBookie.ag,114,3/5,100,Pending,0.0,-0.5
+2026-03-17,soccer_epl,Brighton and Hove Albion,Liverpool,spread,Brighton and Hove Albion,Bovada,-108,3/5,100,Pending,0.0,0.25
+2026-03-17,soccer_epl,Brighton and Hove Albion,Liverpool,spread,Liverpool,Bovada,-112,3/5,100,Pending,0.0,-0.25
+2026-03-17,soccer_epl,Brighton and Hove Albion,Liverpool,spread,Brighton and Hove Albion,LowVig.ag,-116,3/5,100,Pending,0.0,0.25
+2026-03-17,soccer_epl,Brighton and Hove Albion,Liverpool,spread,Liverpool,LowVig.ag,-104,3/5,100,Pending,0.0,-0.25
+2026-03-17,soccer_epl,Brighton and Hove Albion,Liverpool,spread,Brighton and Hove Albion,BetOnline.ag,-116,3/5,100,Pending,0.0,0.25
+2026-03-17,soccer_epl,Brighton and Hove Albion,Liverpool,spread,Liverpool,BetOnline.ag,-104,3/5,100,Pending,0.0,-0.25
+2026-03-17,soccer_epl,Fulham,Burnley,spread,Burnley,MyBookie.ag,134,3/5,100,Pending,0.0,0.5
+2026-03-17,soccer_epl,Fulham,Burnley,spread,Fulham,MyBookie.ag,-188,3/5,100,Pending,0.0,-0.5
+2026-03-17,soccer_epl,Fulham,Burnley,spread,Burnley,Bovada,-115,3/5,100,Pending,0.0,1.0
+2026-03-17,soccer_epl,Fulham,Burnley,spread,Fulham,Bovada,-105,3/5,100,Pending,0.0,-1.0
+2026-03-17,soccer_epl,Fulham,Burnley,spread,Burnley,LowVig.ag,-115,3/5,100,Pending,0.0,1.0
+2026-03-17,soccer_epl,Fulham,Burnley,spread,Fulham,LowVig.ag,-105,3/5,100,Pending,0.0,-1.0
+2026-03-17,soccer_epl,Fulham,Burnley,spread,Burnley,BetOnline.ag,-115,3/5,100,Pending,0.0,1.0
+2026-03-17,soccer_epl,Fulham,Burnley,spread,Fulham,BetOnline.ag,-105,3/5,100,Pending,0.0,-1.0
+2026-03-17,soccer_epl,Fulham,Burnley,spread,Burnley,BetUS,-115,3/5,100,Pending,0.0,1.0
+2026-03-17,soccer_epl,Fulham,Burnley,spread,Fulham,BetUS,-105,3/5,100,Pending,0.0,-1.0
+2026-03-17,soccer_epl,Everton,Chelsea,spread,Chelsea,MyBookie.ag,-101,3/5,100,Pending,0.0,-0.5
+2026-03-17,soccer_epl,Everton,Chelsea,spread,Everton,MyBookie.ag,-136,3/5,100,Pending,0.0,0.5
+2026-03-17,soccer_epl,Everton,Chelsea,spread,Chelsea,Bovada,105,3/5,100,Pending,0.0,-0.5
+2026-03-17,soccer_epl,Everton,Chelsea,spread,Everton,Bovada,-125,3/5,100,Pending,0.0,0.5
+2026-03-17,soccer_epl,Everton,Chelsea,spread,Chelsea,BetOnline.ag,107,3/5,100,Pending,0.0,-0.5
+2026-03-17,soccer_epl,Everton,Chelsea,spread,Everton,BetOnline.ag,-127,3/5,100,Pending,0.0,0.5
+2026-03-17,soccer_epl,Everton,Chelsea,spread,Chelsea,LowVig.ag,107,3/5,100,Pending,0.0,-0.5
+2026-03-17,soccer_epl,Everton,Chelsea,spread,Everton,LowVig.ag,-127,3/5,100,Pending,0.0,0.5
+2026-03-17,soccer_epl,Everton,Chelsea,spread,Chelsea,BetUS,105,3/5,100,Pending,0.0,-0.5
+2026-03-17,soccer_epl,Everton,Chelsea,spread,Everton,BetUS,-125,3/5,100,Pending,0.0,0.5
+2026-03-17,soccer_epl,Leeds United,Brentford,spread,Brentford,MyBookie.ag,-189,3/5,100,Pending,0.0,0.5
+2026-03-17,soccer_epl,Leeds United,Brentford,spread,Leeds United,MyBookie.ag,135,3/5,100,Pending,0.0,-0.5
+2026-03-17,soccer_epl,Leeds United,Brentford,spread,Brentford,Bovada,105,3/5,100,Pending,0.0,0.0
+2026-03-17,soccer_epl,Leeds United,Brentford,spread,Leeds United,Bovada,-125,3/5,100,Pending,0.0,0.0
+2026-03-17,soccer_epl,Leeds United,Brentford,spread,Brentford,BetOnline.ag,105,3/5,100,Pending,0.0,0.0
+2026-03-17,soccer_epl,Leeds United,Brentford,spread,Leeds United,BetOnline.ag,-125,3/5,100,Pending,0.0,0.0
+2026-03-17,soccer_epl,Leeds United,Brentford,spread,Brentford,LowVig.ag,105,3/5,100,Pending,0.0,0.0
+2026-03-17,soccer_epl,Leeds United,Brentford,spread,Leeds United,LowVig.ag,-125,3/5,100,Pending,0.0,0.0
+2026-03-17,soccer_epl,Leeds United,Brentford,spread,Brentford,BetUS,105,3/5,100,Pending,0.0,0.0
+2026-03-17,soccer_epl,Leeds United,Brentford,spread,Leeds United,BetUS,-125,3/5,100,Pending,0.0,0.0
+2026-03-17,soccer_epl,Newcastle United,Sunderland,spread,Newcastle United,MyBookie.ag,-162,3/5,100,Pending,0.0,-0.5
+2026-03-17,soccer_epl,Newcastle United,Sunderland,spread,Sunderland,MyBookie.ag,117,3/5,100,Pending,0.0,0.5
+2026-03-17,soccer_epl,Newcastle United,Sunderland,spread,Newcastle United,Bovada,-120,3/5,100,Pending,0.0,-0.75
+2026-03-17,soccer_epl,Newcastle United,Sunderland,spread,Sunderland,Bovada,100,3/5,100,Pending,0.0,0.75
+2026-03-17,soccer_epl,Newcastle United,Sunderland,spread,Newcastle United,LowVig.ag,-118,3/5,100,Pending,0.0,-0.75
+2026-03-17,soccer_epl,Newcastle United,Sunderland,spread,Sunderland,LowVig.ag,-102,3/5,100,Pending,0.0,0.75
+2026-03-17,soccer_epl,Newcastle United,Sunderland,spread,Newcastle United,BetOnline.ag,-118,3/5,100,Pending,0.0,-0.75
+2026-03-17,soccer_epl,Newcastle United,Sunderland,spread,Sunderland,BetOnline.ag,-102,3/5,100,Pending,0.0,0.75
+2026-03-17,soccer_epl,Aston Villa,West Ham United,spread,Aston Villa,MyBookie.ag,-110,3/5,100,Pending,0.0,-0.5
+2026-03-17,soccer_epl,Aston Villa,West Ham United,spread,West Ham United,MyBookie.ag,-125,3/5,100,Pending,0.0,0.5
+2026-03-17,soccer_epl,Aston Villa,West Ham United,spread,Aston Villa,Bovada,-105,3/5,100,Pending,0.0,-0.5
+2026-03-17,soccer_epl,Aston Villa,West Ham United,spread,West Ham United,Bovada,-115,3/5,100,Pending,0.0,0.5
+2026-03-17,soccer_epl,Aston Villa,West Ham United,spread,Aston Villa,BetOnline.ag,100,3/5,100,Pending,0.0,-0.5
+2026-03-17,soccer_epl,Aston Villa,West Ham United,spread,West Ham United,BetOnline.ag,-120,3/5,100,Pending,0.0,0.5
+2026-03-17,soccer_epl,Aston Villa,West Ham United,spread,Aston Villa,LowVig.ag,100,3/5,100,Pending,0.0,-0.5
+2026-03-17,soccer_epl,Aston Villa,West Ham United,spread,West Ham United,LowVig.ag,-120,3/5,100,Pending,0.0,0.5
+2026-03-17,soccer_epl,Aston Villa,West Ham United,spread,Aston Villa,BetUS,-105,3/5,100,Pending,0.0,-0.5
+2026-03-17,soccer_epl,Aston Villa,West Ham United,spread,West Ham United,BetUS,-115,3/5,100,Pending,0.0,0.5
+2026-03-17,soccer_epl,Tottenham Hotspur,Nottingham Forest,spread,Nottingham Forest,MyBookie.ag,-189,3/5,100,Pending,0.0,0.5
+2026-03-17,soccer_epl,Tottenham Hotspur,Nottingham Forest,spread,Tottenham Hotspur,MyBookie.ag,135,3/5,100,Pending,0.0,-0.5
+2026-03-17,soccer_epl,Tottenham Hotspur,Nottingham Forest,spread,Nottingham Forest,Bovada,108,3/5,100,Pending,0.0,0.0
+2026-03-17,soccer_epl,Tottenham Hotspur,Nottingham Forest,spread,Tottenham Hotspur,Bovada,-128,3/5,100,Pending,0.0,0.0
+2026-03-17,soccer_epl,Tottenham Hotspur,Nottingham Forest,spread,Nottingham Forest,LowVig.ag,104,3/5,100,Pending,0.0,0.0
+2026-03-17,soccer_epl,Tottenham Hotspur,Nottingham Forest,spread,Tottenham Hotspur,LowVig.ag,-124,3/5,100,Pending,0.0,0.0
+2026-03-17,soccer_epl,Tottenham Hotspur,Nottingham Forest,spread,Nottingham Forest,BetOnline.ag,104,3/5,100,Pending,0.0,0.0
+2026-03-17,soccer_epl,Tottenham Hotspur,Nottingham Forest,spread,Tottenham Hotspur,BetOnline.ag,-124,3/5,100,Pending,0.0,0.0
+2026-03-17,soccer_epl,Tottenham Hotspur,Nottingham Forest,spread,Nottingham Forest,BetUS,108,3/5,100,Pending,0.0,0.0
+2026-03-17,soccer_epl,Tottenham Hotspur,Nottingham Forest,spread,Tottenham Hotspur,BetUS,-128,3/5,100,Pending,0.0,0.0
+2026-03-17,soccer_epl,West Ham United,Wolverhampton Wanderers,spread,West Ham United,MyBookie.ag,-133,3/5,100,Pending,0.0,-0.5
+2026-03-17,soccer_epl,West Ham United,Wolverhampton Wanderers,spread,Wolverhampton Wanderers,MyBookie.ag,-104,3/5,100,Pending,0.0,0.5
+2026-03-17,soccer_epl,West Ham United,Wolverhampton Wanderers,spread,West Ham United,Bovada,-102,3/5,100,Pending,0.0,-0.75
+2026-03-17,soccer_epl,West Ham United,Wolverhampton Wanderers,spread,Wolverhampton Wanderers,Bovada,-118,3/5,100,Pending,0.0,0.75
+2026-03-17,soccer_epl,West Ham United,Wolverhampton Wanderers,spread,West Ham United,LowVig.ag,100,3/5,100,Pending,0.0,-0.75
+2026-03-17,soccer_epl,West Ham United,Wolverhampton Wanderers,spread,Wolverhampton Wanderers,LowVig.ag,-116,3/5,100,Pending,0.0,0.75
+2026-03-17,soccer_epl,West Ham United,Wolverhampton Wanderers,spread,West Ham United,BetOnline.ag,100,3/5,100,Pending,0.0,-0.75
+2026-03-17,soccer_epl,West Ham United,Wolverhampton Wanderers,spread,Wolverhampton Wanderers,BetOnline.ag,-116,3/5,100,Pending,0.0,0.75
+2026-03-17,soccer_epl,Arsenal,Bournemouth,spread,Arsenal,MyBookie.ag,-107,3/5,100,Pending,0.0,-1.5
+2026-03-17,soccer_epl,Arsenal,Bournemouth,spread,Bournemouth,MyBookie.ag,-129,3/5,100,Pending,0.0,1.5
+2026-03-17,soccer_epl,Arsenal,Bournemouth,spread,Arsenal,Bovada,-122,3/5,100,Pending,0.0,-1.25
+2026-03-17,soccer_epl,Arsenal,Bournemouth,spread,Bournemouth,Bovada,102,3/5,100,Pending,0.0,1.25
+2026-03-17,soccer_epl,Arsenal,Bournemouth,spread,Arsenal,BetOnline.ag,-121,3/5,100,Pending,0.0,-1.25
+2026-03-17,soccer_epl,Arsenal,Bournemouth,spread,Bournemouth,BetOnline.ag,105,3/5,100,Pending,0.0,1.25
+2026-03-17,soccer_epl,Arsenal,Bournemouth,spread,Arsenal,LowVig.ag,-121,3/5,100,Pending,0.0,-1.25
+2026-03-17,soccer_epl,Arsenal,Bournemouth,spread,Bournemouth,LowVig.ag,105,3/5,100,Pending,0.0,1.25
+2026-03-17,soccer_epl,Nottingham Forest,Aston Villa,spread,Aston Villa,MyBookie.ag,-198,3/5,100,Pending,0.0,0.5
+2026-03-17,soccer_epl,Nottingham Forest,Aston Villa,spread,Nottingham Forest,MyBookie.ag,140,3/5,100,Pending,0.0,-0.5
+2026-03-17,soccer_epl,Nottingham Forest,Aston Villa,spread,Aston Villa,Bovada,-102,3/5,100,Pending,0.0,0.0
+2026-03-17,soccer_epl,Nottingham Forest,Aston Villa,spread,Nottingham Forest,Bovada,-118,3/5,100,Pending,0.0,0.0
+2026-03-17,soccer_epl,Nottingham Forest,Aston Villa,spread,Aston Villa,LowVig.ag,100,3/5,100,Pending,0.0,0.0
+2026-03-17,soccer_epl,Nottingham Forest,Aston Villa,spread,Nottingham Forest,LowVig.ag,-116,3/5,100,Pending,0.0,0.0
+2026-03-17,soccer_epl,Nottingham Forest,Aston Villa,spread,Aston Villa,BetOnline.ag,100,3/5,100,Pending,0.0,0.0
+2026-03-17,soccer_epl,Nottingham Forest,Aston Villa,spread,Nottingham Forest,BetOnline.ag,-116,3/5,100,Pending,0.0,0.0
+2026-03-17,soccer_epl,Brentford,Everton,spread,Brentford,MyBookie.ag,108,3/5,100,Pending,0.0,-0.5
+2026-03-17,soccer_epl,Brentford,Everton,spread,Everton,MyBookie.ag,-149,3/5,100,Pending,0.0,0.5
+2026-03-17,soccer_epl,Brentford,Everton,spread,Brentford,Bovada,-118,3/5,100,Pending,0.0,-0.25
+2026-03-17,soccer_epl,Brentford,Everton,spread,Everton,Bovada,-102,3/5,100,Pending,0.0,0.25
+2026-03-17,soccer_epl,Brentford,Everton,spread,Brentford,LowVig.ag,-115,3/5,100,Pending,0.0,-0.25
+2026-03-17,soccer_epl,Brentford,Everton,spread,Everton,LowVig.ag,-101,3/5,100,Pending,0.0,0.25
+2026-03-17,soccer_epl,Brentford,Everton,spread,Brentford,BetOnline.ag,-115,3/5,100,Pending,0.0,-0.25
+2026-03-17,soccer_epl,Brentford,Everton,spread,Everton,BetOnline.ag,-101,3/5,100,Pending,0.0,0.25
+2026-03-17,soccer_epl,Burnley,Brighton and Hove Albion,spread,Brighton and Hove Albion,MyBookie.ag,-129,3/5,100,Pending,0.0,-0.5
+2026-03-17,soccer_epl,Burnley,Brighton and Hove Albion,spread,Burnley,MyBookie.ag,-107,3/5,100,Pending,0.0,0.5
+2026-03-17,soccer_epl,Burnley,Brighton and Hove Albion,spread,Brighton and Hove Albion,Bovada,-122,3/5,100,Pending,0.0,-0.5
+2026-03-17,soccer_epl,Burnley,Brighton and Hove Albion,spread,Burnley,Bovada,102,3/5,100,Pending,0.0,0.5
+2026-03-17,soccer_epl,Burnley,Brighton and Hove Albion,spread,Brighton and Hove Albion,BetOnline.ag,-118,3/5,100,Pending,0.0,-0.5
+2026-03-17,soccer_epl,Burnley,Brighton and Hove Albion,spread,Burnley,BetOnline.ag,102,3/5,100,Pending,0.0,0.5
+2026-03-17,soccer_epl,Burnley,Brighton and Hove Albion,spread,Brighton and Hove Albion,LowVig.ag,-118,3/5,100,Pending,0.0,-0.5
+2026-03-17,soccer_epl,Burnley,Brighton and Hove Albion,spread,Burnley,LowVig.ag,102,3/5,100,Pending,0.0,0.5
+2026-03-17,soccer_epl,Crystal Palace,Newcastle United,spread,Crystal Palace,MyBookie.ag,-190,3/5,100,Pending,0.0,0.5
+2026-03-17,soccer_epl,Crystal Palace,Newcastle United,spread,Newcastle United,MyBookie.ag,135,3/5,100,Pending,0.0,-0.5
+2026-03-17,soccer_epl,Crystal Palace,Newcastle United,spread,Crystal Palace,Bovada,105,3/5,100,Pending,0.0,0.0
+2026-03-17,soccer_epl,Crystal Palace,Newcastle United,spread,Newcastle United,Bovada,-125,3/5,100,Pending,0.0,0.0
+2026-03-17,soccer_epl,Crystal Palace,Newcastle United,spread,Crystal Palace,LowVig.ag,109,3/5,100,Pending,0.0,0.0
+2026-03-17,soccer_epl,Crystal Palace,Newcastle United,spread,Newcastle United,LowVig.ag,-125,3/5,100,Pending,0.0,0.0
+2026-03-17,soccer_epl,Crystal Palace,Newcastle United,spread,Crystal Palace,BetOnline.ag,109,3/5,100,Pending,0.0,0.0
+2026-03-17,soccer_epl,Crystal Palace,Newcastle United,spread,Newcastle United,BetOnline.ag,-125,3/5,100,Pending,0.0,0.0
+2026-03-17,soccer_epl,Liverpool,Fulham,spread,Fulham,MyBookie.ag,-176,3/5,100,Pending,0.0,1.5
+2026-03-17,soccer_epl,Liverpool,Fulham,spread,Liverpool,MyBookie.ag,126,3/5,100,Pending,0.0,-1.5
+2026-03-17,soccer_epl,Liverpool,Fulham,spread,Fulham,Bovada,102,3/5,100,Pending,0.0,1.0
+2026-03-17,soccer_epl,Liverpool,Fulham,spread,Liverpool,Bovada,-122,3/5,100,Pending,0.0,-1.0
+2026-03-17,soccer_epl,Liverpool,Fulham,spread,Fulham,LowVig.ag,105,3/5,100,Pending,0.0,1.0
+2026-03-17,soccer_epl,Liverpool,Fulham,spread,Liverpool,LowVig.ag,-121,3/5,100,Pending,0.0,-1.0
+2026-03-17,soccer_epl,Liverpool,Fulham,spread,Fulham,BetOnline.ag,105,3/5,100,Pending,0.0,1.0
+2026-03-17,soccer_epl,Liverpool,Fulham,spread,Liverpool,BetOnline.ag,-121,3/5,100,Pending,0.0,-1.0
+2026-03-17,soccer_epl,Sunderland,Tottenham Hotspur,spread,Sunderland,MyBookie.ag,-202,3/5,100,Pending,0.0,0.5
+2026-03-17,soccer_epl,Sunderland,Tottenham Hotspur,spread,Tottenham Hotspur,MyBookie.ag,143,3/5,100,Pending,0.0,-0.5
+2026-03-17,soccer_epl,Sunderland,Tottenham Hotspur,spread,Sunderland,Bovada,-108,3/5,100,Pending,0.0,0.0
+2026-03-17,soccer_epl,Sunderland,Tottenham Hotspur,spread,Tottenham Hotspur,Bovada,-112,3/5,100,Pending,0.0,0.0
+2026-03-17,soccer_epl,Sunderland,Tottenham Hotspur,spread,Sunderland,LowVig.ag,-105,3/5,100,Pending,0.0,0.0
+2026-03-17,soccer_epl,Sunderland,Tottenham Hotspur,spread,Tottenham Hotspur,LowVig.ag,-111,3/5,100,Pending,0.0,0.0
+2026-03-17,soccer_epl,Sunderland,Tottenham Hotspur,spread,Sunderland,BetOnline.ag,-105,3/5,100,Pending,0.0,0.0
+2026-03-17,soccer_epl,Sunderland,Tottenham Hotspur,spread,Tottenham Hotspur,BetOnline.ag,-111,3/5,100,Pending,0.0,0.0
+2026-03-17,soccer_epl,Chelsea,Manchester City,spread,Chelsea,MyBookie.ag,-179,3/5,100,Pending,0.0,0.5
+2026-03-17,soccer_epl,Chelsea,Manchester City,spread,Manchester City,MyBookie.ag,128,3/5,100,Pending,0.0,-0.5
+2026-03-17,soccer_epl,Chelsea,Manchester City,spread,Chelsea,Bovada,105,3/5,100,Pending,0.0,0.0
+2026-03-17,soccer_epl,Chelsea,Manchester City,spread,Manchester City,Bovada,-125,3/5,100,Pending,0.0,0.0
+2026-03-17,soccer_epl,Chelsea,Manchester City,spread,Chelsea,BetOnline.ag,107,3/5,100,Pending,0.0,0.0
+2026-03-17,soccer_epl,Chelsea,Manchester City,spread,Manchester City,BetOnline.ag,-123,3/5,100,Pending,0.0,0.0
+2026-03-17,soccer_epl,Chelsea,Manchester City,spread,Chelsea,LowVig.ag,107,3/5,100,Pending,0.0,0.0
+2026-03-17,soccer_epl,Chelsea,Manchester City,spread,Manchester City,LowVig.ag,-123,3/5,100,Pending,0.0,0.0
+2026-03-17,soccer_epl,Manchester United,Leeds United,spread,Leeds United,MyBookie.ag,124,3/5,100,Pending,0.0,0.5
+2026-03-17,soccer_epl,Manchester United,Leeds United,spread,Manchester United,MyBookie.ag,-173,3/5,100,Pending,0.0,-0.5
+2026-03-17,soccer_epl,Manchester United,Leeds United,spread,Leeds United,Bovada,-125,3/5,100,Pending,0.0,1.0
+2026-03-17,soccer_epl,Manchester United,Leeds United,spread,Manchester United,Bovada,105,3/5,100,Pending,0.0,-1.0
+2026-03-17,soccer_epl,Manchester United,Leeds United,spread,Leeds United,BetOnline.ag,-122,3/5,100,Pending,0.0,1.0
+2026-03-17,soccer_epl,Manchester United,Leeds United,spread,Manchester United,BetOnline.ag,106,3/5,100,Pending,0.0,-1.0
+2026-03-17,soccer_epl,Manchester United,Leeds United,spread,Leeds United,LowVig.ag,-122,3/5,100,Pending,0.0,1.0
+2026-03-17,soccer_epl,Manchester United,Leeds United,spread,Manchester United,LowVig.ag,106,3/5,100,Pending,0.0,-1.0
+2026-03-17,basketball_nba,Charlotte Hornets,Miami Heat,total,Over,FanDuel,-108,3/5,100,Pending,0.0,233.5
+2026-03-17,basketball_nba,Charlotte Hornets,Miami Heat,total,Under,FanDuel,-112,3/5,100,Pending,0.0,233.5
+2026-03-17,basketball_nba,Charlotte Hornets,Miami Heat,total,Over,DraftKings,-110,3/5,100,Pending,0.0,233.5
+2026-03-17,basketball_nba,Charlotte Hornets,Miami Heat,total,Under,DraftKings,-110,3/5,100,Pending,0.0,233.5
+2026-03-17,basketball_nba,Charlotte Hornets,Miami Heat,total,Over,MyBookie.ag,-110,3/5,100,Pending,0.0,234.0
+2026-03-17,basketball_nba,Charlotte Hornets,Miami Heat,total,Under,MyBookie.ag,-110,3/5,100,Pending,0.0,234.0
+2026-03-17,basketball_nba,Charlotte Hornets,Miami Heat,total,Over,BetRivers,-110,3/5,100,Pending,0.0,234.0
+2026-03-17,basketball_nba,Charlotte Hornets,Miami Heat,total,Under,BetRivers,-112,3/5,100,Pending,0.0,234.0
+2026-03-17,basketball_nba,Charlotte Hornets,Miami Heat,total,Over,LowVig.ag,-107,3/5,100,Pending,0.0,233.5
+2026-03-17,basketball_nba,Charlotte Hornets,Miami Heat,total,Under,LowVig.ag,-107,3/5,100,Pending,0.0,233.5
+2026-03-17,basketball_nba,Charlotte Hornets,Miami Heat,total,Over,BetOnline.ag,-110,3/5,100,Pending,0.0,233.5
+2026-03-17,basketball_nba,Charlotte Hornets,Miami Heat,total,Under,BetOnline.ag,-110,3/5,100,Pending,0.0,233.5
+2026-03-17,basketball_nba,Charlotte Hornets,Miami Heat,total,Over,BetUS,-110,3/5,100,Pending,0.0,233.5
+2026-03-17,basketball_nba,Charlotte Hornets,Miami Heat,total,Under,BetUS,-110,3/5,100,Pending,0.0,233.5
+2026-03-17,basketball_nba,Charlotte Hornets,Miami Heat,total,Over,BetMGM,-110,3/5,100,Pending,0.0,233.5
+2026-03-17,basketball_nba,Charlotte Hornets,Miami Heat,total,Under,BetMGM,-110,3/5,100,Pending,0.0,233.5
+2026-03-17,basketball_nba,Charlotte Hornets,Miami Heat,total,Over,Bovada,-110,3/5,100,Pending,0.0,233.5
+2026-03-17,basketball_nba,Charlotte Hornets,Miami Heat,total,Under,Bovada,-110,3/5,100,Pending,0.0,233.5
+2026-03-17,basketball_nba,Washington Wizards,Detroit Pistons,total,Over,FanDuel,-108,3/5,100,Pending,0.0,233.5
+2026-03-17,basketball_nba,Washington Wizards,Detroit Pistons,total,Under,FanDuel,-112,3/5,100,Pending,0.0,233.5
+2026-03-17,basketball_nba,Washington Wizards,Detroit Pistons,total,Over,BetOnline.ag,-110,3/5,100,Pending,0.0,233.0
+2026-03-17,basketball_nba,Washington Wizards,Detroit Pistons,total,Under,BetOnline.ag,-110,3/5,100,Pending,0.0,233.0
+2026-03-17,basketball_nba,Washington Wizards,Detroit Pistons,total,Over,BetUS,-110,3/5,100,Pending,0.0,233.0
+2026-03-17,basketball_nba,Washington Wizards,Detroit Pistons,total,Under,BetUS,-110,3/5,100,Pending,0.0,233.0
+2026-03-17,basketball_nba,Washington Wizards,Detroit Pistons,total,Over,LowVig.ag,-107,3/5,100,Pending,0.0,233.0
+2026-03-17,basketball_nba,Washington Wizards,Detroit Pistons,total,Under,LowVig.ag,-107,3/5,100,Pending,0.0,233.0
+2026-03-17,basketball_nba,Washington Wizards,Detroit Pistons,total,Over,DraftKings,-105,3/5,100,Pending,0.0,233.5
+2026-03-17,basketball_nba,Washington Wizards,Detroit Pistons,total,Under,DraftKings,-115,3/5,100,Pending,0.0,233.5
+2026-03-17,basketball_nba,Washington Wizards,Detroit Pistons,total,Over,BetMGM,-110,3/5,100,Pending,0.0,233.5
+2026-03-17,basketball_nba,Washington Wizards,Detroit Pistons,total,Under,BetMGM,-110,3/5,100,Pending,0.0,233.5
+2026-03-17,basketball_nba,Washington Wizards,Detroit Pistons,total,Over,BetRivers,-110,3/5,100,Pending,0.0,234.0
+2026-03-17,basketball_nba,Washington Wizards,Detroit Pistons,total,Under,BetRivers,-113,3/5,100,Pending,0.0,234.0
+2026-03-17,basketball_nba,Washington Wizards,Detroit Pistons,total,Over,MyBookie.ag,-110,3/5,100,Pending,0.0,233.5
+2026-03-17,basketball_nba,Washington Wizards,Detroit Pistons,total,Under,MyBookie.ag,-110,3/5,100,Pending,0.0,233.5
+2026-03-17,basketball_nba,Washington Wizards,Detroit Pistons,total,Over,Bovada,-110,3/5,100,Pending,0.0,233.0
+2026-03-17,basketball_nba,Washington Wizards,Detroit Pistons,total,Under,Bovada,-110,3/5,100,Pending,0.0,233.0
+2026-03-17,basketball_nba,Orlando Magic,Oklahoma City Thunder,total,Over,FanDuel,-110,3/5,100,Pending,0.0,223.5
+2026-03-17,basketball_nba,Orlando Magic,Oklahoma City Thunder,total,Under,FanDuel,-110,3/5,100,Pending,0.0,223.5
+2026-03-17,basketball_nba,Orlando Magic,Oklahoma City Thunder,total,Over,LowVig.ag,-107,3/5,100,Pending,0.0,223.0
+2026-03-17,basketball_nba,Orlando Magic,Oklahoma City Thunder,total,Under,LowVig.ag,-107,3/5,100,Pending,0.0,223.0
+2026-03-17,basketball_nba,Orlando Magic,Oklahoma City Thunder,total,Over,BetOnline.ag,-110,3/5,100,Pending,0.0,223.0
+2026-03-17,basketball_nba,Orlando Magic,Oklahoma City Thunder,total,Under,BetOnline.ag,-110,3/5,100,Pending,0.0,223.0
+2026-03-17,basketball_nba,Orlando Magic,Oklahoma City Thunder,total,Over,DraftKings,-115,3/5,100,Pending,0.0,222.5
+2026-03-17,basketball_nba,Orlando Magic,Oklahoma City Thunder,total,Under,DraftKings,-105,3/5,100,Pending,0.0,222.5
+2026-03-17,basketball_nba,Orlando Magic,Oklahoma City Thunder,total,Over,BetUS,-110,3/5,100,Pending,0.0,223.0
+2026-03-17,basketball_nba,Orlando Magic,Oklahoma City Thunder,total,Under,BetUS,-110,3/5,100,Pending,0.0,223.0
+2026-03-17,basketball_nba,Orlando Magic,Oklahoma City Thunder,total,Over,BetRivers,-112,3/5,100,Pending,0.0,223.5
+2026-03-17,basketball_nba,Orlando Magic,Oklahoma City Thunder,total,Under,BetRivers,-112,3/5,100,Pending,0.0,223.5
+2026-03-17,basketball_nba,Orlando Magic,Oklahoma City Thunder,total,Over,Bovada,-110,3/5,100,Pending,0.0,224.0
+2026-03-17,basketball_nba,Orlando Magic,Oklahoma City Thunder,total,Under,Bovada,-110,3/5,100,Pending,0.0,224.0
+2026-03-17,basketball_nba,Orlando Magic,Oklahoma City Thunder,total,Over,MyBookie.ag,-110,3/5,100,Pending,0.0,223.5
+2026-03-17,basketball_nba,Orlando Magic,Oklahoma City Thunder,total,Under,MyBookie.ag,-110,3/5,100,Pending,0.0,223.5
+2026-03-17,basketball_nba,Orlando Magic,Oklahoma City Thunder,total,Over,BetMGM,-105,3/5,100,Pending,0.0,223.5
+2026-03-17,basketball_nba,Orlando Magic,Oklahoma City Thunder,total,Under,BetMGM,-115,3/5,100,Pending,0.0,223.5
+2026-03-17,basketball_nba,New York Knicks,Indiana Pacers,total,Over,FanDuel,-110,3/5,100,Pending,0.0,221.5
+2026-03-17,basketball_nba,New York Knicks,Indiana Pacers,total,Under,FanDuel,-110,3/5,100,Pending,0.0,221.5
+2026-03-17,basketball_nba,New York Knicks,Indiana Pacers,total,Over,MyBookie.ag,-110,3/5,100,Pending,0.0,222.0
+2026-03-17,basketball_nba,New York Knicks,Indiana Pacers,total,Under,MyBookie.ag,-110,3/5,100,Pending,0.0,222.0
+2026-03-17,basketball_nba,New York Knicks,Indiana Pacers,total,Over,DraftKings,-115,3/5,100,Pending,0.0,221.5
+2026-03-17,basketball_nba,New York Knicks,Indiana Pacers,total,Under,DraftKings,-105,3/5,100,Pending,0.0,221.5
+2026-03-17,basketball_nba,New York Knicks,Indiana Pacers,total,Over,BetRivers,-112,3/5,100,Pending,0.0,221.5
+2026-03-17,basketball_nba,New York Knicks,Indiana Pacers,total,Under,BetRivers,-112,3/5,100,Pending,0.0,221.5
+2026-03-17,basketball_nba,New York Knicks,Indiana Pacers,total,Over,LowVig.ag,-113,3/5,100,Pending,0.0,221.5
+2026-03-17,basketball_nba,New York Knicks,Indiana Pacers,total,Under,LowVig.ag,-102,3/5,100,Pending,0.0,221.5
+2026-03-17,basketball_nba,New York Knicks,Indiana Pacers,total,Over,BetOnline.ag,-115,3/5,100,Pending,0.0,221.5
+2026-03-17,basketball_nba,New York Knicks,Indiana Pacers,total,Under,BetOnline.ag,-105,3/5,100,Pending,0.0,221.5
+2026-03-17,basketball_nba,New York Knicks,Indiana Pacers,total,Over,BetUS,-110,3/5,100,Pending,0.0,222.0
+2026-03-17,basketball_nba,New York Knicks,Indiana Pacers,total,Under,BetUS,-110,3/5,100,Pending,0.0,222.0
+2026-03-17,basketball_nba,New York Knicks,Indiana Pacers,total,Over,BetMGM,-105,3/5,100,Pending,0.0,222.5
+2026-03-17,basketball_nba,New York Knicks,Indiana Pacers,total,Under,BetMGM,-110,3/5,100,Pending,0.0,222.5
+2026-03-17,basketball_nba,New York Knicks,Indiana Pacers,total,Over,Bovada,-110,3/5,100,Pending,0.0,221.5
+2026-03-17,basketball_nba,New York Knicks,Indiana Pacers,total,Under,Bovada,-110,3/5,100,Pending,0.0,221.5
+2026-03-17,basketball_nba,Milwaukee Bucks,Cleveland Cavaliers,total,Over,FanDuel,-110,3/5,100,Pending,0.0,228.5
+2026-03-17,basketball_nba,Milwaukee Bucks,Cleveland Cavaliers,total,Under,FanDuel,-110,3/5,100,Pending,0.0,228.5
+2026-03-17,basketball_nba,Milwaukee Bucks,Cleveland Cavaliers,total,Over,DraftKings,-105,3/5,100,Pending,0.0,229.5
+2026-03-17,basketball_nba,Milwaukee Bucks,Cleveland Cavaliers,total,Under,DraftKings,-115,3/5,100,Pending,0.0,229.5
+2026-03-17,basketball_nba,Milwaukee Bucks,Cleveland Cavaliers,total,Over,BetRivers,-110,3/5,100,Pending,0.0,229.5
+2026-03-17,basketball_nba,Milwaukee Bucks,Cleveland Cavaliers,total,Under,BetRivers,-113,3/5,100,Pending,0.0,229.5
+2026-03-17,basketball_nba,Milwaukee Bucks,Cleveland Cavaliers,total,Over,LowVig.ag,-105,3/5,100,Pending,0.0,229.0
+2026-03-17,basketball_nba,Milwaukee Bucks,Cleveland Cavaliers,total,Under,LowVig.ag,-109,3/5,100,Pending,0.0,229.0
+2026-03-17,basketball_nba,Milwaukee Bucks,Cleveland Cavaliers,total,Over,BetOnline.ag,-108,3/5,100,Pending,0.0,229.0
+2026-03-17,basketball_nba,Milwaukee Bucks,Cleveland Cavaliers,total,Under,BetOnline.ag,-112,3/5,100,Pending,0.0,229.0
+2026-03-17,basketball_nba,Milwaukee Bucks,Cleveland Cavaliers,total,Over,BetUS,-110,3/5,100,Pending,0.0,229.0
+2026-03-17,basketball_nba,Milwaukee Bucks,Cleveland Cavaliers,total,Under,BetUS,-110,3/5,100,Pending,0.0,229.0
+2026-03-17,basketball_nba,Milwaukee Bucks,Cleveland Cavaliers,total,Over,BetMGM,-105,3/5,100,Pending,0.0,229.5
+2026-03-17,basketball_nba,Milwaukee Bucks,Cleveland Cavaliers,total,Under,BetMGM,-115,3/5,100,Pending,0.0,229.5
+2026-03-17,basketball_nba,Milwaukee Bucks,Cleveland Cavaliers,total,Over,Bovada,-110,3/5,100,Pending,0.0,229.0
+2026-03-17,basketball_nba,Milwaukee Bucks,Cleveland Cavaliers,total,Under,Bovada,-110,3/5,100,Pending,0.0,229.0
+2026-03-17,basketball_nba,Milwaukee Bucks,Cleveland Cavaliers,total,Over,MyBookie.ag,-110,3/5,100,Pending,0.0,229.0
+2026-03-17,basketball_nba,Milwaukee Bucks,Cleveland Cavaliers,total,Under,MyBookie.ag,-110,3/5,100,Pending,0.0,229.0
+2026-03-17,basketball_nba,Minnesota Timberwolves,Phoenix Suns,total,Over,FanDuel,-114,3/5,100,Pending,0.0,221.5
+2026-03-17,basketball_nba,Minnesota Timberwolves,Phoenix Suns,total,Under,FanDuel,-106,3/5,100,Pending,0.0,221.5
+2026-03-17,basketball_nba,Minnesota Timberwolves,Phoenix Suns,total,Over,BetUS,-110,3/5,100,Pending,0.0,221.5
+2026-03-17,basketball_nba,Minnesota Timberwolves,Phoenix Suns,total,Under,BetUS,-110,3/5,100,Pending,0.0,221.5
+2026-03-17,basketball_nba,Minnesota Timberwolves,Phoenix Suns,total,Over,LowVig.ag,-113,3/5,100,Pending,0.0,221.5
+2026-03-17,basketball_nba,Minnesota Timberwolves,Phoenix Suns,total,Under,LowVig.ag,-102,3/5,100,Pending,0.0,221.5
+2026-03-17,basketball_nba,Minnesota Timberwolves,Phoenix Suns,total,Over,BetOnline.ag,-115,3/5,100,Pending,0.0,221.5
+2026-03-17,basketball_nba,Minnesota Timberwolves,Phoenix Suns,total,Under,BetOnline.ag,-105,3/5,100,Pending,0.0,221.5
+2026-03-17,basketball_nba,Minnesota Timberwolves,Phoenix Suns,total,Over,DraftKings,-115,3/5,100,Pending,0.0,221.5
+2026-03-17,basketball_nba,Minnesota Timberwolves,Phoenix Suns,total,Under,DraftKings,-105,3/5,100,Pending,0.0,221.5
+2026-03-17,basketball_nba,Minnesota Timberwolves,Phoenix Suns,total,Over,BetRivers,-113,3/5,100,Pending,0.0,221.5
+2026-03-17,basketball_nba,Minnesota Timberwolves,Phoenix Suns,total,Under,BetRivers,-110,3/5,100,Pending,0.0,221.5
+2026-03-17,basketball_nba,Minnesota Timberwolves,Phoenix Suns,total,Over,BetMGM,-105,3/5,100,Pending,0.0,222.5
+2026-03-17,basketball_nba,Minnesota Timberwolves,Phoenix Suns,total,Under,BetMGM,-115,3/5,100,Pending,0.0,222.5
+2026-03-17,basketball_nba,Minnesota Timberwolves,Phoenix Suns,total,Over,MyBookie.ag,-110,3/5,100,Pending,0.0,221.5
+2026-03-17,basketball_nba,Minnesota Timberwolves,Phoenix Suns,total,Under,MyBookie.ag,-110,3/5,100,Pending,0.0,221.5
+2026-03-17,basketball_nba,Minnesota Timberwolves,Phoenix Suns,total,Over,Bovada,-110,3/5,100,Pending,0.0,221.5
+2026-03-17,basketball_nba,Minnesota Timberwolves,Phoenix Suns,total,Under,Bovada,-110,3/5,100,Pending,0.0,221.5
+2026-03-17,basketball_nba,Denver Nuggets,Philadelphia 76ers,total,Over,FanDuel,-110,3/5,100,Pending,0.0,235.5
+2026-03-17,basketball_nba,Denver Nuggets,Philadelphia 76ers,total,Under,FanDuel,-110,3/5,100,Pending,0.0,235.5
+2026-03-17,basketball_nba,Denver Nuggets,Philadelphia 76ers,total,Over,DraftKings,-115,3/5,100,Pending,0.0,235.5
+2026-03-17,basketball_nba,Denver Nuggets,Philadelphia 76ers,total,Under,DraftKings,-105,3/5,100,Pending,0.0,235.5
+2026-03-17,basketball_nba,Denver Nuggets,Philadelphia 76ers,total,Over,LowVig.ag,-107,3/5,100,Pending,0.0,236.0
+2026-03-17,basketball_nba,Denver Nuggets,Philadelphia 76ers,total,Under,LowVig.ag,-107,3/5,100,Pending,0.0,236.0
+2026-03-17,basketball_nba,Denver Nuggets,Philadelphia 76ers,total,Over,BetOnline.ag,-110,3/5,100,Pending,0.0,236.0
+2026-03-17,basketball_nba,Denver Nuggets,Philadelphia 76ers,total,Under,BetOnline.ag,-110,3/5,100,Pending,0.0,236.0
+2026-03-17,basketball_nba,Denver Nuggets,Philadelphia 76ers,total,Over,BetRivers,-112,3/5,100,Pending,0.0,236.0
+2026-03-17,basketball_nba,Denver Nuggets,Philadelphia 76ers,total,Under,BetRivers,-112,3/5,100,Pending,0.0,236.0
+2026-03-17,basketball_nba,Denver Nuggets,Philadelphia 76ers,total,Over,BetUS,-110,3/5,100,Pending,0.0,236.0
+2026-03-17,basketball_nba,Denver Nuggets,Philadelphia 76ers,total,Under,BetUS,-110,3/5,100,Pending,0.0,236.0
+2026-03-17,basketball_nba,Denver Nuggets,Philadelphia 76ers,total,Over,BetMGM,-105,3/5,100,Pending,0.0,236.5
+2026-03-17,basketball_nba,Denver Nuggets,Philadelphia 76ers,total,Under,BetMGM,-115,3/5,100,Pending,0.0,236.5
+2026-03-17,basketball_nba,Denver Nuggets,Philadelphia 76ers,total,Over,Bovada,-110,3/5,100,Pending,0.0,236.5
+2026-03-17,basketball_nba,Denver Nuggets,Philadelphia 76ers,total,Under,Bovada,-110,3/5,100,Pending,0.0,236.5
+2026-03-17,basketball_nba,Denver Nuggets,Philadelphia 76ers,total,Over,MyBookie.ag,-110,3/5,100,Pending,0.0,235.5
+2026-03-17,basketball_nba,Denver Nuggets,Philadelphia 76ers,total,Under,MyBookie.ag,-110,3/5,100,Pending,0.0,235.5
+2026-03-17,basketball_nba,Sacramento Kings,San Antonio Spurs,total,Over,FanDuel,-114,3/5,100,Pending,0.0,235.5
+2026-03-17,basketball_nba,Sacramento Kings,San Antonio Spurs,total,Under,FanDuel,-106,3/5,100,Pending,0.0,235.5
+2026-03-17,basketball_nba,Sacramento Kings,San Antonio Spurs,total,Over,BetOnline.ag,-105,3/5,100,Pending,0.0,236.5
+2026-03-17,basketball_nba,Sacramento Kings,San Antonio Spurs,total,Under,BetOnline.ag,-115,3/5,100,Pending,0.0,236.5
+2026-03-17,basketball_nba,Sacramento Kings,San Antonio Spurs,total,Over,LowVig.ag,-102,3/5,100,Pending,0.0,236.5
+2026-03-17,basketball_nba,Sacramento Kings,San Antonio Spurs,total,Under,LowVig.ag,-113,3/5,100,Pending,0.0,236.5
+2026-03-17,basketball_nba,Sacramento Kings,San Antonio Spurs,total,Over,BetUS,-110,3/5,100,Pending,0.0,236.0
+2026-03-17,basketball_nba,Sacramento Kings,San Antonio Spurs,total,Under,BetUS,-110,3/5,100,Pending,0.0,236.0
+2026-03-17,basketball_nba,Sacramento Kings,San Antonio Spurs,total,Over,DraftKings,-115,3/5,100,Pending,0.0,235.5
+2026-03-17,basketball_nba,Sacramento Kings,San Antonio Spurs,total,Under,DraftKings,-105,3/5,100,Pending,0.0,235.5
+2026-03-17,basketball_nba,Sacramento Kings,San Antonio Spurs,total,Over,BetMGM,-115,3/5,100,Pending,0.0,235.5
+2026-03-17,basketball_nba,Sacramento Kings,San Antonio Spurs,total,Under,BetMGM,-105,3/5,100,Pending,0.0,235.5
+2026-03-17,basketball_nba,Sacramento Kings,San Antonio Spurs,total,Over,MyBookie.ag,-110,3/5,100,Pending,0.0,236.0
+2026-03-17,basketball_nba,Sacramento Kings,San Antonio Spurs,total,Under,MyBookie.ag,-110,3/5,100,Pending,0.0,236.0
+2026-03-17,basketball_nba,Sacramento Kings,San Antonio Spurs,total,Over,BetRivers,-113,3/5,100,Pending,0.0,236.0
+2026-03-17,basketball_nba,Sacramento Kings,San Antonio Spurs,total,Under,BetRivers,-109,3/5,100,Pending,0.0,236.0
+2026-03-17,basketball_nba,Sacramento Kings,San Antonio Spurs,total,Over,Bovada,-110,3/5,100,Pending,0.0,236.5
+2026-03-17,basketball_nba,Sacramento Kings,San Antonio Spurs,total,Under,Bovada,-110,3/5,100,Pending,0.0,236.5
+2026-03-17,icehockey_nhl,Montréal Canadiens,Boston Bruins,total,Over,BetRivers,-127,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Montréal Canadiens,Boston Bruins,total,Under,BetRivers,100,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Montréal Canadiens,Boston Bruins,total,Over,FanDuel,-102,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Montréal Canadiens,Boston Bruins,total,Under,FanDuel,-120,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Montréal Canadiens,Boston Bruins,total,Over,DraftKings,-105,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Montréal Canadiens,Boston Bruins,total,Under,DraftKings,-115,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Montréal Canadiens,Boston Bruins,total,Over,BetMGM,-105,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Montréal Canadiens,Boston Bruins,total,Under,BetMGM,-115,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Montréal Canadiens,Boston Bruins,total,Over,Bovada,-103,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Montréal Canadiens,Boston Bruins,total,Under,Bovada,-117,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Montréal Canadiens,Boston Bruins,total,Over,MyBookie.ag,-105,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Montréal Canadiens,Boston Bruins,total,Under,MyBookie.ag,-116,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Montréal Canadiens,Boston Bruins,total,Over,LowVig.ag,-104,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Montréal Canadiens,Boston Bruins,total,Under,LowVig.ag,-112,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Montréal Canadiens,Boston Bruins,total,Over,BetOnline.ag,-104,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Montréal Canadiens,Boston Bruins,total,Under,BetOnline.ag,-112,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Montréal Canadiens,Boston Bruins,total,Over,BetUS,-105,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Montréal Canadiens,Boston Bruins,total,Under,BetUS,-115,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Columbus Blue Jackets,Carolina Hurricanes,total,Over,BetRivers,-105,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Columbus Blue Jackets,Carolina Hurricanes,total,Under,BetRivers,-122,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Columbus Blue Jackets,Carolina Hurricanes,total,Over,FanDuel,100,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Columbus Blue Jackets,Carolina Hurricanes,total,Under,FanDuel,-122,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Columbus Blue Jackets,Carolina Hurricanes,total,Over,DraftKings,-105,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Columbus Blue Jackets,Carolina Hurricanes,total,Under,DraftKings,-115,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Columbus Blue Jackets,Carolina Hurricanes,total,Over,BetMGM,-105,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Columbus Blue Jackets,Carolina Hurricanes,total,Under,BetMGM,-115,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Columbus Blue Jackets,Carolina Hurricanes,total,Over,BetOnline.ag,-103,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Columbus Blue Jackets,Carolina Hurricanes,total,Under,BetOnline.ag,-113,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Columbus Blue Jackets,Carolina Hurricanes,total,Over,LowVig.ag,-103,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Columbus Blue Jackets,Carolina Hurricanes,total,Under,LowVig.ag,-113,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Columbus Blue Jackets,Carolina Hurricanes,total,Over,BetUS,-105,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Columbus Blue Jackets,Carolina Hurricanes,total,Under,BetUS,-115,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Columbus Blue Jackets,Carolina Hurricanes,total,Over,Bovada,100,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Columbus Blue Jackets,Carolina Hurricanes,total,Under,Bovada,-120,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Columbus Blue Jackets,Carolina Hurricanes,total,Over,MyBookie.ag,-106,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Columbus Blue Jackets,Carolina Hurricanes,total,Under,MyBookie.ag,-116,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Toronto Maple Leafs,New York Islanders,total,Over,BetRivers,-113,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Toronto Maple Leafs,New York Islanders,total,Under,BetRivers,-113,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Toronto Maple Leafs,New York Islanders,total,Over,FanDuel,-138,3/5,100,Pending,0.0,5.5
+2026-03-17,icehockey_nhl,Toronto Maple Leafs,New York Islanders,total,Under,FanDuel,112,3/5,100,Pending,0.0,5.5
+2026-03-17,icehockey_nhl,Toronto Maple Leafs,New York Islanders,total,Over,DraftKings,-135,3/5,100,Pending,0.0,5.5
+2026-03-17,icehockey_nhl,Toronto Maple Leafs,New York Islanders,total,Under,DraftKings,114,3/5,100,Pending,0.0,5.5
+2026-03-17,icehockey_nhl,Toronto Maple Leafs,New York Islanders,total,Over,BetMGM,-115,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Toronto Maple Leafs,New York Islanders,total,Under,BetMGM,-105,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Toronto Maple Leafs,New York Islanders,total,Over,BetOnline.ag,-112,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Toronto Maple Leafs,New York Islanders,total,Under,BetOnline.ag,-104,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Toronto Maple Leafs,New York Islanders,total,Over,LowVig.ag,-112,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Toronto Maple Leafs,New York Islanders,total,Under,LowVig.ag,-104,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Toronto Maple Leafs,New York Islanders,total,Over,BetUS,-115,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Toronto Maple Leafs,New York Islanders,total,Under,BetUS,-105,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Toronto Maple Leafs,New York Islanders,total,Over,Bovada,-112,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Toronto Maple Leafs,New York Islanders,total,Under,Bovada,-108,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Toronto Maple Leafs,New York Islanders,total,Over,MyBookie.ag,-112,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Toronto Maple Leafs,New York Islanders,total,Under,MyBookie.ag,-109,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Chicago Blackhawks,Minnesota Wild,total,Over,BetRivers,-118,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Chicago Blackhawks,Minnesota Wild,total,Under,BetRivers,-108,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Chicago Blackhawks,Minnesota Wild,total,Over,FanDuel,-130,3/5,100,Pending,0.0,5.5
+2026-03-17,icehockey_nhl,Chicago Blackhawks,Minnesota Wild,total,Under,FanDuel,106,3/5,100,Pending,0.0,5.5
+2026-03-17,icehockey_nhl,Chicago Blackhawks,Minnesota Wild,total,Over,DraftKings,-135,3/5,100,Pending,0.0,5.5
+2026-03-17,icehockey_nhl,Chicago Blackhawks,Minnesota Wild,total,Under,DraftKings,114,3/5,100,Pending,0.0,5.5
+2026-03-17,icehockey_nhl,Chicago Blackhawks,Minnesota Wild,total,Over,BetMGM,-110,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Chicago Blackhawks,Minnesota Wild,total,Under,BetMGM,-110,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Chicago Blackhawks,Minnesota Wild,total,Over,LowVig.ag,-110,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Chicago Blackhawks,Minnesota Wild,total,Under,LowVig.ag,-106,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Chicago Blackhawks,Minnesota Wild,total,Over,BetOnline.ag,-110,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Chicago Blackhawks,Minnesota Wild,total,Under,BetOnline.ag,-106,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Chicago Blackhawks,Minnesota Wild,total,Over,BetUS,-110,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Chicago Blackhawks,Minnesota Wild,total,Under,BetUS,-110,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Chicago Blackhawks,Minnesota Wild,total,Over,Bovada,-108,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Chicago Blackhawks,Minnesota Wild,total,Under,Bovada,-112,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Chicago Blackhawks,Minnesota Wild,total,Over,MyBookie.ag,-108,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Chicago Blackhawks,Minnesota Wild,total,Under,MyBookie.ag,-113,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Winnipeg Jets,Nashville Predators,total,Over,BetRivers,-127,3/5,100,Pending,0.0,5.5
+2026-03-17,icehockey_nhl,Winnipeg Jets,Nashville Predators,total,Under,BetRivers,100,3/5,100,Pending,0.0,5.5
+2026-03-17,icehockey_nhl,Winnipeg Jets,Nashville Predators,total,Over,FanDuel,-124,3/5,100,Pending,0.0,5.5
+2026-03-17,icehockey_nhl,Winnipeg Jets,Nashville Predators,total,Under,FanDuel,102,3/5,100,Pending,0.0,5.5
+2026-03-17,icehockey_nhl,Winnipeg Jets,Nashville Predators,total,Over,DraftKings,-125,3/5,100,Pending,0.0,5.5
+2026-03-17,icehockey_nhl,Winnipeg Jets,Nashville Predators,total,Under,DraftKings,105,3/5,100,Pending,0.0,5.5
+2026-03-17,icehockey_nhl,Winnipeg Jets,Nashville Predators,total,Over,BetMGM,100,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Winnipeg Jets,Nashville Predators,total,Under,BetMGM,-120,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Winnipeg Jets,Nashville Predators,total,Over,LowVig.ag,-125,3/5,100,Pending,0.0,5.5
+2026-03-17,icehockey_nhl,Winnipeg Jets,Nashville Predators,total,Under,LowVig.ag,109,3/5,100,Pending,0.0,5.5
+2026-03-17,icehockey_nhl,Winnipeg Jets,Nashville Predators,total,Over,BetOnline.ag,-125,3/5,100,Pending,0.0,5.5
+2026-03-17,icehockey_nhl,Winnipeg Jets,Nashville Predators,total,Under,BetOnline.ag,109,3/5,100,Pending,0.0,5.5
+2026-03-17,icehockey_nhl,Winnipeg Jets,Nashville Predators,total,Over,BetUS,-125,3/5,100,Pending,0.0,5.5
+2026-03-17,icehockey_nhl,Winnipeg Jets,Nashville Predators,total,Under,BetUS,105,3/5,100,Pending,0.0,5.5
+2026-03-17,icehockey_nhl,Winnipeg Jets,Nashville Predators,total,Over,Bovada,-120,3/5,100,Pending,0.0,5.5
+2026-03-17,icehockey_nhl,Winnipeg Jets,Nashville Predators,total,Under,Bovada,100,3/5,100,Pending,0.0,5.5
+2026-03-17,icehockey_nhl,Winnipeg Jets,Nashville Predators,total,Over,MyBookie.ag,101,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Winnipeg Jets,Nashville Predators,total,Under,MyBookie.ag,-123,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Edmonton Oilers,San Jose Sharks,total,Over,BetRivers,-132,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Edmonton Oilers,San Jose Sharks,total,Under,BetRivers,104,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Edmonton Oilers,San Jose Sharks,total,Over,FanDuel,-148,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Edmonton Oilers,San Jose Sharks,total,Under,FanDuel,120,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Edmonton Oilers,San Jose Sharks,total,Over,DraftKings,-148,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Edmonton Oilers,San Jose Sharks,total,Under,DraftKings,124,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Edmonton Oilers,San Jose Sharks,total,Over,BetMGM,100,3/5,100,Pending,0.0,7.0
+2026-03-17,icehockey_nhl,Edmonton Oilers,San Jose Sharks,total,Under,BetMGM,-120,3/5,100,Pending,0.0,7.0
+2026-03-17,icehockey_nhl,Edmonton Oilers,San Jose Sharks,total,Over,Bovada,105,3/5,100,Pending,0.0,7.0
+2026-03-17,icehockey_nhl,Edmonton Oilers,San Jose Sharks,total,Under,Bovada,-125,3/5,100,Pending,0.0,7.0
+2026-03-17,icehockey_nhl,Edmonton Oilers,San Jose Sharks,total,Over,MyBookie.ag,105,3/5,100,Pending,0.0,7.0
+2026-03-17,icehockey_nhl,Edmonton Oilers,San Jose Sharks,total,Under,MyBookie.ag,-129,3/5,100,Pending,0.0,7.0
+2026-03-17,icehockey_nhl,Edmonton Oilers,San Jose Sharks,total,Over,BetOnline.ag,-150,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Edmonton Oilers,San Jose Sharks,total,Under,BetOnline.ag,130,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Edmonton Oilers,San Jose Sharks,total,Over,LowVig.ag,-150,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Edmonton Oilers,San Jose Sharks,total,Under,LowVig.ag,130,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Edmonton Oilers,San Jose Sharks,total,Over,BetUS,110,3/5,100,Pending,0.0,7.0
+2026-03-17,icehockey_nhl,Edmonton Oilers,San Jose Sharks,total,Under,BetUS,-130,3/5,100,Pending,0.0,7.0
+2026-03-17,icehockey_nhl,Vegas Golden Knights,Buffalo Sabres,total,Over,BetRivers,-113,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Vegas Golden Knights,Buffalo Sabres,total,Under,BetRivers,-113,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Vegas Golden Knights,Buffalo Sabres,total,Over,FanDuel,-110,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Vegas Golden Knights,Buffalo Sabres,total,Under,FanDuel,-110,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Vegas Golden Knights,Buffalo Sabres,total,Over,DraftKings,-110,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Vegas Golden Knights,Buffalo Sabres,total,Under,DraftKings,-110,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Vegas Golden Knights,Buffalo Sabres,total,Over,BetMGM,-110,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Vegas Golden Knights,Buffalo Sabres,total,Under,BetMGM,-110,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Vegas Golden Knights,Buffalo Sabres,total,Over,LowVig.ag,-109,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Vegas Golden Knights,Buffalo Sabres,total,Under,LowVig.ag,-107,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Vegas Golden Knights,Buffalo Sabres,total,Over,BetOnline.ag,-109,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Vegas Golden Knights,Buffalo Sabres,total,Under,BetOnline.ag,-107,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Vegas Golden Knights,Buffalo Sabres,total,Over,BetUS,-110,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Vegas Golden Knights,Buffalo Sabres,total,Under,BetUS,-110,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Vegas Golden Knights,Buffalo Sabres,total,Over,Bovada,-112,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Vegas Golden Knights,Buffalo Sabres,total,Under,Bovada,-108,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Vegas Golden Knights,Buffalo Sabres,total,Over,MyBookie.ag,-107,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Vegas Golden Knights,Buffalo Sabres,total,Under,MyBookie.ag,-114,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Vancouver Canucks,Florida Panthers,total,Over,BetRivers,-108,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Vancouver Canucks,Florida Panthers,total,Under,BetRivers,-117,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Vancouver Canucks,Florida Panthers,total,Over,FanDuel,-134,3/5,100,Pending,0.0,5.5
+2026-03-17,icehockey_nhl,Vancouver Canucks,Florida Panthers,total,Under,FanDuel,110,3/5,100,Pending,0.0,5.5
+2026-03-17,icehockey_nhl,Vancouver Canucks,Florida Panthers,total,Over,DraftKings,-135,3/5,100,Pending,0.0,5.5
+2026-03-17,icehockey_nhl,Vancouver Canucks,Florida Panthers,total,Under,DraftKings,114,3/5,100,Pending,0.0,5.5
+2026-03-17,icehockey_nhl,Vancouver Canucks,Florida Panthers,total,Over,BetMGM,-110,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Vancouver Canucks,Florida Panthers,total,Under,BetMGM,-110,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Vancouver Canucks,Florida Panthers,total,Over,LowVig.ag,-110,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Vancouver Canucks,Florida Panthers,total,Under,LowVig.ag,-106,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Vancouver Canucks,Florida Panthers,total,Over,BetOnline.ag,-110,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Vancouver Canucks,Florida Panthers,total,Under,BetOnline.ag,-106,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Vancouver Canucks,Florida Panthers,total,Over,BetUS,-110,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Vancouver Canucks,Florida Panthers,total,Under,BetUS,-110,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Vancouver Canucks,Florida Panthers,total,Over,Bovada,-112,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Vancouver Canucks,Florida Panthers,total,Under,Bovada,-108,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Vancouver Canucks,Florida Panthers,total,Over,MyBookie.ag,-108,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Vancouver Canucks,Florida Panthers,total,Under,MyBookie.ag,-113,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Seattle Kraken,Tampa Bay Lightning,total,Over,BetRivers,-115,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Seattle Kraken,Tampa Bay Lightning,total,Under,BetRivers,-109,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Seattle Kraken,Tampa Bay Lightning,total,Over,FanDuel,110,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Seattle Kraken,Tampa Bay Lightning,total,Under,FanDuel,-134,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Seattle Kraken,Tampa Bay Lightning,total,Over,DraftKings,110,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Seattle Kraken,Tampa Bay Lightning,total,Under,DraftKings,-130,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Seattle Kraken,Tampa Bay Lightning,total,Over,BetMGM,-120,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Seattle Kraken,Tampa Bay Lightning,total,Under,BetMGM,100,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Seattle Kraken,Tampa Bay Lightning,total,Over,BetOnline.ag,-123,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Seattle Kraken,Tampa Bay Lightning,total,Under,BetOnline.ag,107,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Seattle Kraken,Tampa Bay Lightning,total,Over,LowVig.ag,-123,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Seattle Kraken,Tampa Bay Lightning,total,Under,LowVig.ag,107,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Seattle Kraken,Tampa Bay Lightning,total,Over,BetUS,-125,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Seattle Kraken,Tampa Bay Lightning,total,Under,BetUS,105,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Seattle Kraken,Tampa Bay Lightning,total,Over,Bovada,102,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Seattle Kraken,Tampa Bay Lightning,total,Under,Bovada,-122,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Seattle Kraken,Tampa Bay Lightning,total,Over,MyBookie.ag,-121,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Seattle Kraken,Tampa Bay Lightning,total,Under,MyBookie.ag,-101,3/5,100,Pending,0.0,6.0
+2026-03-17,icehockey_nhl,Carolina Hurricanes,Pittsburgh Penguins,total,Over,FanDuel,108,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Carolina Hurricanes,Pittsburgh Penguins,total,Under,FanDuel,-132,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Carolina Hurricanes,Pittsburgh Penguins,total,Over,DraftKings,105,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Carolina Hurricanes,Pittsburgh Penguins,total,Under,DraftKings,-125,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,New York Rangers,New Jersey Devils,total,Over,FanDuel,-142,3/5,100,Pending,0.0,5.5
+2026-03-17,icehockey_nhl,New York Rangers,New Jersey Devils,total,Under,FanDuel,116,3/5,100,Pending,0.0,5.5
+2026-03-17,icehockey_nhl,New York Rangers,New Jersey Devils,total,Over,DraftKings,-135,3/5,100,Pending,0.0,5.5
+2026-03-17,icehockey_nhl,New York Rangers,New Jersey Devils,total,Under,DraftKings,114,3/5,100,Pending,0.0,5.5
+2026-03-17,icehockey_nhl,Washington Capitals,Ottawa Senators,total,Over,FanDuel,-108,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Washington Capitals,Ottawa Senators,total,Under,FanDuel,-112,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Washington Capitals,Ottawa Senators,total,Over,DraftKings,-105,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Washington Capitals,Ottawa Senators,total,Under,DraftKings,-115,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Calgary Flames,St Louis Blues,total,Over,FanDuel,-112,3/5,100,Pending,0.0,5.5
+2026-03-17,icehockey_nhl,Calgary Flames,St Louis Blues,total,Under,FanDuel,-108,3/5,100,Pending,0.0,5.5
+2026-03-17,icehockey_nhl,Calgary Flames,St Louis Blues,total,Over,DraftKings,-115,3/5,100,Pending,0.0,5.5
+2026-03-17,icehockey_nhl,Calgary Flames,St Louis Blues,total,Under,DraftKings,-105,3/5,100,Pending,0.0,5.5
+2026-03-17,icehockey_nhl,Colorado Avalanche,Dallas Stars,total,Over,FanDuel,114,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Colorado Avalanche,Dallas Stars,total,Under,FanDuel,-140,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Colorado Avalanche,Dallas Stars,total,Over,DraftKings,114,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Colorado Avalanche,Dallas Stars,total,Under,DraftKings,-135,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Anaheim Ducks,Philadelphia Flyers,total,Over,FanDuel,104,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Anaheim Ducks,Philadelphia Flyers,total,Under,FanDuel,-128,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Anaheim Ducks,Philadelphia Flyers,total,Over,DraftKings,100,3/5,100,Pending,0.0,6.5
+2026-03-17,icehockey_nhl,Anaheim Ducks,Philadelphia Flyers,total,Under,DraftKings,-120,3/5,100,Pending,0.0,6.5
+2026-03-17,soccer_epl,Bournemouth,Manchester United,total,Over,MyBookie.ag,130,3/5,100,Pending,0.0,3.5
+2026-03-17,soccer_epl,Bournemouth,Manchester United,total,Under,MyBookie.ag,-181,3/5,100,Pending,0.0,3.5
+2026-03-17,soccer_epl,Bournemouth,Manchester United,total,Over,BetRivers,128,3/5,100,Pending,0.0,3.5
+2026-03-17,soccer_epl,Bournemouth,Manchester United,total,Under,BetRivers,-162,3/5,100,Pending,0.0,3.5
+2026-03-17,soccer_epl,Bournemouth,Manchester United,total,Over,Bovada,-112,3/5,100,Pending,0.0,3.0
+2026-03-17,soccer_epl,Bournemouth,Manchester United,total,Under,Bovada,-108,3/5,100,Pending,0.0,3.0
+2026-03-17,soccer_epl,Bournemouth,Manchester United,total,Over,LowVig.ag,-110,3/5,100,Pending,0.0,3.0
+2026-03-17,soccer_epl,Bournemouth,Manchester United,total,Under,LowVig.ag,-110,3/5,100,Pending,0.0,3.0
+2026-03-17,soccer_epl,Bournemouth,Manchester United,total,Over,BetOnline.ag,-110,3/5,100,Pending,0.0,3.0
+2026-03-17,soccer_epl,Bournemouth,Manchester United,total,Under,BetOnline.ag,-110,3/5,100,Pending,0.0,3.0
+2026-03-17,soccer_epl,Bournemouth,Manchester United,total,Over,BetMGM,125,3/5,100,Pending,0.0,3.5
+2026-03-17,soccer_epl,Bournemouth,Manchester United,total,Under,BetMGM,-175,3/5,100,Pending,0.0,3.5
+2026-03-17,soccer_epl,Bournemouth,Manchester United,total,Over,BetUS,-112,3/5,100,Pending,0.0,3.0
+2026-03-17,soccer_epl,Bournemouth,Manchester United,total,Under,BetUS,-108,3/5,100,Pending,0.0,3.0
+2026-03-17,soccer_epl,Brighton and Hove Albion,Liverpool,total,Over,MyBookie.ag,-164,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Brighton and Hove Albion,Liverpool,total,Under,MyBookie.ag,118,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Brighton and Hove Albion,Liverpool,total,Over,BetRivers,-155,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Brighton and Hove Albion,Liverpool,total,Under,BetRivers,120,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Brighton and Hove Albion,Liverpool,total,Over,Bovada,105,3/5,100,Pending,0.0,3.0
+2026-03-17,soccer_epl,Brighton and Hove Albion,Liverpool,total,Under,Bovada,-125,3/5,100,Pending,0.0,3.0
+2026-03-17,soccer_epl,Brighton and Hove Albion,Liverpool,total,Over,LowVig.ag,-117,3/5,100,Pending,0.0,2.75
+2026-03-17,soccer_epl,Brighton and Hove Albion,Liverpool,total,Under,LowVig.ag,-103,3/5,100,Pending,0.0,2.75
+2026-03-17,soccer_epl,Brighton and Hove Albion,Liverpool,total,Over,BetOnline.ag,-117,3/5,100,Pending,0.0,2.75
+2026-03-17,soccer_epl,Brighton and Hove Albion,Liverpool,total,Under,BetOnline.ag,-103,3/5,100,Pending,0.0,2.75
+2026-03-17,soccer_epl,Brighton and Hove Albion,Liverpool,total,Over,BetMGM,-165,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Brighton and Hove Albion,Liverpool,total,Under,BetMGM,120,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Brighton and Hove Albion,Liverpool,total,Over,BetUS,105,3/5,100,Pending,0.0,3.0
+2026-03-17,soccer_epl,Brighton and Hove Albion,Liverpool,total,Under,BetUS,-125,3/5,100,Pending,0.0,3.0
+2026-03-17,soccer_epl,Fulham,Burnley,total,Over,MyBookie.ag,-128,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Fulham,Burnley,total,Under,MyBookie.ag,-108,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Fulham,Burnley,total,Over,BetRivers,-120,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Fulham,Burnley,total,Under,BetRivers,-107,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Fulham,Burnley,total,Over,Bovada,-115,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Fulham,Burnley,total,Under,Bovada,-105,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Fulham,Burnley,total,Over,LowVig.ag,-113,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Fulham,Burnley,total,Under,LowVig.ag,-107,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Fulham,Burnley,total,Over,BetOnline.ag,-113,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Fulham,Burnley,total,Under,BetOnline.ag,-107,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Fulham,Burnley,total,Over,BetMGM,-135,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Fulham,Burnley,total,Under,BetMGM,-105,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Fulham,Burnley,total,Over,BetUS,-125,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Fulham,Burnley,total,Under,BetUS,105,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Everton,Chelsea,total,Over,MyBookie.ag,-136,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Everton,Chelsea,total,Under,MyBookie.ag,-101,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Everton,Chelsea,total,Over,BetRivers,-139,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Everton,Chelsea,total,Under,BetRivers,110,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Everton,Chelsea,total,Over,Bovada,-122,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Everton,Chelsea,total,Under,Bovada,102,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Everton,Chelsea,total,Over,BetOnline.ag,-122,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Everton,Chelsea,total,Under,BetOnline.ag,102,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Everton,Chelsea,total,Over,LowVig.ag,-122,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Everton,Chelsea,total,Under,LowVig.ag,102,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Everton,Chelsea,total,Over,BetMGM,-140,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Everton,Chelsea,total,Under,BetMGM,100,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Everton,Chelsea,total,Over,BetUS,-125,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Everton,Chelsea,total,Under,BetUS,105,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Leeds United,Brentford,total,Over,MyBookie.ag,-122,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Leeds United,Brentford,total,Under,MyBookie.ag,-113,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Leeds United,Brentford,total,Over,BetRivers,-110,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Leeds United,Brentford,total,Under,BetRivers,-115,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Leeds United,Brentford,total,Over,Bovada,-118,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Leeds United,Brentford,total,Under,Bovada,-102,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Leeds United,Brentford,total,Over,BetOnline.ag,-118,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Leeds United,Brentford,total,Under,BetOnline.ag,-102,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Leeds United,Brentford,total,Over,LowVig.ag,-118,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Leeds United,Brentford,total,Under,LowVig.ag,-102,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Leeds United,Brentford,total,Over,BetMGM,-130,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Leeds United,Brentford,total,Under,BetMGM,-110,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Leeds United,Brentford,total,Over,BetUS,-118,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Leeds United,Brentford,total,Under,BetUS,-102,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Newcastle United,Sunderland,total,Over,MyBookie.ag,-123,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Newcastle United,Sunderland,total,Under,MyBookie.ag,-112,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Newcastle United,Sunderland,total,Over,BetRivers,-129,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Newcastle United,Sunderland,total,Under,BetRivers,102,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Newcastle United,Sunderland,total,Over,Bovada,-118,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Newcastle United,Sunderland,total,Under,Bovada,-102,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Newcastle United,Sunderland,total,Over,LowVig.ag,-115,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Newcastle United,Sunderland,total,Under,LowVig.ag,-105,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Newcastle United,Sunderland,total,Over,BetOnline.ag,-115,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Newcastle United,Sunderland,total,Under,BetOnline.ag,-105,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Newcastle United,Sunderland,total,Over,BetMGM,-120,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Newcastle United,Sunderland,total,Under,BetMGM,-115,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Newcastle United,Sunderland,total,Over,BetUS,-118,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Newcastle United,Sunderland,total,Under,BetUS,-102,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Aston Villa,West Ham United,total,Over,MyBookie.ag,-143,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Aston Villa,West Ham United,total,Under,MyBookie.ag,103,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Aston Villa,West Ham United,total,Over,BetRivers,-148,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Aston Villa,West Ham United,total,Under,BetRivers,114,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Aston Villa,West Ham United,total,Over,Bovada,-108,3/5,100,Pending,0.0,2.75
+2026-03-17,soccer_epl,Aston Villa,West Ham United,total,Under,Bovada,-112,3/5,100,Pending,0.0,2.75
+2026-03-17,soccer_epl,Aston Villa,West Ham United,total,Over,BetOnline.ag,-107,3/5,100,Pending,0.0,2.75
+2026-03-17,soccer_epl,Aston Villa,West Ham United,total,Under,BetOnline.ag,-113,3/5,100,Pending,0.0,2.75
+2026-03-17,soccer_epl,Aston Villa,West Ham United,total,Over,LowVig.ag,-107,3/5,100,Pending,0.0,2.75
+2026-03-17,soccer_epl,Aston Villa,West Ham United,total,Under,LowVig.ag,-113,3/5,100,Pending,0.0,2.75
+2026-03-17,soccer_epl,Aston Villa,West Ham United,total,Over,BetMGM,-145,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Aston Villa,West Ham United,total,Under,BetMGM,105,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Aston Villa,West Ham United,total,Over,BetUS,-108,3/5,100,Pending,0.0,2.75
+2026-03-17,soccer_epl,Aston Villa,West Ham United,total,Under,BetUS,-112,3/5,100,Pending,0.0,2.75
+2026-03-17,soccer_epl,Tottenham Hotspur,Nottingham Forest,total,Over,MyBookie.ag,-120,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Tottenham Hotspur,Nottingham Forest,total,Under,MyBookie.ag,-115,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Tottenham Hotspur,Nottingham Forest,total,Over,BetRivers,-112,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Tottenham Hotspur,Nottingham Forest,total,Under,BetRivers,-114,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Tottenham Hotspur,Nottingham Forest,total,Over,Bovada,-110,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Tottenham Hotspur,Nottingham Forest,total,Under,Bovada,-110,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Tottenham Hotspur,Nottingham Forest,total,Over,LowVig.ag,-114,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Tottenham Hotspur,Nottingham Forest,total,Under,LowVig.ag,-106,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Tottenham Hotspur,Nottingham Forest,total,Over,BetOnline.ag,-114,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Tottenham Hotspur,Nottingham Forest,total,Under,BetOnline.ag,-106,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Tottenham Hotspur,Nottingham Forest,total,Over,BetMGM,-120,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Tottenham Hotspur,Nottingham Forest,total,Under,BetMGM,-115,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Tottenham Hotspur,Nottingham Forest,total,Over,BetUS,-110,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Tottenham Hotspur,Nottingham Forest,total,Under,BetUS,-110,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,West Ham United,Wolverhampton Wanderers,total,Over,MyBookie.ag,-140,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,West Ham United,Wolverhampton Wanderers,total,Under,MyBookie.ag,101,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,West Ham United,Wolverhampton Wanderers,total,Over,BetRivers,-134,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,West Ham United,Wolverhampton Wanderers,total,Under,BetRivers,106,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,West Ham United,Wolverhampton Wanderers,total,Over,Bovada,-105,3/5,100,Pending,0.0,2.75
+2026-03-17,soccer_epl,West Ham United,Wolverhampton Wanderers,total,Under,Bovada,-115,3/5,100,Pending,0.0,2.75
+2026-03-17,soccer_epl,West Ham United,Wolverhampton Wanderers,total,Over,LowVig.ag,-103,3/5,100,Pending,0.0,2.75
+2026-03-17,soccer_epl,West Ham United,Wolverhampton Wanderers,total,Under,LowVig.ag,-113,3/5,100,Pending,0.0,2.75
+2026-03-17,soccer_epl,West Ham United,Wolverhampton Wanderers,total,Over,BetOnline.ag,-103,3/5,100,Pending,0.0,2.75
+2026-03-17,soccer_epl,West Ham United,Wolverhampton Wanderers,total,Under,BetOnline.ag,-113,3/5,100,Pending,0.0,2.75
+2026-03-17,soccer_epl,Arsenal,Bournemouth,total,Over,MyBookie.ag,-172,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Arsenal,Bournemouth,total,Under,MyBookie.ag,123,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Arsenal,Bournemouth,total,Over,BetRivers,-177,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Arsenal,Bournemouth,total,Under,BetRivers,138,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Arsenal,Bournemouth,total,Over,Bovada,-122,3/5,100,Pending,0.0,2.75
+2026-03-17,soccer_epl,Arsenal,Bournemouth,total,Under,Bovada,102,3/5,100,Pending,0.0,2.75
+2026-03-17,soccer_epl,Arsenal,Bournemouth,total,Over,BetOnline.ag,-122,3/5,100,Pending,0.0,2.75
+2026-03-17,soccer_epl,Arsenal,Bournemouth,total,Under,BetOnline.ag,106,3/5,100,Pending,0.0,2.75
+2026-03-17,soccer_epl,Arsenal,Bournemouth,total,Over,LowVig.ag,-122,3/5,100,Pending,0.0,2.75
+2026-03-17,soccer_epl,Arsenal,Bournemouth,total,Under,LowVig.ag,106,3/5,100,Pending,0.0,2.75
+2026-03-17,soccer_epl,Nottingham Forest,Aston Villa,total,Over,MyBookie.ag,-121,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Nottingham Forest,Aston Villa,total,Under,MyBookie.ag,-114,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Nottingham Forest,Aston Villa,total,Over,BetRivers,-121,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Nottingham Forest,Aston Villa,total,Under,BetRivers,-106,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Nottingham Forest,Aston Villa,total,Over,Bovada,-112,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Nottingham Forest,Aston Villa,total,Under,Bovada,-108,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Nottingham Forest,Aston Villa,total,Over,LowVig.ag,-111,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Nottingham Forest,Aston Villa,total,Under,LowVig.ag,-105,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Nottingham Forest,Aston Villa,total,Over,BetOnline.ag,-111,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Nottingham Forest,Aston Villa,total,Under,BetOnline.ag,-105,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Brentford,Everton,total,Over,MyBookie.ag,-104,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Brentford,Everton,total,Under,MyBookie.ag,-132,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Brentford,Everton,total,Over,BetRivers,-104,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Brentford,Everton,total,Under,BetRivers,-122,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Brentford,Everton,total,Over,Bovada,-102,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Brentford,Everton,total,Under,Bovada,-118,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Brentford,Everton,total,Over,LowVig.ag,103,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Brentford,Everton,total,Under,LowVig.ag,-119,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Brentford,Everton,total,Over,BetOnline.ag,103,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Brentford,Everton,total,Under,BetOnline.ag,-119,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Burnley,Brighton and Hove Albion,total,Over,MyBookie.ag,-137,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Burnley,Brighton and Hove Albion,total,Under,MyBookie.ag,-101,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Burnley,Brighton and Hove Albion,total,Over,BetRivers,-134,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Burnley,Brighton and Hove Albion,total,Under,BetRivers,106,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Burnley,Brighton and Hove Albion,total,Over,Bovada,-102,3/5,100,Pending,0.0,2.75
+2026-03-17,soccer_epl,Burnley,Brighton and Hove Albion,total,Under,Bovada,-118,3/5,100,Pending,0.0,2.75
+2026-03-17,soccer_epl,Burnley,Brighton and Hove Albion,total,Over,BetOnline.ag,100,3/5,100,Pending,0.0,2.75
+2026-03-17,soccer_epl,Burnley,Brighton and Hove Albion,total,Under,BetOnline.ag,-116,3/5,100,Pending,0.0,2.75
+2026-03-17,soccer_epl,Burnley,Brighton and Hove Albion,total,Over,LowVig.ag,100,3/5,100,Pending,0.0,2.75
+2026-03-17,soccer_epl,Burnley,Brighton and Hove Albion,total,Under,LowVig.ag,-116,3/5,100,Pending,0.0,2.75
+2026-03-17,soccer_epl,Crystal Palace,Newcastle United,total,Over,MyBookie.ag,-141,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Crystal Palace,Newcastle United,total,Under,MyBookie.ag,102,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Crystal Palace,Newcastle United,total,Over,BetRivers,-139,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Crystal Palace,Newcastle United,total,Under,BetRivers,110,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Crystal Palace,Newcastle United,total,Over,Bovada,-108,3/5,100,Pending,0.0,2.75
+2026-03-17,soccer_epl,Crystal Palace,Newcastle United,total,Under,Bovada,-112,3/5,100,Pending,0.0,2.75
+2026-03-17,soccer_epl,Crystal Palace,Newcastle United,total,Over,LowVig.ag,-105,3/5,100,Pending,0.0,2.75
+2026-03-17,soccer_epl,Crystal Palace,Newcastle United,total,Under,LowVig.ag,-111,3/5,100,Pending,0.0,2.75
+2026-03-17,soccer_epl,Crystal Palace,Newcastle United,total,Over,BetOnline.ag,-105,3/5,100,Pending,0.0,2.75
+2026-03-17,soccer_epl,Crystal Palace,Newcastle United,total,Under,BetOnline.ag,-111,3/5,100,Pending,0.0,2.75
+2026-03-17,soccer_epl,Liverpool,Fulham,total,Over,MyBookie.ag,121,3/5,100,Pending,0.0,3.5
+2026-03-17,soccer_epl,Liverpool,Fulham,total,Under,MyBookie.ag,-169,3/5,100,Pending,0.0,3.5
+2026-03-17,soccer_epl,Liverpool,Fulham,total,Over,BetRivers,128,3/5,100,Pending,0.0,3.5
+2026-03-17,soccer_epl,Liverpool,Fulham,total,Under,BetRivers,-162,3/5,100,Pending,0.0,3.5
+2026-03-17,soccer_epl,Liverpool,Fulham,total,Over,Bovada,-122,3/5,100,Pending,0.0,3.0
+2026-03-17,soccer_epl,Liverpool,Fulham,total,Under,Bovada,102,3/5,100,Pending,0.0,3.0
+2026-03-17,soccer_epl,Liverpool,Fulham,total,Over,LowVig.ag,-123,3/5,100,Pending,0.0,3.0
+2026-03-17,soccer_epl,Liverpool,Fulham,total,Under,LowVig.ag,107,3/5,100,Pending,0.0,3.0
+2026-03-17,soccer_epl,Liverpool,Fulham,total,Over,BetOnline.ag,-123,3/5,100,Pending,0.0,3.0
+2026-03-17,soccer_epl,Liverpool,Fulham,total,Under,BetOnline.ag,107,3/5,100,Pending,0.0,3.0
+2026-03-17,soccer_epl,Sunderland,Tottenham Hotspur,total,Over,MyBookie.ag,-112,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Sunderland,Tottenham Hotspur,total,Under,MyBookie.ag,-123,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Sunderland,Tottenham Hotspur,total,Over,BetRivers,-114,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Sunderland,Tottenham Hotspur,total,Under,BetRivers,-110,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Sunderland,Tottenham Hotspur,total,Over,Bovada,-108,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Sunderland,Tottenham Hotspur,total,Under,Bovada,-112,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Sunderland,Tottenham Hotspur,total,Over,LowVig.ag,-103,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Sunderland,Tottenham Hotspur,total,Under,LowVig.ag,-113,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Sunderland,Tottenham Hotspur,total,Over,BetOnline.ag,-103,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Sunderland,Tottenham Hotspur,total,Under,BetOnline.ag,-113,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Chelsea,Manchester City,total,Over,MyBookie.ag,126,3/5,100,Pending,0.0,3.5
+2026-03-17,soccer_epl,Chelsea,Manchester City,total,Under,MyBookie.ag,-176,3/5,100,Pending,0.0,3.5
+2026-03-17,soccer_epl,Chelsea,Manchester City,total,Over,BetRivers,132,3/5,100,Pending,0.0,3.5
+2026-03-17,soccer_epl,Chelsea,Manchester City,total,Under,BetRivers,-167,3/5,100,Pending,0.0,3.5
+2026-03-17,soccer_epl,Chelsea,Manchester City,total,Over,Bovada,-120,3/5,100,Pending,0.0,3.0
+2026-03-17,soccer_epl,Chelsea,Manchester City,total,Under,Bovada,100,3/5,100,Pending,0.0,3.0
+2026-03-17,soccer_epl,Chelsea,Manchester City,total,Over,BetOnline.ag,-117,3/5,100,Pending,0.0,3.0
+2026-03-17,soccer_epl,Chelsea,Manchester City,total,Under,BetOnline.ag,101,3/5,100,Pending,0.0,3.0
+2026-03-17,soccer_epl,Chelsea,Manchester City,total,Over,LowVig.ag,-117,3/5,100,Pending,0.0,3.0
+2026-03-17,soccer_epl,Chelsea,Manchester City,total,Under,LowVig.ag,101,3/5,100,Pending,0.0,3.0
+2026-03-17,soccer_epl,Manchester United,Leeds United,total,Over,MyBookie.ag,-157,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Manchester United,Leeds United,total,Under,MyBookie.ag,113,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Manchester United,Leeds United,total,Over,BetRivers,-162,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Manchester United,Leeds United,total,Under,BetRivers,128,3/5,100,Pending,0.0,2.5
+2026-03-17,soccer_epl,Manchester United,Leeds United,total,Over,Bovada,-115,3/5,100,Pending,0.0,2.75
+2026-03-17,soccer_epl,Manchester United,Leeds United,total,Under,Bovada,-105,3/5,100,Pending,0.0,2.75
+2026-03-17,soccer_epl,Manchester United,Leeds United,total,Over,BetOnline.ag,-115,3/5,100,Pending,0.0,2.75
+2026-03-17,soccer_epl,Manchester United,Leeds United,total,Under,BetOnline.ag,-101,3/5,100,Pending,0.0,2.75
+2026-03-17,soccer_epl,Manchester United,Leeds United,total,Over,LowVig.ag,-115,3/5,100,Pending,0.0,2.75
+2026-03-17,soccer_epl,Manchester United,Leeds United,total,Under,LowVig.ag,-101,3/5,100,Pending,0.0,2.75

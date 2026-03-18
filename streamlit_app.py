@@ -5,7 +5,7 @@ import requests
 st.set_page_config(page_title="Sports AI Betting Dashboard", layout="wide")
 
 st.title("Sports AI Betting Dashboard")
-st.caption("Manual live odds scanner for arbitrage and middles")
+st.caption("Manual live odds scanner with sportsbook selection, arbitrage, middles, and bet sizing")
 
 API_KEY = st.secrets.get("ODDS_API_KEY", "")
 
@@ -44,6 +44,28 @@ def implied_prob_from_american(odds):
     return 1 / dec
 
 
+def calculate_arb_stakes(odds_a, odds_b, bankroll):
+    dec_a = american_to_decimal(odds_a)
+    dec_b = american_to_decimal(odds_b)
+
+    if dec_a is None or dec_b is None or bankroll <= 0:
+        return None, None, None, None
+
+    inv_a = 1 / dec_a
+    inv_b = 1 / dec_b
+    total_inv = inv_a + inv_b
+
+    if total_inv >= 1:
+        return None, None, None, None
+
+    stake_a = bankroll * (inv_a / total_inv)
+    stake_b = bankroll * (inv_b / total_inv)
+    payout = stake_a * dec_a
+    profit = payout - bankroll
+
+    return round(stake_a, 2), round(stake_b, 2), round(payout, 2), round(profit, 2)
+
+
 def fetch_odds(sport_key, regions="us", markets="h2h,spreads"):
     url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds"
     params = {
@@ -61,6 +83,38 @@ def fetch_odds(sport_key, regions="us", markets="h2h,spreads"):
     return response.json()
 
 
+def extract_available_books(events):
+    books = {}
+    for event in events:
+        for bookmaker in event.get("bookmakers", []):
+            key = bookmaker.get("key")
+            title = bookmaker.get("title")
+            if key and title:
+                books[key] = title
+
+    return dict(sorted(books.items(), key=lambda x: x[1].lower()))
+
+
+def filter_events_by_books(events, selected_book_keys):
+    if not selected_book_keys:
+        return events
+
+    filtered_events = []
+
+    for event in events:
+        filtered_bookmakers = [
+            b for b in event.get("bookmakers", [])
+            if b.get("key") in selected_book_keys
+        ]
+
+        if filtered_bookmakers:
+            new_event = event.copy()
+            new_event["bookmakers"] = filtered_bookmakers
+            filtered_events.append(new_event)
+
+    return filtered_events
+
+
 def get_market_map(bookmaker, market_key):
     market_map = {}
     for market in bookmaker.get("markets", []):
@@ -75,7 +129,7 @@ def get_market_map(bookmaker, market_key):
     return market_map
 
 
-def detect_arbitrage(events, min_profit=1.0):
+def detect_arbitrage(events, bankroll, min_profit=1.0):
     rows = []
 
     for event in events:
@@ -116,10 +170,17 @@ def detect_arbitrage(events, min_profit=1.0):
                     continue
 
                 total_prob = p1 + p2
+
                 if total_prob < 1:
                     profit_pct = round((1 - total_prob) * 100, 2)
 
                     if profit_pct >= min_profit:
+                        stake_a, stake_b, payout, guaranteed_profit = calculate_arb_stakes(
+                            home_offer["odds"],
+                            away_offer["odds"],
+                            bankroll,
+                        )
+
                         rows.append({
                             "type": "Arbitrage",
                             "game": game,
@@ -127,16 +188,20 @@ def detect_arbitrage(events, min_profit=1.0):
                             "bet_a": home_offer["team"],
                             "book_a": home_offer["book"],
                             "odds_a": home_offer["odds"],
+                            "stake_a": stake_a,
                             "bet_b": away_offer["team"],
                             "book_b": away_offer["book"],
                             "odds_b": away_offer["odds"],
+                            "stake_b": stake_b,
                             "middle_gap": None,
+                            "expected_payout": payout,
+                            "guaranteed_profit": guaranteed_profit,
                         })
 
     return pd.DataFrame(rows)
 
 
-def detect_spread_middles(events, min_gap=2.0):
+def detect_spread_middles(events, middle_stake, min_gap=2.0):
     rows = []
 
     for event in events:
@@ -183,10 +248,14 @@ def detect_spread_middles(events, min_gap=2.0):
                         "bet_a": f"{home_team} {a['home_point']:+}",
                         "book_a": a["book"],
                         "odds_a": a["home_price"],
+                        "stake_a": round(middle_stake, 2),
                         "bet_b": f"{away_team} {b['away_point']:+}",
                         "book_b": b["book"],
                         "odds_b": b["away_price"],
+                        "stake_b": round(middle_stake, 2),
                         "middle_gap": round(home_gap, 2),
+                        "expected_payout": None,
+                        "guaranteed_profit": None,
                     })
 
                 away_gap = a["away_point"] - b["away_point"]
@@ -198,10 +267,14 @@ def detect_spread_middles(events, min_gap=2.0):
                         "bet_a": f"{away_team} {a['away_point']:+}",
                         "book_a": a["book"],
                         "odds_a": a["away_price"],
+                        "stake_a": round(middle_stake, 2),
                         "bet_b": f"{home_team} {b['home_point']:+}",
                         "book_b": b["book"],
                         "odds_b": b["home_price"],
+                        "stake_b": round(middle_stake, 2),
                         "middle_gap": round(away_gap, 2),
+                        "expected_payout": None,
+                        "guaranteed_profit": None,
                     })
 
     return pd.DataFrame(rows)
@@ -214,6 +287,12 @@ def highlight_rows(row):
         return ["background-color: #FFFACD"] * len(row)
     return [""] * len(row)
 
+
+# Session state
+if "available_books" not in st.session_state:
+    st.session_state.available_books = {}
+if "selected_books" not in st.session_state:
+    st.session_state.selected_books = []
 
 sport_label = st.selectbox("Choose sport", list(SPORT_OPTIONS.keys()), index=0)
 sport_key = SPORT_OPTIONS[sport_label]
@@ -229,41 +308,111 @@ with col2:
 with col3:
     min_profit = st.number_input("Min Arb Profit %", min_value=0.0, value=1.0, step=0.5)
 
+col4, col5 = st.columns(2)
+
+with col4:
+    bankroll = st.number_input("Arbitrage Bankroll ($)", min_value=1.0, value=100.0, step=10.0)
+
+with col5:
+    middle_stake = st.number_input("Middle Stake Per Side ($)", min_value=1.0, value=25.0, step=5.0)
+
 min_gap = st.number_input("Min Middle Gap", min_value=0.5, value=2.0, step=0.5)
+
+st.markdown("### Sportsbook Selection")
+
+load_books = st.button("Load Available Sportsbooks")
+if load_books:
+    with st.spinner("Loading sportsbooks..."):
+        try:
+            preview_events = fetch_odds(sport_key)
+            books = extract_available_books(preview_events)
+            st.session_state.available_books = books
+            st.session_state.selected_books = list(books.keys())
+
+            if books:
+                st.success(f"Loaded {len(books)} sportsbooks for {sport_label}.")
+            else:
+                st.warning("No sportsbooks returned for this sport right now.")
+        except Exception as e:
+            st.error(f"Error loading sportsbooks: {e}")
+
+if st.session_state.available_books:
+    selected_books = st.multiselect(
+        "Choose the sportsbooks available to you",
+        options=list(st.session_state.available_books.keys()),
+        default=st.session_state.selected_books,
+        format_func=lambda x: st.session_state.available_books[x],
+    )
+else:
+    selected_books = []
+
+    st.info("Press 'Load Available Sportsbooks' first, then choose the books you want to use.")
 
 scan_button = st.button("Scan Live Odds", type="primary")
 
-st.info("The app only scans when you press 'Scan Live Odds'. No automatic scanning is running.")
+st.info("The app only scans when you press a button. No automatic scanning is running.")
 
 if scan_button:
     with st.spinner("Scanning live odds..."):
         try:
             events = fetch_odds(sport_key)
 
+            if selected_books:
+                events = filter_events_by_books(events, selected_books)
+
             results = []
 
             if show_arbs:
-                arb_df = detect_arbitrage(events, min_profit=min_profit)
+                arb_df = detect_arbitrage(events, bankroll=bankroll, min_profit=min_profit)
                 if not arb_df.empty:
-                    arb_df = arb_df.sort_values(by="profit_%", ascending=False)
+                    arb_df = arb_df.sort_values(by="guaranteed_profit", ascending=False)
                     results.append(arb_df)
 
             if show_middles:
-                mid_df = detect_spread_middles(events, min_gap=min_gap)
+                mid_df = detect_spread_middles(events, middle_stake=middle_stake, min_gap=min_gap)
                 if not mid_df.empty:
+                    mid_df = mid_df.sort_values(by="middle_gap", ascending=False)
                     results.append(mid_df)
 
             st.subheader("Detected Opportunities")
 
             if results:
                 final_df = pd.concat(results, ignore_index=True)
+
+                display_columns = [
+                    "type",
+                    "game",
+                    "profit_%",
+                    "bet_a",
+                    "book_a",
+                    "odds_a",
+                    "stake_a",
+                    "bet_b",
+                    "book_b",
+                    "odds_b",
+                    "stake_b",
+                    "middle_gap",
+                    "expected_payout",
+                    "guaranteed_profit",
+                ]
+
+                final_df = final_df[display_columns]
+
+                if selected_books:
+                    chosen_names = [
+                        st.session_state.available_books[b]
+                        for b in selected_books
+                        if b in st.session_state.available_books
+                    ]
+                    st.caption("Using sportsbooks: " + ", ".join(chosen_names))
+
                 st.success(f"Found {len(final_df)} opportunity rows.")
                 st.dataframe(
                     final_df.style.apply(highlight_rows, axis=1),
                     use_container_width=True,
                 )
             else:
-                st.warning("No live opportunities found with the current settings.")
+                st.warning("No live opportunities found with the current settings and selected sportsbooks.")
 
         except Exception as e:
             st.error(f"Error fetching live odds: {e}")

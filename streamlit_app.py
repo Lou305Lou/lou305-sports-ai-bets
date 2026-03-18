@@ -51,7 +51,7 @@ div[data-testid="stMetric"] div {
 """, unsafe_allow_html=True)
 
 st.title("Sports AI Betting Dashboard")
-st.caption("Manual live odds scanner with tabs for dashboard, middles, and arbitrage")
+st.caption("Manual live odds scanner with dashboard, middle plays, and arbitrage plays")
 
 API_KEY = st.secrets.get("ODDS_API_KEY", "")
 
@@ -444,6 +444,8 @@ if "arb_df" not in st.session_state:
     st.session_state.arb_df = pd.DataFrame()
 if "mid_df" not in st.session_state:
     st.session_state.mid_df = pd.DataFrame()
+if "raw_mid_df" not in st.session_state:
+    st.session_state.raw_mid_df = pd.DataFrame()
 if "raw_events_count" not in st.session_state:
     st.session_state.raw_events_count = 0
 if "raw_books_count" not in st.session_state:
@@ -563,6 +565,7 @@ if scan_button:
             filtered_events = filter_events_by_books(raw_events, selected_books) if selected_books else raw_events
 
             arb_df = pd.DataFrame()
+            raw_mid_df = pd.DataFrame()
             mid_df = pd.DataFrame()
             results = []
 
@@ -578,7 +581,7 @@ if scan_button:
                     arb_df = arb_df.sort_values(by="score", ascending=False)
 
             if show_middles:
-                mid_df = detect_spread_middles(
+                raw_mid_df = detect_spread_middles(
                     filtered_events,
                     middle_stake=middle_stake,
                     min_gap=min_gap,
@@ -586,20 +589,22 @@ if scan_button:
                     middle_kelly_bankroll=middle_kelly_bankroll,
                     kelly_multiplier=kelly_multiplier,
                 )
-                if not mid_df.empty:
-                    if middle_focus_mode:
-                        mid_df = mid_df[mid_df["middle_strength"].isin(["Medium", "Strong"])].copy()
 
-                    if not mid_df.empty:
-                        mid_df["strength_rank"] = mid_df["middle_strength"].map({
-                            "Strong": 3,
-                            "Medium": 2,
-                            "Weak": 1
-                        })
-                        mid_df = mid_df.sort_values(
-                            by=["strength_rank", "middle_gap", "score"],
-                            ascending=[False, False, False]
-                        ).drop(columns=["strength_rank"])
+                mid_df = raw_mid_df.copy()
+
+                if not mid_df.empty and middle_focus_mode:
+                    mid_df = mid_df[mid_df["middle_strength"].isin(["Medium", "Strong"])].copy()
+
+                if not mid_df.empty:
+                    mid_df["strength_rank"] = mid_df["middle_strength"].map({
+                        "Strong": 3,
+                        "Medium": 2,
+                        "Weak": 1
+                    })
+                    mid_df = mid_df.sort_values(
+                        by=["strength_rank", "middle_gap", "score"],
+                        ascending=[False, False, False]
+                    ).drop(columns=["strength_rank"])
 
             if not arb_df.empty:
                 results.append(arb_df)
@@ -611,6 +616,7 @@ if scan_button:
             st.session_state.scan_complete = True
             st.session_state.final_df = final_df
             st.session_state.arb_df = arb_df
+            st.session_state.raw_mid_df = raw_mid_df
             st.session_state.mid_df = mid_df
             st.session_state.raw_events_count = len(raw_events)
             st.session_state.raw_books_count = raw_books_count
@@ -629,13 +635,18 @@ with tab1:
     if st.session_state.scan_complete:
         final_df = st.session_state.final_df
         arb_df = st.session_state.arb_df
+        raw_mid_df = st.session_state.raw_mid_df
         mid_df = st.session_state.mid_df
 
         summary1, summary2, summary3, summary4 = st.columns(4)
         summary1.metric("Events Pulled", st.session_state.raw_events_count)
         summary2.metric("Books Returned", st.session_state.raw_books_count)
         summary3.metric("Arb Rows Found", len(arb_df))
-        summary4.metric("Middle Rows Found", len(mid_df))
+        summary4.metric("Raw Middle Rows Found", len(raw_mid_df))
+
+        summary5, summary6 = st.columns(2)
+        summary5.metric("Filtered Middle Rows", len(mid_df))
+        summary6.metric("Middle Focus Mode", "ON" if middle_focus_mode else "OFF")
 
         if not final_df.empty:
             arb_count = int((final_df["type"] == "Arbitrage").sum()) if "type" in final_df.columns else 0
@@ -649,7 +660,7 @@ with tab1:
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("Total Opportunities", len(final_df))
             m2.metric("Arbitrage Rows", arb_count)
-            m3.metric("Middle Rows", middle_count)
+            m3.metric("Middle Rows Shown", middle_count)
             m4.metric("Best Score", best_score)
 
             m5, m6 = st.columns(2)
@@ -666,7 +677,10 @@ with tab1:
 
             st.success(f"Found {len(final_df)} opportunity rows.")
         else:
-            st.warning("No live opportunities found with the current settings and selected sportsbooks.")
+            if len(raw_mid_df) > 0 and len(mid_df) == 0 and middle_focus_mode:
+                st.warning("Middle plays were found, but all were filtered out by Middle Focus Mode.")
+            else:
+                st.warning("No live opportunities found with the current settings and selected sportsbooks.")
     else:
         st.info("Run a scan to populate the dashboard.")
 
@@ -674,9 +688,14 @@ with tab2:
     st.subheader("Middle Plays")
 
     if st.session_state.scan_complete:
+        raw_mid_df = st.session_state.raw_mid_df
         mid_df = st.session_state.mid_df
 
-        if not mid_df.empty:
+        if len(raw_mid_df) > 0 and len(mid_df) == 0 and middle_focus_mode:
+            st.warning("Middle Focus Mode is ON, and all current middle plays were Weak, so none are being shown.")
+            st.info("Turn off Middle Focus Mode and scan again to view all middle plays.")
+
+        elif not mid_df.empty:
             if middle_focus_mode:
                 st.info("Middle Focus Mode is ON: showing only Medium and Strong middles.")
 

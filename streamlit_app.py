@@ -3,7 +3,6 @@ import pandas as pd
 import os
 
 st.title("Sports AI Betting Dashboard")
-st.write("Files in directory:", os.listdir())
 
 file_path = "Bet_log.csv"
 
@@ -13,9 +12,6 @@ if os.path.exists(file_path):
 else:
     st.error(f"File not found: {file_path}")
     st.stop()
-
-# Show columns for confirmation
-st.write("Columns found in CSV:", list(df.columns))
 
 
 def prepare_data(df):
@@ -37,7 +33,6 @@ def prepare_data(df):
         st.error(f"Missing required columns in CSV: {missing_cols}")
         st.stop()
 
-    # Create fields the app logic needs
     df["game_id"] = (
         df["date"].astype(str)
         + " | "
@@ -47,7 +42,7 @@ def prepare_data(df):
     )
 
     df["team"] = df["pick"].astype(str)
-    df["market"] = df["bet_type"].astype(str).str.lower()
+    df["market"] = df["bet_type"].astype(str).str.lower().str.strip()
     df["point"] = pd.to_numeric(df["line"], errors="coerce")
     df["odds"] = pd.to_numeric(df["odds"], errors="coerce")
 
@@ -67,8 +62,7 @@ def american_to_decimal(odds):
         return (odds / 100) + 1
     elif odds < 0:
         return (100 / abs(odds)) + 1
-    else:
-        return None
+    return None
 
 
 def detect_opportunities(df):
@@ -85,7 +79,7 @@ def detect_opportunities(df):
                 dec_a = american_to_decimal(row_a["odds"])
                 dec_b = american_to_decimal(row_b["odds"])
 
-                # ARBITRAGE CHECK
+                # Arbitrage
                 if (
                     row_a["team"] != row_b["team"]
                     and dec_a is not None
@@ -111,7 +105,7 @@ def detect_opportunities(df):
                                 "odds_b": row_b["odds"],
                             })
 
-                # MIDDLE CHECK
+                # Middle
                 if (
                     row_a["team"] != row_b["team"]
                     and row_a["market"] == "spread"
@@ -123,7 +117,6 @@ def detect_opportunities(df):
                         opportunities.append({
                             "type": "Middle",
                             "game": game,
-                            "profit_%": None,
                             "bet_a": row_a["team"],
                             "book_a": row_a["bookmaker"],
                             "odds_a": row_a["odds"],
@@ -142,13 +135,17 @@ opps = detect_opportunities(clean_df)
 st.subheader("Detected Opportunities")
 
 if opps.empty:
-    st.write("No strong opportunities right now.")
+    st.warning("No strong opportunities found in this CSV.")
 else:
-    arb_rows = opps[opps["type"] == "Arbitrage"].copy()
-    middle_rows = opps[opps["type"] == "Middle"].copy()
+    if "profit_%" in opps.columns:
+        arb_rows = opps[opps["type"] == "Arbitrage"].copy()
+        middle_rows = opps[opps["type"] == "Middle"].copy()
 
-    if not arb_rows.empty and "profit_%" in arb_rows.columns:
-        arb_rows = arb_rows.sort_values(by="profit_%", ascending=False)
+        if not arb_rows.empty:
+            arb_rows = arb_rows.sort_values(by="profit_%", ascending=False)
 
-    final_df = pd.concat([arb_rows, middle_rows], ignore_index=True)
+        final_df = pd.concat([arb_rows, middle_rows], ignore_index=True)
+    else:
+        final_df = opps.copy()
+
     st.dataframe(final_df)

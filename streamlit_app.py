@@ -4,29 +4,37 @@ import requests
 
 st.set_page_config(page_title="Sports AI Betting Dashboard", layout="wide")
 
+# -----------------------------
+# UI STYLING
+# -----------------------------
 st.markdown("""
 <style>
 .block-container {
     padding-top: 1.5rem;
     padding-bottom: 2rem;
 }
+
 div[data-testid="stMetric"] {
     background-color: #111827;
     border: 1px solid #374151;
     padding: 14px;
     border-radius: 14px;
 }
+
 div[data-testid="stMetric"] label {
     color: #D1D5DB !important;
 }
+
 div[data-testid="stMetric"] div {
     color: white !important;
 }
+
 .stButton > button {
     border-radius: 10px;
     font-weight: 600;
     padding: 0.6rem 1rem;
 }
+
 .section-card {
     background: #0F172A;
     border: 1px solid #334155;
@@ -34,6 +42,7 @@ div[data-testid="stMetric"] div {
     border-radius: 14px;
     margin-bottom: 12px;
 }
+
 .small-note {
     color: #94A3B8;
     font-size: 0.9rem;
@@ -42,7 +51,7 @@ div[data-testid="stMetric"] div {
 """, unsafe_allow_html=True)
 
 st.title("Sports AI Betting Dashboard")
-st.caption("Manual live odds scanner with sportsbook selection, scoring, bet sizing, Kelly-style middle sizing, and upgraded UI")
+st.caption("Manual live odds scanner with tabs for dashboard, middles, and arbitrage")
 
 API_KEY = st.secrets.get("ODDS_API_KEY", "")
 
@@ -58,7 +67,9 @@ if not API_KEY:
     st.error("Missing ODDS_API_KEY in Streamlit secrets.")
     st.stop()
 
-
+# -----------------------------
+# HELPERS
+# -----------------------------
 def american_to_decimal(odds):
     if odds is None:
         return None
@@ -128,6 +139,7 @@ def extract_available_books(events):
             title = bookmaker.get("title")
             if key and title:
                 books[key] = title
+
     return dict(sorted(books.items(), key=lambda x: x[1].lower()))
 
 
@@ -207,12 +219,15 @@ def classify_middle_strength(gap):
     return "Weak"
 
 
+# -----------------------------
+# DETECTORS
+# -----------------------------
 def detect_arbitrage(
     events,
     bankroll,
-    min_profit=1.0,
-    min_profit_dollars=1.0,
-    min_stake_filter=5.0,
+    min_profit=0.0,
+    min_profit_dollars=0.0,
+    min_stake_filter=1.0,
 ):
     rows = []
 
@@ -303,7 +318,7 @@ def detect_arbitrage(
 def detect_spread_middles(
     events,
     middle_stake,
-    min_gap=2.0,
+    min_gap=1.0,
     middle_edge_pct=2.0,
     middle_kelly_bankroll=500.0,
     kelly_multiplier=0.5,
@@ -414,42 +429,73 @@ def highlight_rows(row):
     return [""] * len(row)
 
 
+# -----------------------------
+# SESSION STATE
+# -----------------------------
 if "available_books" not in st.session_state:
     st.session_state.available_books = {}
 if "selected_books" not in st.session_state:
     st.session_state.selected_books = []
+if "scan_complete" not in st.session_state:
+    st.session_state.scan_complete = False
+if "final_df" not in st.session_state:
+    st.session_state.final_df = pd.DataFrame()
+if "arb_df" not in st.session_state:
+    st.session_state.arb_df = pd.DataFrame()
+if "mid_df" not in st.session_state:
+    st.session_state.mid_df = pd.DataFrame()
+if "raw_events_count" not in st.session_state:
+    st.session_state.raw_events_count = 0
+if "raw_books_count" not in st.session_state:
+    st.session_state.raw_books_count = 0
 
+# -----------------------------
+# CONTROLS
+# -----------------------------
 st.markdown('<div class="section-card">', unsafe_allow_html=True)
 
 sport_label = st.selectbox("Choose sport", list(SPORT_OPTIONS.keys()), index=0)
 sport_key = SPORT_OPTIONS[sport_label]
 
 col1, col2, col3 = st.columns(3)
+
 with col1:
     show_arbs = st.checkbox("Scan Arbitrage", value=True)
+
 with col2:
     show_middles = st.checkbox("Scan Middles", value=True)
+
 with col3:
+    middle_focus_mode = st.checkbox("Middle Focus Mode", value=True)
+
+col4, col5, col6 = st.columns(3)
+
+with col4:
     min_profit = st.number_input("Min Arb Profit %", min_value=0.0, value=0.0, step=0.5)
 
-col4, col5 = st.columns(2)
-with col4:
-    bankroll = st.number_input("Arbitrage Bankroll ($)", min_value=1.0, value=100.0, step=10.0)
 with col5:
-    middle_stake = st.number_input("Middle Stake Per Side ($)", min_value=1.0, value=25.0, step=5.0)
-
-col6, col7 = st.columns(2)
-with col6:
     min_profit_dollars = st.number_input("Min Arb Profit ($)", min_value=0.0, value=0.0, step=0.5)
-with col7:
+
+with col6:
     min_stake_filter = st.number_input("Min Bet Size ($)", min_value=0.0, value=1.0, step=1.0)
 
-col8, col9, col10 = st.columns(3)
+col7, col8 = st.columns(2)
+
+with col7:
+    bankroll = st.number_input("Arbitrage Bankroll ($)", min_value=1.0, value=100.0, step=10.0)
+
 with col8:
-    min_gap = st.number_input("Min Middle Gap", min_value=0.5, value=1.0, step=0.5)
+    middle_stake = st.number_input("Middle Stake Per Side ($)", min_value=1.0, value=25.0, step=5.0)
+
+col9, col10, col11 = st.columns(3)
+
 with col9:
-    middle_edge_pct = st.number_input("Estimated Middle Edge %", min_value=0.0, value=2.0, step=0.5)
+    min_gap = st.number_input("Min Middle Gap", min_value=0.5, value=1.0, step=0.5)
+
 with col10:
+    middle_edge_pct = st.number_input("Estimated Middle Edge %", min_value=0.0, value=2.0, step=0.5)
+
+with col11:
     middle_kelly_bankroll = st.number_input("Middle Kelly Bankroll ($)", min_value=1.0, value=500.0, step=25.0)
 
 kelly_mode = st.selectbox("Kelly Mode", ["Quarter Kelly", "Half Kelly", "Full Kelly"], index=1)
@@ -462,11 +508,15 @@ else:
     kelly_multiplier = 1.00
 
 st.markdown(
-    '<div class="small-note">Arbitrage uses the exact arb split. Kelly is applied as a conservative middle stake cap.</div>',
+    '<div class="small-note">Arbitrage uses the exact arb split. Kelly is used as a conservative middle stake cap.</div>',
     unsafe_allow_html=True,
 )
+
 st.markdown('</div>', unsafe_allow_html=True)
 
+# -----------------------------
+# SPORTSBOOK SELECTION
+# -----------------------------
 st.markdown('<div class="section-card">', unsafe_allow_html=True)
 st.markdown("### Sportsbook Selection")
 
@@ -502,17 +552,19 @@ st.markdown('</div>', unsafe_allow_html=True)
 scan_button = st.button("Scan Live Odds", type="primary")
 st.info("The app only scans when you press a button. No automatic scanning is running.")
 
+# -----------------------------
+# SCAN
+# -----------------------------
 if scan_button:
     with st.spinner("Scanning live odds..."):
         try:
             raw_events = fetch_odds(sport_key)
-            raw_book_count = len(extract_available_books(raw_events))
+            raw_books_count = len(extract_available_books(raw_events))
             filtered_events = filter_events_by_books(raw_events, selected_books) if selected_books else raw_events
-
-            results = []
 
             arb_df = pd.DataFrame()
             mid_df = pd.DataFrame()
+            results = []
 
             if show_arbs:
                 arb_df = detect_arbitrage(
@@ -524,7 +576,6 @@ if scan_button:
                 )
                 if not arb_df.empty:
                     arb_df = arb_df.sort_values(by="score", ascending=False)
-                    results.append(arb_df)
 
             if show_middles:
                 mid_df = detect_spread_middles(
@@ -536,80 +587,160 @@ if scan_button:
                     kelly_multiplier=kelly_multiplier,
                 )
                 if not mid_df.empty:
-                    mid_df = mid_df.sort_values(by="score", ascending=False)
-                    results.append(mid_df)
+                    if middle_focus_mode:
+                        mid_df = mid_df[mid_df["middle_strength"].isin(["Medium", "Strong"])].copy()
 
-            st.subheader("Dashboard Summary")
+                    if not mid_df.empty:
+                        mid_df["strength_rank"] = mid_df["middle_strength"].map({
+                            "Strong": 3,
+                            "Medium": 2,
+                            "Weak": 1
+                        })
+                        mid_df = mid_df.sort_values(
+                            by=["strength_rank", "middle_gap", "score"],
+                            ascending=[False, False, False]
+                        ).drop(columns=["strength_rank"])
 
-            summary1, summary2, summary3, summary4 = st.columns(4)
-            summary1.metric("Events Pulled", len(raw_events))
-            summary2.metric("Books Returned", raw_book_count)
-            summary3.metric("Arb Rows Found", len(arb_df))
-            summary4.metric("Middle Rows Found", len(mid_df))
+            if not arb_df.empty:
+                results.append(arb_df)
+            if not mid_df.empty:
+                results.append(mid_df)
 
-            if results:
-                final_df = pd.concat(results, ignore_index=True)
+            final_df = pd.concat(results, ignore_index=True) if results else pd.DataFrame()
 
-                arb_count = int((final_df["type"] == "Arbitrage").sum())
-                middle_count = int((final_df["type"] == "Middle").sum())
-                best_score = round(final_df["score"].max(), 2) if "score" in final_df.columns else 0
-
-                arb_profit_total = 0.0
-                if "guaranteed_profit" in final_df.columns:
-                    arb_profit_total = pd.to_numeric(final_df["guaranteed_profit"], errors="coerce").fillna(0).sum()
-
-                m1, m2, m3, m4 = st.columns(4)
-                m1.metric("Total Opportunities", len(final_df))
-                m2.metric("Arbitrage Rows", arb_count)
-                m3.metric("Middle Rows", middle_count)
-                m4.metric("Best Score", best_score)
-
-                m5, m6 = st.columns(2)
-                m5.metric("Total Arb Profit ($)", round(arb_profit_total, 2))
-                m6.metric("Kelly Mode", kelly_mode)
-
-                st.subheader("Detected Opportunities")
-
-                display_columns = [
-                    "type",
-                    "score",
-                    "game",
-                    "profit_%",
-                    "bet_a",
-                    "book_a",
-                    "odds_a",
-                    "stake_a",
-                    "bet_b",
-                    "book_b",
-                    "odds_b",
-                    "stake_b",
-                    "middle_gap",
-                    "middle_strength",
-                    "kelly_note",
-                    "kelly_stake_each",
-                    "expected_payout",
-                    "guaranteed_profit",
-                ]
-
-                final_df = final_df[display_columns]
-                final_df = final_df.sort_values(by="score", ascending=False).reset_index(drop=True)
-
-                if selected_books:
-                    chosen_names = [
-                        st.session_state.available_books[b]
-                        for b in selected_books
-                        if b in st.session_state.available_books
-                    ]
-                    st.caption("Using sportsbooks: " + ", ".join(chosen_names))
-
-                st.success(f"Found {len(final_df)} opportunity rows.")
-                st.dataframe(
-                    final_df.style.apply(highlight_rows, axis=1),
-                    use_container_width=True,
-                )
-            else:
-                st.warning("No live opportunities found with the current settings and selected sportsbooks.")
-                st.write("Try using all sportsbooks and lower filters to 0.0 / 1.0 for a wider scan.")
+            st.session_state.scan_complete = True
+            st.session_state.final_df = final_df
+            st.session_state.arb_df = arb_df
+            st.session_state.mid_df = mid_df
+            st.session_state.raw_events_count = len(raw_events)
+            st.session_state.raw_books_count = raw_books_count
 
         except Exception as e:
             st.error(f"Error fetching live odds: {e}")
+
+# -----------------------------
+# TABS
+# -----------------------------
+tab1, tab2, tab3 = st.tabs(["Dashboard", "Middle Plays", "Arbitrage Plays"])
+
+with tab1:
+    st.subheader("Dashboard Summary")
+
+    if st.session_state.scan_complete:
+        final_df = st.session_state.final_df
+        arb_df = st.session_state.arb_df
+        mid_df = st.session_state.mid_df
+
+        summary1, summary2, summary3, summary4 = st.columns(4)
+        summary1.metric("Events Pulled", st.session_state.raw_events_count)
+        summary2.metric("Books Returned", st.session_state.raw_books_count)
+        summary3.metric("Arb Rows Found", len(arb_df))
+        summary4.metric("Middle Rows Found", len(mid_df))
+
+        if not final_df.empty:
+            arb_count = int((final_df["type"] == "Arbitrage").sum()) if "type" in final_df.columns else 0
+            middle_count = int((final_df["type"] == "Middle").sum()) if "type" in final_df.columns else 0
+            best_score = round(final_df["score"].max(), 2) if "score" in final_df.columns else 0
+
+            arb_profit_total = 0.0
+            if "guaranteed_profit" in final_df.columns:
+                arb_profit_total = pd.to_numeric(final_df["guaranteed_profit"], errors="coerce").fillna(0).sum()
+
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Total Opportunities", len(final_df))
+            m2.metric("Arbitrage Rows", arb_count)
+            m3.metric("Middle Rows", middle_count)
+            m4.metric("Best Score", best_score)
+
+            m5, m6 = st.columns(2)
+            m5.metric("Total Arb Profit ($)", round(arb_profit_total, 2))
+            m6.metric("Kelly Mode", kelly_mode)
+
+            if selected_books:
+                chosen_names = [
+                    st.session_state.available_books[b]
+                    for b in selected_books
+                    if b in st.session_state.available_books
+                ]
+                st.caption("Using sportsbooks: " + ", ".join(chosen_names))
+
+            st.success(f"Found {len(final_df)} opportunity rows.")
+        else:
+            st.warning("No live opportunities found with the current settings and selected sportsbooks.")
+    else:
+        st.info("Run a scan to populate the dashboard.")
+
+with tab2:
+    st.subheader("Middle Plays")
+
+    if st.session_state.scan_complete:
+        mid_df = st.session_state.mid_df
+
+        if not mid_df.empty:
+            if middle_focus_mode:
+                st.info("Middle Focus Mode is ON: showing only Medium and Strong middles.")
+
+            middle_display_columns = [
+                "type",
+                "score",
+                "game",
+                "bet_a",
+                "book_a",
+                "odds_a",
+                "stake_a",
+                "bet_b",
+                "book_b",
+                "odds_b",
+                "stake_b",
+                "middle_gap",
+                "middle_strength",
+                "kelly_note",
+                "kelly_stake_each",
+            ]
+
+            mid_df = mid_df[middle_display_columns].reset_index(drop=True)
+            st.success(f"Found {len(mid_df)} middle rows.")
+            st.dataframe(
+                mid_df.style.apply(highlight_rows, axis=1),
+                use_container_width=True,
+            )
+        else:
+            st.warning("No middle plays found for the current scan.")
+    else:
+        st.info("Run a scan to view middle plays.")
+
+with tab3:
+    st.subheader("Arbitrage Plays")
+
+    if st.session_state.scan_complete:
+        arb_df = st.session_state.arb_df
+
+        if not arb_df.empty:
+            arb_display_columns = [
+                "type",
+                "score",
+                "game",
+                "profit_%",
+                "bet_a",
+                "book_a",
+                "odds_a",
+                "stake_a",
+                "bet_b",
+                "book_b",
+                "odds_b",
+                "stake_b",
+                "expected_payout",
+                "guaranteed_profit",
+                "kelly_note",
+            ]
+
+            arb_df = arb_df[arb_display_columns].reset_index(drop=True)
+            st.success(f"Found {len(arb_df)} arbitrage rows.")
+            st.dataframe(
+                arb_df.style.apply(highlight_rows, axis=1),
+                use_container_width=True,
+            )
+        else:
+            st.warning("No arbitrage plays found for the current scan.")
+    else:
+        st.info("Run a scan to view arbitrage plays.")

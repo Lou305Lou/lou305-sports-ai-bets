@@ -1,3 +1,12 @@
+import streamlit as st
+import pandas as pd
+
+st.title("Sports AI Betting Dashboard")
+
+# STEP 1: Load your data (keep your existing code here)
+df = pd.read_csv("bet_log.csv")  # or your API data
+
+# STEP 2: Detection function (what you added)
 def detect_opportunities(df):
     opportunities = []
 
@@ -10,14 +19,14 @@ def detect_opportunities(df):
                 if i == j:
                     continue
 
-                # ARBITRAGE CHECK
+                # Arbitrage
                 if row_a["team"] != row_b["team"]:
                     prob = (1 / row_a["odds"]) + (1 / row_b["odds"])
 
                     if prob < 1:
                         profit = round((1 - prob) * 100, 2)
 
-                        if profit > 1:  # FILTER (only good arbs)
+                        if profit > 1:
                             opportunities.append({
                                 "type": "Arbitrage",
                                 "game": game,
@@ -28,20 +37,27 @@ def detect_opportunities(df):
                                 "odds_b": row_b["odds"],
                             })
 
-                # MIDDLE CHECK (spread + ML combo)
-                if row_a["team"] != row_b["team"]:
-                    if row_a["market"] == "spreads" and row_b["market"] == "h2h":
+                # Middle
+                if row_a["market"] == "spreads" and row_b["market"] == "h2h":
+                    spread = row_a["point"]
 
-                        spread = row_a["point"]
-
-                        if spread and abs(spread) > 1.5:
-                            opportunities.append({
-                                "type": "Middle",
-                                "game": game,
-                                "spread_side": row_a["team"],
-                                "spread": spread,
-                                "ml_side": row_b["team"],
-                                "ml_odds": row_b["odds"],
-                            })
+                    if spread and abs(spread) > 1.5:
+                        opportunities.append({
+                            "type": "Middle",
+                            "game": game,
+                            "spread_side": row_a["team"],
+                            "spread": spread,
+                            "ml_side": row_b["team"],
+                            "ml_odds": row_b["odds"],
+                        })
 
     return pd.DataFrame(opportunities)
+
+# STEP 3: Run function
+opps = detect_opportunities(df)
+
+# STEP 4: Display
+if opps.empty:
+    st.write("No strong opportunities right now.")
+else:
+    st.dataframe(opps)

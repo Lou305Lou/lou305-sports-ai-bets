@@ -10,8 +10,66 @@ st.set_page_config(page_title="Sports AI Betting Dashboard", layout="wide")
 st.markdown("""
 <style>
 .block-container {
-    padding-top: 1.5rem;
+    padding-top: 1.2rem;
     padding-bottom: 2rem;
+    max-width: 1400px;
+}
+
+.main-title {
+    font-size: 2rem;
+    font-weight: 800;
+    margin-bottom: 0.2rem;
+}
+
+.sub-title {
+    color: #94A3B8;
+    margin-bottom: 1rem;
+}
+
+.section-card {
+    background: #0F172A;
+    border: 1px solid #334155;
+    padding: 16px;
+    border-radius: 16px;
+    margin-bottom: 14px;
+}
+
+.play-card {
+    background: #111827;
+    border: 1px solid #374151;
+    padding: 14px;
+    border-radius: 14px;
+    margin-bottom: 10px;
+}
+
+.alert-green {
+    background: #052e16;
+    border: 1px solid #166534;
+    color: #dcfce7;
+    padding: 12px;
+    border-radius: 12px;
+    margin-bottom: 10px;
+    font-weight: 600;
+}
+
+.alert-yellow {
+    background: #3f2f00;
+    border: 1px solid #a16207;
+    color: #fef3c7;
+    padding: 12px;
+    border-radius: 12px;
+    margin-bottom: 10px;
+    font-weight: 600;
+}
+
+.alert-blue {
+    background: #172554;
+    border: 1px solid #1d4ed8;
+    color: #dbeafe;
+    padding: 12px;
+    border-radius: 12px;
+    margin-bottom: 10px;
+    font-weight: 600;
 }
 
 div[data-testid="stMetric"] {
@@ -30,17 +88,9 @@ div[data-testid="stMetric"] div {
 }
 
 .stButton > button {
-    border-radius: 10px;
-    font-weight: 600;
-    padding: 0.6rem 1rem;
-}
-
-.section-card {
-    background: #0F172A;
-    border: 1px solid #334155;
-    padding: 14px;
-    border-radius: 14px;
-    margin-bottom: 12px;
+    border-radius: 12px;
+    font-weight: 700;
+    padding: 0.7rem 1rem;
 }
 
 .small-note {
@@ -50,8 +100,8 @@ div[data-testid="stMetric"] div {
 </style>
 """, unsafe_allow_html=True)
 
-st.title("Sports AI Betting Dashboard")
-st.caption("Manual live odds scanner with dashboard, middle plays, and arbitrage plays")
+st.markdown('<div class="main-title">Sports AI Betting Dashboard</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-title">Manual live odds scanner with dashboard, alerts, distribution panel, middle plays, and arbitrage plays</div>', unsafe_allow_html=True)
 
 API_KEY = st.secrets.get("ODDS_API_KEY", "")
 
@@ -217,6 +267,117 @@ def classify_middle_strength(gap, medium_threshold, strong_threshold):
     if gap >= medium_threshold:
         return "Medium"
     return "Weak"
+
+
+def build_middle_distribution(raw_mid_df):
+    if raw_mid_df.empty or "middle_gap" not in raw_mid_df.columns:
+        return pd.DataFrame(columns=["Gap Range", "Count"])
+
+    gap_values = pd.to_numeric(raw_mid_df["middle_gap"], errors="coerce").dropna()
+
+    bins = [
+        ("0.5 - 0.99", (gap_values >= 0.5) & (gap_values < 1.0)),
+        ("1.0 - 1.49", (gap_values >= 1.0) & (gap_values < 1.5)),
+        ("1.5 - 1.99", (gap_values >= 1.5) & (gap_values < 2.0)),
+        ("2.0 - 2.99", (gap_values >= 2.0) & (gap_values < 3.0)),
+        ("3.0+", (gap_values >= 3.0)),
+    ]
+
+    rows = []
+    for label, mask in bins:
+        rows.append({
+            "Gap Range": label,
+            "Count": int(mask.sum())
+        })
+
+    return pd.DataFrame(rows)
+
+
+def render_top_play_cards(final_df):
+    if final_df.empty:
+        st.info("No top plays to show.")
+        return
+
+    top_df = final_df.sort_values(by="score", ascending=False).head(3).reset_index(drop=True)
+
+    st.markdown("### Top Plays")
+    for _, row in top_df.iterrows():
+        type_label = row.get("type", "")
+        game = row.get("game", "")
+        score = row.get("score", "")
+        bet_a = row.get("bet_a", "")
+        book_a = row.get("book_a", "")
+        odds_a = row.get("odds_a", "")
+        bet_b = row.get("bet_b", "")
+        book_b = row.get("book_b", "")
+        odds_b = row.get("odds_b", "")
+
+        extra_line = ""
+        if type_label == "Arbitrage":
+            extra_line = f"Profit %: {row.get('profit_%', '')} | Guaranteed Profit: ${row.get('guaranteed_profit', '')}"
+        else:
+            extra_line = f"Middle Gap: {row.get('middle_gap', '')} | Strength: {row.get('middle_strength', '')}"
+
+        st.markdown(
+            f"""
+            <div class="play-card">
+                <b>{type_label}</b> | <b>Score:</b> {score}<br>
+                <b>Game:</b> {game}<br>
+                <b>Play A:</b> {bet_a} @ {book_a} ({odds_a})<br>
+                <b>Play B:</b> {bet_b} @ {book_b} ({odds_b})<br>
+                <b>Details:</b> {extra_line}
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+
+def render_alerts(arb_df, raw_mid_df, mid_df, arb_alert_profit, middle_alert_gap):
+    st.markdown("### Alerts")
+
+    alert_count = 0
+
+    if not arb_df.empty:
+        arb_hits = arb_df[pd.to_numeric(arb_df["profit_%"], errors="coerce") >= arb_alert_profit]
+        if not arb_hits.empty:
+            best_arb = arb_hits.sort_values(by="score", ascending=False).iloc[0]
+            st.markdown(
+                f"""
+                <div class="alert-green">
+                🚨 Arbitrage Alert: {best_arb['game']} | Profit {best_arb['profit_%']}% | Guaranteed Profit ${best_arb['guaranteed_profit']}
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+            alert_count += 1
+
+    if not raw_mid_df.empty:
+        middle_hits = raw_mid_df[pd.to_numeric(raw_mid_df["middle_gap"], errors="coerce") >= middle_alert_gap]
+        if not middle_hits.empty:
+            best_mid = middle_hits.sort_values(by="score", ascending=False).iloc[0]
+            st.markdown(
+                f"""
+                <div class="alert-yellow">
+                🎯 Middle Alert: {best_mid['game']} | Gap {best_mid['middle_gap']} | Strength {best_mid['middle_strength']}
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+            alert_count += 1
+
+    if not mid_df.empty:
+        st.markdown(
+            f"""
+            <div class="alert-blue">
+            ℹ️ Filtered Middle Plays Available: {len(mid_df)} shown after current focus/filter settings.
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+        alert_count += 1
+
+    if alert_count == 0:
+        st.info("No alerts triggered with current settings.")
 
 
 # -----------------------------
@@ -448,6 +609,8 @@ if "mid_df" not in st.session_state:
     st.session_state.mid_df = pd.DataFrame()
 if "raw_mid_df" not in st.session_state:
     st.session_state.raw_mid_df = pd.DataFrame()
+if "distribution_df" not in st.session_state:
+    st.session_state.distribution_df = pd.DataFrame()
 if "raw_events_count" not in st.session_state:
     st.session_state.raw_events_count = 0
 if "raw_books_count" not in st.session_state:
@@ -461,68 +624,51 @@ st.markdown('<div class="section-card">', unsafe_allow_html=True)
 sport_label = st.selectbox("Choose sport", list(SPORT_OPTIONS.keys()), index=0)
 sport_key = SPORT_OPTIONS[sport_label]
 
-col1, col2, col3 = st.columns(3)
-
-with col1:
+c1, c2, c3 = st.columns(3)
+with c1:
     show_arbs = st.checkbox("Scan Arbitrage", value=True)
-
-with col2:
+with c2:
     show_middles = st.checkbox("Scan Middles", value=True)
-
-with col3:
+with c3:
     middle_focus_mode = st.checkbox("Middle Focus Mode", value=True)
 
-col4, col5, col6 = st.columns(3)
-
-with col4:
+c4, c5, c6 = st.columns(3)
+with c4:
     min_profit = st.number_input("Min Arb Profit %", min_value=0.0, value=0.0, step=0.5)
-
-with col5:
+with c5:
     min_profit_dollars = st.number_input("Min Arb Profit ($)", min_value=0.0, value=0.0, step=0.5)
-
-with col6:
+with c6:
     min_stake_filter = st.number_input("Min Bet Size ($)", min_value=0.0, value=1.0, step=1.0)
 
-col7, col8 = st.columns(2)
-
-with col7:
+c7, c8 = st.columns(2)
+with c7:
     bankroll = st.number_input("Arbitrage Bankroll ($)", min_value=1.0, value=100.0, step=10.0)
-
-with col8:
+with c8:
     middle_stake = st.number_input("Middle Stake Per Side ($)", min_value=1.0, value=25.0, step=5.0)
 
-col9, col10, col11 = st.columns(3)
-
-with col9:
+c9, c10, c11 = st.columns(3)
+with c9:
     min_gap = st.number_input("Min Middle Gap", min_value=0.5, value=1.0, step=0.5)
-
-with col10:
+with c10:
     middle_edge_pct = st.number_input("Estimated Middle Edge %", min_value=0.0, value=2.0, step=0.5)
-
-with col11:
+with c11:
     middle_kelly_bankroll = st.number_input("Middle Kelly Bankroll ($)", min_value=1.0, value=500.0, step=25.0)
 
-col12, col13 = st.columns(2)
-
-with col12:
-    medium_threshold = st.number_input(
-        "Medium Middle Threshold",
-        min_value=0.5,
-        value=1.5,
-        step=0.5
-    )
-
-with col13:
-    strong_threshold = st.number_input(
-        "Strong Middle Threshold",
-        min_value=0.5,
-        value=3.0,
-        step=0.5
-    )
+c12, c13 = st.columns(2)
+with c12:
+    medium_threshold = st.number_input("Medium Middle Threshold", min_value=0.5, value=1.0, step=0.5)
+with c13:
+    strong_threshold = st.number_input("Strong Middle Threshold", min_value=0.5, value=2.0, step=0.5)
 
 if strong_threshold <= medium_threshold:
     st.warning("Strong Middle Threshold must be greater than Medium Middle Threshold.")
     st.stop()
+
+c14, c15 = st.columns(2)
+with c14:
+    arb_alert_profit = st.number_input("Arb Alert Profit %", min_value=0.0, value=1.0, step=0.5)
+with c15:
+    middle_alert_gap = st.number_input("Middle Alert Gap", min_value=0.5, value=1.0, step=0.5)
 
 kelly_mode = st.selectbox("Kelly Mode", ["Quarter Kelly", "Half Kelly", "Full Kelly"], index=1)
 
@@ -534,7 +680,7 @@ else:
     kelly_multiplier = 1.00
 
 st.markdown(
-    '<div class="small-note">Arbitrage uses the exact arb split. Kelly is used as a conservative middle stake cap.</div>',
+    '<div class="small-note">Arbitrage uses the exact arb split. Kelly is used as a conservative middle stake cap. Manual scan only.</div>',
     unsafe_allow_html=True,
 )
 
@@ -576,7 +722,7 @@ else:
 st.markdown('</div>', unsafe_allow_html=True)
 
 scan_button = st.button("Scan Live Odds", type="primary")
-st.info("The app only scans when you press a button. No automatic scanning is running.")
+st.info("The app only scans when you press the button. No automatic refresh is running.")
 
 # -----------------------------
 # SCAN
@@ -638,12 +784,14 @@ if scan_button:
                 results.append(mid_df)
 
             final_df = pd.concat(results, ignore_index=True) if results else pd.DataFrame()
+            distribution_df = build_middle_distribution(raw_mid_df)
 
             st.session_state.scan_complete = True
             st.session_state.final_df = final_df
             st.session_state.arb_df = arb_df
             st.session_state.raw_mid_df = raw_mid_df
             st.session_state.mid_df = mid_df
+            st.session_state.distribution_df = distribution_df
             st.session_state.raw_events_count = len(raw_events)
             st.session_state.raw_books_count = raw_books_count
 
@@ -663,16 +811,17 @@ with tab1:
         arb_df = st.session_state.arb_df
         raw_mid_df = st.session_state.raw_mid_df
         mid_df = st.session_state.mid_df
+        distribution_df = st.session_state.distribution_df
 
-        summary1, summary2, summary3, summary4 = st.columns(4)
-        summary1.metric("Events Pulled", st.session_state.raw_events_count)
-        summary2.metric("Books Returned", st.session_state.raw_books_count)
-        summary3.metric("Arb Rows Found", len(arb_df))
-        summary4.metric("Raw Middle Rows Found", len(raw_mid_df))
+        s1, s2, s3, s4 = st.columns(4)
+        s1.metric("Events Pulled", st.session_state.raw_events_count)
+        s2.metric("Books Returned", st.session_state.raw_books_count)
+        s3.metric("Arb Rows Found", len(arb_df))
+        s4.metric("Raw Middle Rows Found", len(raw_mid_df))
 
-        summary5, summary6 = st.columns(2)
-        summary5.metric("Filtered Middle Rows", len(mid_df))
-        summary6.metric("Middle Focus Mode", "ON" if middle_focus_mode else "OFF")
+        s5, s6 = st.columns(2)
+        s5.metric("Filtered Middle Rows", len(mid_df))
+        s6.metric("Middle Focus Mode", "ON" if middle_focus_mode else "OFF")
 
         if not final_df.empty:
             arb_count = int((final_df["type"] == "Arbitrage").sum()) if "type" in final_df.columns else 0
@@ -701,6 +850,15 @@ with tab1:
                 ]
                 st.caption("Using sportsbooks: " + ", ".join(chosen_names))
 
+            render_alerts(arb_df, raw_mid_df, mid_df, arb_alert_profit, middle_alert_gap)
+            render_top_play_cards(final_df)
+
+            st.markdown("### Middle Gap Distribution")
+            if not distribution_df.empty:
+                st.dataframe(distribution_df, use_container_width=True)
+            else:
+                st.info("No middle gap distribution available for this scan.")
+
             st.success(f"Found {len(final_df)} opportunity rows.")
         else:
             if len(raw_mid_df) > 0 and len(mid_df) == 0 and middle_focus_mode:
@@ -716,6 +874,7 @@ with tab2:
     if st.session_state.scan_complete:
         raw_mid_df = st.session_state.raw_mid_df
         mid_df = st.session_state.mid_df
+        distribution_df = st.session_state.distribution_df
 
         if len(raw_mid_df) > 0 and len(mid_df) == 0 and middle_focus_mode:
             st.warning("Middle Focus Mode is ON, and all current middle plays were below your Medium threshold.")
@@ -743,12 +902,16 @@ with tab2:
                 "kelly_stake_each",
             ]
 
-            mid_df = mid_df[middle_display_columns].reset_index(drop=True)
-            st.success(f"Found {len(mid_df)} middle rows.")
+            display_mid_df = mid_df[middle_display_columns].reset_index(drop=True)
+            st.success(f"Found {len(display_mid_df)} middle rows.")
             st.dataframe(
-                mid_df.style.apply(highlight_rows, axis=1),
+                display_mid_df.style.apply(highlight_rows, axis=1),
                 use_container_width=True,
             )
+
+            st.markdown("### Middle Gap Distribution")
+            if not distribution_df.empty:
+                st.dataframe(distribution_df, use_container_width=True)
         else:
             st.warning("No middle plays found for the current scan.")
     else:
@@ -779,10 +942,10 @@ with tab3:
                 "kelly_note",
             ]
 
-            arb_df = arb_df[arb_display_columns].reset_index(drop=True)
-            st.success(f"Found {len(arb_df)} arbitrage rows.")
+            display_arb_df = arb_df[arb_display_columns].reset_index(drop=True)
+            st.success(f"Found {len(display_arb_df)} arbitrage rows.")
             st.dataframe(
-                arb_df.style.apply(highlight_rows, axis=1),
+                display_arb_df.style.apply(highlight_rows, axis=1),
                 use_container_width=True,
             )
         else:

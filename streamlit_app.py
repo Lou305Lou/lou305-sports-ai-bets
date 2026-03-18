@@ -167,7 +167,7 @@ div[data-testid="stMetric"] div {
 
 st.markdown('<div class="main-title">Sports AI Betting Dashboard</div>', unsafe_allow_html=True)
 st.markdown(
-    '<div class="sub-title">Manual live odds scanner with dashboard, alerts, best plays, execution mode, actual plays mode, bet tracking, and NBA AI Engine V3</div>',
+    '<div class="sub-title">Manual live odds scanner with dashboard, alerts, best plays, execution mode, actual plays mode, bet tracking, and NBA AI Engine V4</div>',
     unsafe_allow_html=True
 )
 
@@ -460,8 +460,28 @@ def get_tracker_summary(tracker_df):
     }
 
 # -----------------------------
-# NBA AI ENGINE V3
+# NBA AI ENGINE V4
 # -----------------------------
+def confidence_tier(conf):
+    if conf >= 80:
+        return "💎 Elite"
+    elif conf >= 70:
+        return "🟢 Strong"
+    elif conf >= 60:
+        return "🟡 Medium"
+    else:
+        return "🔴 Low"
+
+
+def grade_play(conf):
+    if conf >= 80:
+        return "A"
+    elif conf >= 70:
+        return "B"
+    else:
+        return "C"
+
+
 def extract_nba_game_features(event):
     home_team = event.get("home_team")
     away_team = event.get("away_team")
@@ -473,12 +493,7 @@ def extract_nba_game_features(event):
 
     home_spread_points = []
     away_spread_points = []
-    home_spread_prices = []
-    away_spread_prices = []
-
     totals_points = []
-    over_prices = []
-    under_prices = []
 
     for bookmaker in event.get("bookmakers", []):
         h2h = get_market_map(bookmaker, "h2h")
@@ -497,18 +512,12 @@ def extract_nba_game_features(event):
 
         if home_team in spreads and spreads[home_team].get("point") is not None:
             home_spread_points.append(float(spreads[home_team]["point"]))
-            home_spread_prices.append(spreads[home_team].get("price"))
 
         if away_team in spreads and spreads[away_team].get("point") is not None:
             away_spread_points.append(float(spreads[away_team]["point"]))
-            away_spread_prices.append(spreads[away_team].get("price"))
 
         if "Over" in totals and totals["Over"].get("point") is not None:
             totals_points.append(float(totals["Over"]["point"]))
-            over_prices.append(totals["Over"].get("price"))
-
-        if "Under" in totals and totals["Under"].get("point") is not None:
-            under_prices.append(totals["Under"].get("price"))
 
     consensus_home_prob = safe_mean(home_ml_probs)
     consensus_away_prob = safe_mean(away_ml_probs)
@@ -520,8 +529,6 @@ def extract_nba_game_features(event):
     best_away_ml = max(away_ml_odds) if away_ml_odds else None
     best_home_spread = max(home_spread_points) if home_spread_points else None
     best_away_spread = max(away_spread_points) if away_spread_points else None
-    best_over_total = min(totals_points) if totals_points else None
-    best_under_total = max(totals_points) if totals_points else None
 
     market_form_home = 0.0
     market_form_away = 0.0
@@ -533,20 +540,6 @@ def extract_nba_game_features(event):
     if consensus_home_prob is not None and consensus_away_prob is not None:
         power_edge = (consensus_home_prob - consensus_away_prob) * 100
 
-    spread_edge_home = 0.0
-    spread_edge_away = 0.0
-    if consensus_home_spread is not None and best_home_spread is not None:
-        spread_edge_home = best_home_spread - consensus_home_spread
-    if consensus_away_spread is not None and best_away_spread is not None:
-        spread_edge_away = best_away_spread - consensus_away_spread
-
-    total_edge_over = 0.0
-    total_edge_under = 0.0
-    if consensus_total is not None and best_over_total is not None and best_under_total is not None:
-        total_edge_over = consensus_total - best_over_total
-        total_edge_under = best_under_total - consensus_total
-
-    # V3 additional derived scores
     home_strength_score = 50 + market_form_home + (power_edge * 0.6) + 2.0
     away_strength_score = 50 + market_form_away - (power_edge * 0.6)
     form_gap = home_strength_score - away_strength_score
@@ -569,8 +562,6 @@ def extract_nba_game_features(event):
         "best_away_ml": best_away_ml,
         "best_home_spread": best_home_spread,
         "best_away_spread": best_away_spread,
-        "best_over_total": best_over_total,
-        "best_under_total": best_under_total,
         "home_prob_std": safe_std(home_ml_probs),
         "away_prob_std": safe_std(away_ml_probs),
         "spread_std": safe_std(home_spread_points),
@@ -579,10 +570,6 @@ def extract_nba_game_features(event):
         "market_form_home": round(market_form_home, 2),
         "market_form_away": round(market_form_away, 2),
         "power_edge": round(power_edge, 2),
-        "spread_edge_home": round(spread_edge_home, 2),
-        "spread_edge_away": round(spread_edge_away, 2),
-        "total_edge_over": round(total_edge_over, 2),
-        "total_edge_under": round(total_edge_under, 2),
         "home_strength_score": round(home_strength_score, 2),
         "away_strength_score": round(away_strength_score, 2),
         "form_gap": round(form_gap, 2),
@@ -591,7 +578,7 @@ def extract_nba_game_features(event):
     }
 
 
-def nba_stats_ai_v3(features):
+def nba_stats_ai_v4(features):
     home_team = features["home_team"]
     away_team = features["away_team"]
 
@@ -607,7 +594,7 @@ def nba_stats_ai_v3(features):
             spread_pick = f"{home_team} {home_spread:+.1f}"
         else:
             spread_pick = f"{away_team} {features['consensus_away_spread']:+.1f}"
-        spread_conf = clamp(round(54 + abs(home_spread) * 2.2 + abs(features["form_gap"]) * 0.4, 1), 50, 91)
+        spread_conf = clamp(round(54 + abs(home_spread) * 2.2 + abs(features['form_gap']) * 0.4, 1), 50, 91)
 
     total_line = features["consensus_total"]
     if total_line is None:
@@ -624,8 +611,7 @@ def nba_stats_ai_v3(features):
 
     reason = (
         f"Home strength score {features['home_strength_score']} vs away strength score {features['away_strength_score']}. "
-        f"Form gap is {features['form_gap']:+.2f}. "
-        f"Pace factor is {features['pace_factor']:+.2f}."
+        f"Form gap is {features['form_gap']:+.2f}. Pace factor is {features['pace_factor']:+.2f}."
     )
 
     return {
@@ -640,7 +626,7 @@ def nba_stats_ai_v3(features):
     }
 
 
-def nba_matchup_ai_v3(features):
+def nba_matchup_ai_v4(features):
     home_team = features["home_team"]
     away_team = features["away_team"]
 
@@ -676,8 +662,7 @@ def nba_matchup_ai_v3(features):
         total_conf = clamp(round(52 + abs(features["pace_factor"]) * 4.5, 1), 50, 83)
 
     reason = (
-        f"This model uses matchup context with a home-court bump. "
-        f"Matchup edge is {matchup_edge:+.2f} and pace factor is {features['pace_factor']:+.2f}."
+        f"Matchup edge is {matchup_edge:+.2f}. This model adds home-court context and uses pace for totals."
     )
 
     return {
@@ -692,7 +677,7 @@ def nba_matchup_ai_v3(features):
     }
 
 
-def nba_market_ai_v3(features):
+def nba_market_ai_v4(features):
     home_team = features["home_team"]
     away_team = features["away_team"]
 
@@ -724,22 +709,21 @@ def nba_market_ai_v3(features):
         spread_pick = "No spread edge"
         spread_conf = 50
     else:
-        if features["spread_edge_home"] >= features["spread_edge_away"]:
+        if abs(features["best_home_spread"]) >= abs(features["best_away_spread"]):
             spread_pick = f"{home_team} {features['best_home_spread']:+.1f}"
-            spread_conf = clamp(round(53 + abs(features["spread_edge_home"]) * 12, 1), 50, 88)
         else:
             spread_pick = f"{away_team} {features['best_away_spread']:+.1f}"
-            spread_conf = clamp(round(53 + abs(features["spread_edge_away"]) * 12, 1), 50, 88)
+        spread_conf = clamp(round(53 + abs(features["power_edge"]) * 0.8, 1), 50, 88)
 
     total_pick = "No totals data"
     total_conf = 50
     if features["consensus_total"] is not None:
-        if features["total_edge_over"] > features["total_edge_under"] and features["total_edge_over"] > 0:
-            total_pick = f"Lean Over {round(features['best_over_total'], 1)}"
-            total_conf = clamp(round(53 + features["total_edge_over"] * 10, 1), 50, 86)
-        elif features["total_edge_under"] >= features["total_edge_over"] and features["total_edge_under"] > 0:
-            total_pick = f"Lean Under {round(features['best_under_total'], 1)}"
-            total_conf = clamp(round(53 + features["total_edge_under"] * 10, 1), 50, 86)
+        if features["consensus_total"] >= 229:
+            total_pick = f"Lean Under {round(features['consensus_total'], 1)}"
+            total_conf = clamp(round(54 + features["totals_strength"] * 0.8, 1), 50, 86)
+        elif features["consensus_total"] <= 221:
+            total_pick = f"Lean Over {round(features['consensus_total'], 1)}"
+            total_conf = clamp(round(54 + features["totals_strength"] * 0.8, 1), 50, 86)
         else:
             total_pick = f"Lean Pass {round(features['consensus_total'], 1)}"
             total_conf = 52
@@ -762,7 +746,7 @@ def nba_market_ai_v3(features):
     }
 
 
-def nba_risk_ai_v3(features):
+def nba_risk_ai_v4(features):
     risk_score = 0
     if features["books_count"] < 5:
         risk_score += 2
@@ -808,96 +792,63 @@ def parse_team_from_pick(pick_text, home_team, away_team):
     return None
 
 
-def summarize_votes(items):
-    counts = {}
-    for item in items:
-        counts[item] = counts.get(item, 0) + 1
-    return counts
-
-
-def choose_best_bet(final_ml, final_spread, final_total):
-    candidates = [
-        {"bet_type": "Moneyline", "pick": final_ml["pick"], "confidence": final_ml["confidence"], "reason": final_ml["reason"]},
-        {"bet_type": "Spread", "pick": final_spread["pick"], "confidence": final_spread["confidence"], "reason": final_spread["reason"]},
-        {"bet_type": "Total", "pick": final_total["pick"], "confidence": final_total["confidence"], "reason": final_total["reason"]},
-    ]
-
-    filtered = [c for c in candidates if c["pick"] not in ["No edge", "No spread edge", "No totals data"]]
-    if not filtered:
-        return {
-            "bet_type": "No Best Bet",
-            "pick": "No strong edge",
-            "confidence": 50,
-            "reason": "The current market snapshot does not show a strong enough edge."
-        }
-    return max(filtered, key=lambda x: x["confidence"])
-
-
-def nba_final_ai_v3(features, stats_ai, matchup_ai, market_ai, risk_ai):
+def nba_final_ai_v4(features, stats_ai, matchup_ai, market_ai, risk_ai):
     home_team = features["home_team"]
     away_team = features["away_team"]
 
     ml_votes = {home_team: 0, away_team: 0}
-    for model_pick in [stats_ai["ml_pick"], matchup_ai["ml_pick"], market_ai["ml_pick"]]:
-        if model_pick in ml_votes:
-            ml_votes[model_pick] += 1
+    for pick in [stats_ai["ml_pick"], matchup_ai["ml_pick"], market_ai["ml_pick"]]:
+        if pick in ml_votes:
+            ml_votes[pick] += 1
 
-    final_ml_pick = max(ml_votes, key=ml_votes.get)
-    base_ml_conf = safe_mean([stats_ai["ml_confidence"], matchup_ai["ml_confidence"], market_ai["ml_confidence"]])
-    final_ml_conf = clamp(round((55 if base_ml_conf is None else base_ml_conf) + risk_ai["confidence_adjustment"], 1), 50, 95)
-    final_ml = {
-        "pick": final_ml_pick,
-        "confidence": final_ml_conf,
-        "reason": f"ML votes: {ml_votes}. Risk adjustment {risk_ai['confidence_adjustment']}."
-    }
+    ml_pick = max(ml_votes, key=ml_votes.get)
+    ml_conf = round(
+        (stats_ai["ml_confidence"] + matchup_ai["ml_confidence"] + market_ai["ml_confidence"]) / 3
+        + risk_ai["confidence_adjustment"], 1
+    )
+    ml_conf = max(50, min(95, ml_conf))
+    ml_tier = confidence_tier(ml_conf)
 
-    spread_votes = {home_team: 0, away_team: 0}
-    for pick in [stats_ai["spread_pick"], matchup_ai["spread_pick"], market_ai["spread_pick"]]:
-        team = parse_team_from_pick(pick, home_team, away_team)
-        if team in spread_votes:
-            spread_votes[team] += 1
+    spread_conf = round(
+        (stats_ai["spread_confidence"] + matchup_ai["spread_confidence"] + market_ai["spread_confidence"]) / 3
+        + risk_ai["confidence_adjustment"], 1
+    )
+    spread_conf = max(50, min(95, spread_conf))
+    spread_tier = confidence_tier(spread_conf)
+    spread_pick = market_ai["spread_pick"]
 
-    final_spread_team = max(spread_votes, key=spread_votes.get)
-    if final_spread_team == home_team and features["best_home_spread"] is not None:
-        final_spread_pick = f"{home_team} {features['best_home_spread']:+.1f}"
-    elif final_spread_team == away_team and features["best_away_spread"] is not None:
-        final_spread_pick = f"{away_team} {features['best_away_spread']:+.1f}"
-    else:
-        final_spread_pick = "No spread edge"
+    total_conf = round(
+        (stats_ai["total_confidence"] + matchup_ai["total_confidence"] + market_ai["total_confidence"]) / 3
+        + risk_ai["confidence_adjustment"], 1
+    )
+    total_conf = max(50, min(95, total_conf))
+    total_tier = confidence_tier(total_conf)
+    total_pick = market_ai["total_pick"]
 
-    base_spread_conf = safe_mean([stats_ai["spread_confidence"], matchup_ai["spread_confidence"], market_ai["spread_confidence"]])
-    final_spread_conf = clamp(round((55 if base_spread_conf is None else base_spread_conf) + risk_ai["confidence_adjustment"], 1), 50, 95)
-    final_spread = {
-        "pick": final_spread_pick,
-        "confidence": final_spread_conf,
-        "reason": f"Spread votes: {spread_votes}. Risk adjustment {risk_ai['confidence_adjustment']}."
-    }
+    best = max([
+        ("Moneyline", ml_pick, ml_conf),
+        ("Spread", spread_pick, spread_conf),
+        ("Total", total_pick, total_conf)
+    ], key=lambda x: x[2])
 
-    total_votes = summarize_votes([stats_ai["total_pick"], matchup_ai["total_pick"], market_ai["total_pick"]])
-    final_total_pick = max(total_votes, key=total_votes.get) if total_votes else "No totals data"
-
-    base_total_conf = safe_mean([stats_ai["total_confidence"], matchup_ai["total_confidence"], market_ai["total_confidence"]])
-    final_total_conf = clamp(round((55 if base_total_conf is None else base_total_conf) + risk_ai["confidence_adjustment"], 1), 50, 95)
-    final_total = {
-        "pick": final_total_pick,
-        "confidence": final_total_conf,
-        "reason": f"Total votes: {total_votes}. Risk adjustment {risk_ai['confidence_adjustment']}."
-    }
-
-    best_bet = choose_best_bet(final_ml, final_spread, final_total)
+    best_type, best_pick, best_conf = best
+    best_grade = grade_play(best_conf)
 
     final_score = round(
-        max(final_ml_conf, final_spread_conf, final_total_conf)
-        + abs(features["form_gap"]) * 0.4
-        + features["totals_strength"] * 0.1,
+        best_conf + abs(features["form_gap"]) * 0.5 + features["totals_strength"] * 0.15,
         1
     )
 
     return {
-        "ml": final_ml,
-        "spread": final_spread,
-        "total": final_total,
-        "best_bet": best_bet,
+        "ml": {"pick": ml_pick, "confidence": ml_conf, "tier": ml_tier},
+        "spread": {"pick": spread_pick, "confidence": spread_conf, "tier": spread_tier},
+        "total": {"pick": total_pick, "confidence": total_conf, "tier": total_tier},
+        "best_bet": {
+            "type": best_type,
+            "pick": best_pick,
+            "confidence": best_conf,
+            "grade": best_grade
+        },
         "final_score": final_score,
         "summary_reason": (
             f"Final engine combined Stats AI, Matchup AI, and Market AI, then adjusted confidence for {risk_ai['risk_level']} risk."
@@ -905,13 +856,13 @@ def nba_final_ai_v3(features, stats_ai, matchup_ai, market_ai, risk_ai):
     }
 
 
-def run_nba_ai_engine_v3(event):
+def run_nba_ai_engine_v4(event):
     features = extract_nba_game_features(event)
-    stats_ai = nba_stats_ai_v3(features)
-    matchup_ai = nba_matchup_ai_v3(features)
-    market_ai = nba_market_ai_v3(features)
-    risk_ai = nba_risk_ai_v3(features)
-    final_ai = nba_final_ai_v3(features, stats_ai, matchup_ai, market_ai, risk_ai)
+    stats_ai = nba_stats_ai_v4(features)
+    matchup_ai = nba_matchup_ai_v4(features)
+    market_ai = nba_market_ai_v4(features)
+    risk_ai = nba_risk_ai_v4(features)
+    final_ai = nba_final_ai_v4(features, stats_ai, matchup_ai, market_ai, risk_ai)
 
     return {
         "features": features,
@@ -1557,7 +1508,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "Middle Plays",
     "Arbitrage Plays",
     "Bet Tracker",
-    "NBA AI Engine V3"
+    "NBA AI Engine V4"
 ])
 
 with tab1:
@@ -1618,11 +1569,6 @@ with tab1:
                 st.info("No middle gap distribution available for this scan.")
 
             st.success(f"Found {len(final_df)} opportunity rows.")
-        else:
-            if len(raw_mid_df) > 0 and len(mid_df) == 0 and (middle_focus_mode or actual_plays_only):
-                st.warning("Rows were found before filtering, but current focus or actual-play filters removed them.")
-            else:
-                st.warning("No live opportunities found with the current settings and selected sportsbooks.")
     else:
         st.info("Run a scan to populate the dashboard.")
 
@@ -1756,7 +1702,7 @@ with tab4:
         st.dataframe(st.session_state.tracker_df[tracker_display_columns], use_container_width=True)
 
 with tab5:
-    st.subheader("NBA AI Engine V3")
+    st.subheader("NBA AI Engine V4")
 
     if not st.session_state.scan_complete:
         st.info("Run a scan first so the NBA AI Engine has games to analyze.")
@@ -1777,7 +1723,7 @@ with tab5:
             selected_game_index = nba_game_labels.index(selected_game_label)
             selected_event = nba_events[selected_game_index]
 
-            ai_results = run_nba_ai_engine_v3(selected_event)
+            ai_results = run_nba_ai_engine_v4(selected_event)
             features = ai_results["features"]
             stats_ai = ai_results["stats_ai"]
             matchup_ai = ai_results["matchup_ai"]
@@ -1795,10 +1741,10 @@ with tab5:
             st.markdown(
                 f"""
                 <div class="best-bet-card">
-                    <b>Final Recommended Best Bet:</b> {best_bet['bet_type']}<br>
+                    <b>Best Bet:</b> {best_bet['type']}<br>
                     <b>Pick:</b> {best_bet['pick']}<br>
-                    <b>Confidence:</b> {best_bet['confidence']}<br>
-                    <b>Reason:</b> {best_bet['reason']}
+                    <b>Confidence:</b> {best_bet['confidence']} ({confidence_tier(best_bet['confidence'])})<br>
+                    <b>Grade:</b> {best_bet['grade']}
                 </div>
                 """,
                 unsafe_allow_html=True
@@ -1846,9 +1792,9 @@ with tab5:
             render_ai_card(
                 "Final AI Consensus",
                 [
-                    f"<b>Final ML:</b> {final_ai['ml']['pick']} ({final_ai['ml']['confidence']})",
-                    f"<b>Final Spread:</b> {final_ai['spread']['pick']} ({final_ai['spread']['confidence']})",
-                    f"<b>Final Total:</b> {final_ai['total']['pick']} ({final_ai['total']['confidence']})",
+                    f"<b>Final ML:</b> {final_ai['ml']['pick']} ({final_ai['ml']['confidence']}) {final_ai['ml']['tier']}",
+                    f"<b>Final Spread:</b> {final_ai['spread']['pick']} ({final_ai['spread']['confidence']}) {final_ai['spread']['tier']}",
+                    f"<b>Final Total:</b> {final_ai['total']['pick']} ({final_ai['total']['confidence']}) {final_ai['total']['tier']}",
                     f"<b>Engine Score:</b> {final_ai['final_score']}",
                     f"<b>Summary:</b> {final_ai['summary_reason']}",
                 ]
@@ -1870,10 +1816,6 @@ with tab5:
                 "power_edge": features["power_edge"],
                 "market_form_home": features["market_form_home"],
                 "market_form_away": features["market_form_away"],
-                "spread_edge_home": features["spread_edge_home"],
-                "spread_edge_away": features["spread_edge_away"],
-                "total_edge_over": features["total_edge_over"],
-                "total_edge_under": features["total_edge_under"],
                 "books_count": features["books_count"],
             }])
 

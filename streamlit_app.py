@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import requests
+from datetime import datetime
 
 st.set_page_config(page_title="Sports AI Betting Dashboard", layout="wide")
 
@@ -109,6 +110,16 @@ st.markdown("""
     font-weight: 600;
 }
 
+.alert-gray {
+    background: #1f2937;
+    border: 1px solid #4b5563;
+    color: #f3f4f6;
+    padding: 12px;
+    border-radius: 12px;
+    margin-bottom: 10px;
+    font-weight: 600;
+}
+
 div[data-testid="stMetric"] {
     background-color: #111827;
     border: 1px solid #374151;
@@ -139,7 +150,7 @@ div[data-testid="stMetric"] div {
 
 st.markdown('<div class="main-title">Sports AI Betting Dashboard</div>', unsafe_allow_html=True)
 st.markdown(
-    '<div class="sub-title">Manual live odds scanner with dashboard, alerts, best plays, execution mode, actual plays mode, middle plays, and arbitrage plays</div>',
+    '<div class="sub-title">Manual live odds scanner with dashboard, alerts, best plays, execution mode, actual plays mode, middle plays, arbitrage plays, and bet tracking</div>',
     unsafe_allow_html=True
 )
 
@@ -164,7 +175,6 @@ if not API_KEY:
 def american_to_decimal(odds):
     if odds is None:
         return None
-
     try:
         odds = float(odds)
     except Exception:
@@ -361,6 +371,71 @@ def apply_actual_plays_filter(
     return filtered[middle_mask | arb_mask].copy()
 
 
+def create_tracker_row_from_play(row):
+    total_stake = (
+        pd.to_numeric(pd.Series([row.get("stake_a")]), errors="coerce").fillna(0).iloc[0] +
+        pd.to_numeric(pd.Series([row.get("stake_b")]), errors="coerce").fillna(0).iloc[0]
+    )
+
+    return {
+        "date_added": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "type": row.get("type", ""),
+        "game": row.get("game", ""),
+        "score": row.get("score", ""),
+        "bet_a": row.get("bet_a", ""),
+        "book_a": row.get("book_a", ""),
+        "odds_a": row.get("odds_a", ""),
+        "stake_a": row.get("stake_a", ""),
+        "bet_b": row.get("bet_b", ""),
+        "book_b": row.get("book_b", ""),
+        "odds_b": row.get("odds_b", ""),
+        "stake_b": row.get("stake_b", ""),
+        "middle_gap": row.get("middle_gap", ""),
+        "middle_strength": row.get("middle_strength", ""),
+        "expected_payout": row.get("expected_payout", ""),
+        "guaranteed_profit": row.get("guaranteed_profit", ""),
+        "status": "Pending",
+        "actual_profit": 0.0,
+        "notes": "",
+        "total_stake": round(total_stake, 2),
+    }
+
+
+def get_tracker_summary(tracker_df):
+    if tracker_df.empty:
+        return {
+            "total_tracked": 0,
+            "wins": 0,
+            "losses": 0,
+            "pushes": 0,
+            "pending": 0,
+            "profit": 0.0,
+            "roi": 0.0,
+        }
+
+    status_series = tracker_df["status"].astype(str)
+    actual_profit = pd.to_numeric(tracker_df["actual_profit"], errors="coerce").fillna(0)
+    total_stake = pd.to_numeric(tracker_df["total_stake"], errors="coerce").fillna(0)
+
+    settled_mask = status_series.isin(["Win", "Loss", "Push"])
+    settled_stake = total_stake[settled_mask].sum()
+    total_profit = actual_profit.sum()
+
+    roi = 0.0
+    if settled_stake > 0:
+        roi = (total_profit / settled_stake) * 100
+
+    return {
+        "total_tracked": len(tracker_df),
+        "wins": int((status_series == "Win").sum()),
+        "losses": int((status_series == "Loss").sum()),
+        "pushes": int((status_series == "Push").sum()),
+        "pending": int((status_series == "Pending").sum()),
+        "profit": round(float(total_profit), 2),
+        "roi": round(float(roi), 2),
+    }
+
+
 def render_top_play_cards(final_df):
     if final_df.empty:
         st.info("No top plays to show.")
@@ -455,14 +530,15 @@ def render_execution_mode(final_df):
         return
 
     options = []
-    for idx, row in final_df.reset_index(drop=True).iterrows():
+    working_df = final_df.reset_index(drop=True)
+
+    for idx, row in working_df.iterrows():
         label = f"{idx + 1}. {row['type']} | {row['game']} | Score {row['score']}"
         options.append(label)
 
     selected_label = st.selectbox("Choose a play to prepare", options=options)
-
     selected_index = options.index(selected_label)
-    row = final_df.reset_index(drop=True).iloc[selected_index]
+    row = working_df.iloc[selected_index]
 
     type_label = row.get("type", "")
     game = row.get("game", "")
@@ -476,7 +552,6 @@ def render_execution_mode(final_df):
     odds_b = row.get("odds_b", "")
     stake_b = row.get("stake_b", "")
 
-    extra_details = ""
     if type_label == "Arbitrage":
         extra_details = (
             f"<b>Profit %:</b> {row.get('profit_%', '')}<br>"
@@ -519,6 +594,14 @@ def render_execution_mode(final_df):
         """,
         unsafe_allow_html=True
     )
+
+    if st.button("Add Selected Play to Bet Tracker"):
+        new_row = create_tracker_row_from_play(row)
+        st.session_state.tracker_df = pd.concat(
+            [st.session_state.tracker_df, pd.DataFrame([new_row])],
+            ignore_index=True
+        )
+        st.success("Selected play added to Bet Tracker.")
 
 
 # -----------------------------
@@ -748,6 +831,15 @@ if "raw_events_count" not in st.session_state:
     st.session_state.raw_events_count = 0
 if "raw_books_count" not in st.session_state:
     st.session_state.raw_books_count = 0
+if "tracker_df" not in st.session_state:
+    st.session_state.tracker_df = pd.DataFrame(columns=[
+        "date_added", "type", "game", "score",
+        "bet_a", "book_a", "odds_a", "stake_a",
+        "bet_b", "book_b", "odds_b", "stake_b",
+        "middle_gap", "middle_strength",
+        "expected_payout", "guaranteed_profit",
+        "status", "actual_profit", "notes", "total_stake"
+    ])
 
 # -----------------------------
 # CONTROLS
@@ -967,7 +1059,7 @@ if scan_button:
 # -----------------------------
 # TABS
 # -----------------------------
-tab1, tab2, tab3 = st.tabs(["Dashboard", "Middle Plays", "Arbitrage Plays"])
+tab1, tab2, tab3, tab4 = st.tabs(["Dashboard", "Middle Plays", "Arbitrage Plays", "Bet Tracker"])
 
 with tab1:
     st.subheader("Dashboard Summary")
@@ -1048,21 +1140,11 @@ with tab2:
             st.info("Lower your middle thresholds or turn off one of the filters and scan again.")
         elif not mid_df.empty:
             middle_display_columns = [
-                "type",
-                "score",
-                "game",
-                "bet_a",
-                "book_a",
-                "odds_a",
-                "stake_a",
-                "bet_b",
-                "book_b",
-                "odds_b",
-                "stake_b",
-                "middle_gap",
-                "middle_strength",
-                "kelly_note",
-                "kelly_stake_each",
+                "type", "score", "game",
+                "bet_a", "book_a", "odds_a", "stake_a",
+                "bet_b", "book_b", "odds_b", "stake_b",
+                "middle_gap", "middle_strength",
+                "kelly_note", "kelly_stake_each",
             ]
 
             display_mid_df = mid_df[middle_display_columns].reset_index(drop=True)
@@ -1088,21 +1170,10 @@ with tab3:
 
         if not arb_df.empty:
             arb_display_columns = [
-                "type",
-                "score",
-                "game",
-                "profit_%",
-                "bet_a",
-                "book_a",
-                "odds_a",
-                "stake_a",
-                "bet_b",
-                "book_b",
-                "odds_b",
-                "stake_b",
-                "expected_payout",
-                "guaranteed_profit",
-                "kelly_note",
+                "type", "score", "game", "profit_%",
+                "bet_a", "book_a", "odds_a", "stake_a",
+                "bet_b", "book_b", "odds_b", "stake_b",
+                "expected_payout", "guaranteed_profit", "kelly_note",
             ]
 
             display_arb_df = arb_df[arb_display_columns].reset_index(drop=True)
@@ -1115,3 +1186,81 @@ with tab3:
             st.warning("No arbitrage plays found for the current scan.")
     else:
         st.info("Run a scan to view arbitrage plays.")
+
+with tab4:
+    st.subheader("Bet Tracker")
+
+    tracker_df = st.session_state.tracker_df.copy()
+    summary = get_tracker_summary(tracker_df)
+
+    t1, t2, t3, t4 = st.columns(4)
+    t1.metric("Tracked Plays", summary["total_tracked"])
+    t2.metric("Wins", summary["wins"])
+    t3.metric("Losses", summary["losses"])
+    t4.metric("Pending", summary["pending"])
+
+    t5, t6, t7 = st.columns(3)
+    t5.metric("Pushes", summary["pushes"])
+    t6.metric("Total Profit ($)", summary["profit"])
+    t7.metric("ROI %", summary["roi"])
+
+    if tracker_df.empty:
+        st.info("No tracked plays yet. Add a play from Execution Mode on the Dashboard.")
+    else:
+        st.markdown("### Update Tracked Play")
+
+        tracker_options = [
+            f"{i + 1}. {row['type']} | {row['game']} | {row['status']}"
+            for i, row in tracker_df.reset_index(drop=True).iterrows()
+        ]
+
+        selected_tracker_label = st.selectbox("Choose tracked play", tracker_options)
+        selected_tracker_index = tracker_options.index(selected_tracker_label)
+
+        selected_tracker_row = tracker_df.reset_index(drop=True).iloc[selected_tracker_index]
+
+        c1, c2 = st.columns(2)
+        with c1:
+            new_status = st.selectbox(
+                "Update status",
+                ["Pending", "Win", "Loss", "Push"],
+                index=["Pending", "Win", "Loss", "Push"].index(selected_tracker_row["status"])
+                if selected_tracker_row["status"] in ["Pending", "Win", "Loss", "Push"] else 0
+            )
+        with c2:
+            new_actual_profit = st.number_input(
+                "Actual Profit / Loss ($)",
+                value=float(pd.to_numeric(pd.Series([selected_tracker_row["actual_profit"]]), errors="coerce").fillna(0).iloc[0]),
+                step=1.0
+            )
+
+        new_notes = st.text_input(
+            "Notes",
+            value=str(selected_tracker_row["notes"])
+        )
+
+        if st.button("Save Tracker Update"):
+            st.session_state.tracker_df.loc[selected_tracker_index, "status"] = new_status
+            st.session_state.tracker_df.loc[selected_tracker_index, "actual_profit"] = round(new_actual_profit, 2)
+            st.session_state.tracker_df.loc[selected_tracker_index, "notes"] = new_notes
+            st.success("Tracked play updated.")
+
+        if st.button("Delete Selected Tracked Play"):
+            st.session_state.tracker_df = st.session_state.tracker_df.drop(
+                st.session_state.tracker_df.index[selected_tracker_index]
+            ).reset_index(drop=True)
+            st.success("Tracked play deleted.")
+
+        st.markdown("### Tracked Bets Table")
+
+        tracker_display_columns = [
+            "date_added", "type", "game", "score",
+            "bet_a", "book_a", "odds_a", "stake_a",
+            "bet_b", "book_b", "odds_b", "stake_b",
+            "status", "actual_profit", "notes", "total_stake"
+        ]
+
+        st.dataframe(
+            st.session_state.tracker_df[tracker_display_columns],
+            use_container_width=True,
+        )

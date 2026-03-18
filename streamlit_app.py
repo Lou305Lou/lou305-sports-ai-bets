@@ -719,7 +719,6 @@ def recommend_v8_weights(model_perf_df, current_sport_key):
         model_label = row["Model"]
         model_key = label_to_key[model_label]
         base_weight = base_map[model_key]
-        picks = float(row["Supported Picks"])
         wins = float(row["Wins"])
         losses = float(row["Losses"])
         roi = float(row["ROI %"])
@@ -2351,7 +2350,7 @@ with tab5:
                     [st.session_state.ai_perf_df, pd.DataFrame([new_ai_row])],
                     ignore_index=True
                 )
-                st.success("Selected AI best bet saved to Performance Learning V8.")
+                st.success("AI pick saved to Performance Learning V8.")
 
             render_ai_card(
                 "Final Unified Scorecards",

@@ -212,9 +212,9 @@ def score_middle_row(middle_gap, odds_a, odds_b):
 
 
 def classify_middle_strength(gap):
-    if gap >= 5:
+    if gap >= 4:
         return "Strong"
-    if gap >= 3:
+    if gap >= 2:
         return "Medium"
     return "Weak"
 

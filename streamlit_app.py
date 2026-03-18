@@ -1,170 +1,269 @@
 import streamlit as st
 import pandas as pd
-import os
+import requests
 
 st.set_page_config(page_title="Sports AI Betting Dashboard", layout="wide")
 
 st.title("Sports AI Betting Dashboard")
+st.caption("Manual live odds scanner for arbitrage and middles")
 
-file_path = "Bet_log.csv"
+API_KEY = st.secrets.get("ODDS_API_KEY", "")
 
-# Load CSV
-if os.path.exists(file_path):
-    df = pd.read_csv(file_path)
-    st.success("Data loaded successfully.")
-else:
-    st.error(f"File not found: {file_path}")
+SPORT_OPTIONS = {
+    "NBA": "basketball_nba",
+    "NHL": "icehockey_nhl",
+    "NFL": "americanfootball_nfl",
+    "MLB": "baseball_mlb",
+    "NCAAF": "americanfootball_ncaaf",
+}
+
+if not API_KEY:
+    st.error("Missing ODDS_API_KEY in Streamlit secrets.")
     st.stop()
 
 
-def prepare_data(df):
-    df = df.copy()
-
-    required_cols = [
-        "date",
-        "home_team",
-        "away_team",
-        "bet_type",
-        "pick",
-        "bookmaker",
-        "odds",
-        "line",
-    ]
-
-    missing_cols = [col for col in required_cols if col not in df.columns]
-    if missing_cols:
-        st.error(f"Missing required columns in CSV: {missing_cols}")
-        st.write("Columns found in CSV:", list(df.columns))
-        st.stop()
-
-    # Standardize fields for detection logic
-    df["game_id"] = (
-        df["date"].astype(str)
-        + " | "
-        + df["home_team"].astype(str)
-        + " vs "
-        + df["away_team"].astype(str)
-    )
-
-    df["team"] = df["pick"].astype(str).str.strip()
-    df["market"] = df["bet_type"].astype(str).str.lower().str.strip()
-    df["point"] = pd.to_numeric(df["line"], errors="coerce")
-    df["odds"] = pd.to_numeric(df["odds"], errors="coerce")
-
-    return df
-
-
 def american_to_decimal(odds):
-    if pd.isna(odds):
+    if odds is None:
         return None
-
     try:
         odds = float(odds)
     except Exception:
         return None
 
     if odds > 0:
-        return (odds / 100) + 1
-    elif odds < 0:
-        return (100 / abs(odds)) + 1
-    else:
+        return (odds / 100.0) + 1.0
+    if odds < 0:
+        return (100.0 / abs(odds)) + 1.0
+    return None
+
+
+def implied_prob_from_american(odds):
+    dec = american_to_decimal(odds)
+    if dec is None or dec <= 1:
         return None
+    return 1 / dec
 
 
-def detect_opportunities(df):
-    opportunities = []
+def fetch_odds(sport_key, regions="us", markets="h2h,spreads"):
+    url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds"
+    params = {
+        "apiKey": API_KEY,
+        "regions": regions,
+        "markets": markets,
+        "oddsFormat": "american",
+    }
 
-    for game in df["game_id"].dropna().unique():
-        game_df = df[df["game_id"] == game].copy()
+    response = requests.get(url, params=params, timeout=30)
 
-        for i, row_a in game_df.iterrows():
-            for j, row_b in game_df.iterrows():
-                if i == j:
+    if response.status_code != 200:
+        raise Exception(f"API error {response.status_code}: {response.text}")
+
+    return response.json()
+
+
+def get_market_map(bookmaker, market_key):
+    market_map = {}
+    for market in bookmaker.get("markets", []):
+        if market.get("key") == market_key:
+            for outcome in market.get("outcomes", []):
+                name = outcome.get("name")
+                if name is not None:
+                    market_map[name] = {
+                        "price": outcome.get("price"),
+                        "point": outcome.get("point"),
+                    }
+    return market_map
+
+
+def detect_arbitrage(events, min_profit=1.0):
+    rows = []
+
+    for event in events:
+        home_team = event.get("home_team")
+        away_team = event.get("away_team")
+        game = f"{away_team} @ {home_team}"
+
+        home_prices = []
+        away_prices = []
+
+        for bookmaker in event.get("bookmakers", []):
+            h2h = get_market_map(bookmaker, "h2h")
+            book_title = bookmaker.get("title", "Unknown")
+
+            if home_team in h2h and h2h[home_team].get("price") is not None:
+                home_prices.append({
+                    "book": book_title,
+                    "team": home_team,
+                    "odds": h2h[home_team]["price"],
+                })
+
+            if away_team in h2h and h2h[away_team].get("price") is not None:
+                away_prices.append({
+                    "book": book_title,
+                    "team": away_team,
+                    "odds": h2h[away_team]["price"],
+                })
+
+        for home_offer in home_prices:
+            for away_offer in away_prices:
+                if home_offer["book"] == away_offer["book"]:
                     continue
 
-                dec_a = american_to_decimal(row_a["odds"])
-                dec_b = american_to_decimal(row_b["odds"])
+                p1 = implied_prob_from_american(home_offer["odds"])
+                p2 = implied_prob_from_american(away_offer["odds"])
 
-                # Arbitrage check
-                if (
-                    row_a["team"] != row_b["team"]
-                    and dec_a is not None
-                    and dec_b is not None
-                    and dec_a > 1
-                    and dec_b > 1
-                ):
-                    prob = (1 / dec_a) + (1 / dec_b)
+                if p1 is None or p2 is None:
+                    continue
 
-                    if prob < 1:
-                        profit = round((1 - prob) * 100, 2)
+                total_prob = p1 + p2
+                if total_prob < 1:
+                    profit_pct = round((1 - total_prob) * 100, 2)
 
-                        if profit > 1:
-                            opportunities.append({
-                                "type": "Arbitrage",
-                                "game": game,
-                                "profit_%": profit,
-                                "bet_a": row_a["team"],
-                                "book_a": row_a["bookmaker"],
-                                "odds_a": row_a["odds"],
-                                "bet_b": row_b["team"],
-                                "book_b": row_b["bookmaker"],
-                                "odds_b": row_b["odds"],
-                                "spread": None,
-                            })
-
-                # Middle check
-                if (
-                    row_a["team"] != row_b["team"]
-                    and row_a["market"] == "spread"
-                    and row_b["market"] in ["moneyline", "h2h", "ml"]
-                ):
-                    spread = row_a["point"]
-
-                    if pd.notna(spread) and abs(spread) > 1.5:
-                        opportunities.append({
-                            "type": "Middle",
+                    if profit_pct >= min_profit:
+                        rows.append({
+                            "type": "Arbitrage",
                             "game": game,
-                            "profit_%": None,
-                            "bet_a": row_a["team"],
-                            "book_a": row_a["bookmaker"],
-                            "odds_a": row_a["odds"],
-                            "bet_b": row_b["team"],
-                            "book_b": row_b["bookmaker"],
-                            "odds_b": row_b["odds"],
-                            "spread": spread,
+                            "profit_%": profit_pct,
+                            "bet_a": home_offer["team"],
+                            "book_a": home_offer["book"],
+                            "odds_a": home_offer["odds"],
+                            "bet_b": away_offer["team"],
+                            "book_b": away_offer["book"],
+                            "odds_b": away_offer["odds"],
+                            "middle_gap": None,
                         })
 
-    return pd.DataFrame(opportunities)
+    return pd.DataFrame(rows)
+
+
+def detect_spread_middles(events, min_gap=2.0):
+    rows = []
+
+    for event in events:
+        home_team = event.get("home_team")
+        away_team = event.get("away_team")
+        game = f"{away_team} @ {home_team}"
+
+        by_book = []
+
+        for bookmaker in event.get("bookmakers", []):
+            spreads = get_market_map(bookmaker, "spreads")
+            book_title = bookmaker.get("title", "Unknown")
+
+            home_data = spreads.get(home_team)
+            away_data = spreads.get(away_team)
+
+            if (
+                home_data
+                and away_data
+                and home_data.get("point") is not None
+                and away_data.get("point") is not None
+            ):
+                by_book.append({
+                    "book": book_title,
+                    "home_team": home_team,
+                    "away_team": away_team,
+                    "home_price": home_data.get("price"),
+                    "away_price": away_data.get("price"),
+                    "home_point": float(home_data.get("point")),
+                    "away_point": float(away_data.get("point")),
+                })
+
+        for a in by_book:
+            for b in by_book:
+                if a["book"] == b["book"]:
+                    continue
+
+                home_gap = a["home_point"] - b["home_point"]
+                if home_gap >= min_gap:
+                    rows.append({
+                        "type": "Middle",
+                        "game": game,
+                        "profit_%": None,
+                        "bet_a": f"{home_team} {a['home_point']:+}",
+                        "book_a": a["book"],
+                        "odds_a": a["home_price"],
+                        "bet_b": f"{away_team} {b['away_point']:+}",
+                        "book_b": b["book"],
+                        "odds_b": b["away_price"],
+                        "middle_gap": round(home_gap, 2),
+                    })
+
+                away_gap = a["away_point"] - b["away_point"]
+                if away_gap >= min_gap:
+                    rows.append({
+                        "type": "Middle",
+                        "game": game,
+                        "profit_%": None,
+                        "bet_a": f"{away_team} {a['away_point']:+}",
+                        "book_a": a["book"],
+                        "odds_a": a["away_price"],
+                        "bet_b": f"{home_team} {b['home_point']:+}",
+                        "book_b": b["book"],
+                        "odds_b": b["home_price"],
+                        "middle_gap": round(away_gap, 2),
+                    })
+
+    return pd.DataFrame(rows)
 
 
 def highlight_rows(row):
     if row["type"] == "Arbitrage":
-        return ["background-color: #90EE90"] * len(row)  # light green
-    elif row["type"] == "Middle":
-        return ["background-color: #FFFACD"] * len(row)  # light yellow
+        return ["background-color: #90EE90"] * len(row)
+    if row["type"] == "Middle":
+        return ["background-color: #FFFACD"] * len(row)
     return [""] * len(row)
 
 
-# Prepare and scan data
-clean_df = prepare_data(df)
-opps = detect_opportunities(clean_df)
+sport_label = st.selectbox("Choose sport", list(SPORT_OPTIONS.keys()), index=0)
+sport_key = SPORT_OPTIONS[sport_label]
 
-st.subheader("Detected Opportunities")
+col1, col2, col3 = st.columns(3)
 
-if opps.empty:
-    st.warning("No strong opportunities found in this CSV.")
-else:
-    st.success(f"Found {len(opps)} opportunity rows.")
+with col1:
+    show_arbs = st.checkbox("Scan Arbitrage", value=True)
 
-    arb_rows = opps[opps["type"] == "Arbitrage"].copy()
-    middle_rows = opps[opps["type"] == "Middle"].copy()
+with col2:
+    show_middles = st.checkbox("Scan Middles", value=True)
 
-    if not arb_rows.empty:
-        arb_rows = arb_rows.sort_values(by="profit_%", ascending=False)
+with col3:
+    min_profit = st.number_input("Min Arb Profit %", min_value=0.0, value=1.0, step=0.5)
 
-    final_df = pd.concat([arb_rows, middle_rows], ignore_index=True)
+min_gap = st.number_input("Min Middle Gap", min_value=0.5, value=2.0, step=0.5)
 
-    st.dataframe(
-        final_df.style.apply(highlight_rows, axis=1),
-        use_container_width=True
-    )
+scan_button = st.button("Scan Live Odds", type="primary")
+
+st.info("The app only scans when you press 'Scan Live Odds'. No automatic scanning is running.")
+
+if scan_button:
+    with st.spinner("Scanning live odds..."):
+        try:
+            events = fetch_odds(sport_key)
+
+            results = []
+
+            if show_arbs:
+                arb_df = detect_arbitrage(events, min_profit=min_profit)
+                if not arb_df.empty:
+                    arb_df = arb_df.sort_values(by="profit_%", ascending=False)
+                    results.append(arb_df)
+
+            if show_middles:
+                mid_df = detect_spread_middles(events, min_gap=min_gap)
+                if not mid_df.empty:
+                    results.append(mid_df)
+
+            st.subheader("Detected Opportunities")
+
+            if results:
+                final_df = pd.concat(results, ignore_index=True)
+                st.success(f"Found {len(final_df)} opportunity rows.")
+                st.dataframe(
+                    final_df.style.apply(highlight_rows, axis=1),
+                    use_container_width=True,
+                )
+            else:
+                st.warning("No live opportunities found with the current settings.")
+
+        except Exception as e:
+            st.error(f"Error fetching live odds: {e}")

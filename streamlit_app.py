@@ -137,15 +137,4 @@ st.subheader("Detected Opportunities")
 if opps.empty:
     st.warning("No strong opportunities found in this CSV.")
 else:
-    if "profit_%" in opps.columns:
-        arb_rows = opps[opps["type"] == "Arbitrage"].copy()
-        middle_rows = opps[opps["type"] == "Middle"].copy()
-
-        if not arb_rows.empty:
-            arb_rows = arb_rows.sort_values(by="profit_%", ascending=False)
-
-        final_df = pd.concat([arb_rows, middle_rows], ignore_index=True)
-    else:
-        final_df = opps.copy()
-
-    st.dataframe(final_df)
+    st.dataframe(opps)

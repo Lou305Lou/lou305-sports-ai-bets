@@ -51,6 +51,34 @@ st.markdown("""
     color: #FFFFFF;
 }
 
+.bet-slip {
+    background: #0B1220;
+    border: 2px solid #334155;
+    padding: 18px;
+    border-radius: 16px;
+    margin-top: 10px;
+    margin-bottom: 10px;
+    color: #F8FAFC;
+    line-height: 1.7;
+    font-size: 1rem;
+}
+
+.bet-slip-title {
+    font-size: 1.2rem;
+    font-weight: 800;
+    margin-bottom: 10px;
+    color: #FFFFFF;
+}
+
+.bet-leg {
+    background: #111827;
+    border: 1px solid #475569;
+    padding: 12px;
+    border-radius: 12px;
+    margin-top: 10px;
+    margin-bottom: 10px;
+}
+
 .alert-green {
     background: #052e16;
     border: 1px solid #166534;
@@ -111,7 +139,7 @@ div[data-testid="stMetric"] div {
 
 st.markdown('<div class="main-title">Sports AI Betting Dashboard</div>', unsafe_allow_html=True)
 st.markdown(
-    '<div class="sub-title">Manual live odds scanner with dashboard, alerts, best plays, actual plays mode, middle plays, and arbitrage plays</div>',
+    '<div class="sub-title">Manual live odds scanner with dashboard, alerts, best plays, execution mode, actual plays mode, middle plays, and arbitrage plays</div>',
     unsafe_allow_html=True
 )
 
@@ -417,6 +445,80 @@ def render_alerts(arb_df, raw_mid_df, shown_df, arb_alert_profit, middle_alert_g
 
     if alert_count == 0:
         st.info("No alerts triggered with current settings.")
+
+
+def render_execution_mode(final_df):
+    st.markdown("### Execution Mode")
+
+    if final_df.empty:
+        st.info("No plays available for execution.")
+        return
+
+    options = []
+    for idx, row in final_df.reset_index(drop=True).iterrows():
+        label = f"{idx + 1}. {row['type']} | {row['game']} | Score {row['score']}"
+        options.append(label)
+
+    selected_label = st.selectbox("Choose a play to prepare", options=options)
+
+    selected_index = options.index(selected_label)
+    row = final_df.reset_index(drop=True).iloc[selected_index]
+
+    type_label = row.get("type", "")
+    game = row.get("game", "")
+    score = row.get("score", "")
+    bet_a = row.get("bet_a", "")
+    book_a = row.get("book_a", "")
+    odds_a = row.get("odds_a", "")
+    stake_a = row.get("stake_a", "")
+    bet_b = row.get("bet_b", "")
+    book_b = row.get("book_b", "")
+    odds_b = row.get("odds_b", "")
+    stake_b = row.get("stake_b", "")
+
+    extra_details = ""
+    if type_label == "Arbitrage":
+        extra_details = (
+            f"<b>Profit %:</b> {row.get('profit_%', '')}<br>"
+            f"<b>Expected Payout:</b> ${row.get('expected_payout', '')}<br>"
+            f"<b>Guaranteed Profit:</b> ${row.get('guaranteed_profit', '')}"
+        )
+    else:
+        extra_details = (
+            f"<b>Middle Gap:</b> {row.get('middle_gap', '')}<br>"
+            f"<b>Strength:</b> {row.get('middle_strength', '')}<br>"
+            f"<b>Kelly Stake Each:</b> ${row.get('kelly_stake_each', '')}"
+        )
+
+    st.markdown(
+        f"""
+        <div class="bet-slip">
+            <div class="bet-slip-title">Bet Slip View</div>
+            <div><b>Game:</b> {game}</div>
+            <div><b>Type:</b> {type_label}</div>
+            <div><b>Score:</b> {score}</div>
+
+            <div class="bet-leg">
+                <b>Bet A</b><br>
+                <b>Play:</b> {bet_a}<br>
+                <b>Sportsbook:</b> {book_a}<br>
+                <b>Odds:</b> {odds_a}<br>
+                <b>Stake:</b> ${stake_a}
+            </div>
+
+            <div class="bet-leg">
+                <b>Bet B</b><br>
+                <b>Play:</b> {bet_b}<br>
+                <b>Sportsbook:</b> {book_b}<br>
+                <b>Odds:</b> {odds_b}<br>
+                <b>Stake:</b> ${stake_b}
+            </div>
+
+            <div>{extra_details}</div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
 
 # -----------------------------
@@ -916,6 +1018,7 @@ with tab1:
 
             render_alerts(arb_df, raw_mid_df, final_df, arb_alert_profit, middle_alert_gap)
             render_top_play_cards(final_df)
+            render_execution_mode(final_df)
 
             st.markdown("### Middle Gap Distribution")
             if not distribution_df.empty:

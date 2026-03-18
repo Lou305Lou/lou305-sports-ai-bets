@@ -142,7 +142,7 @@ div[data-testid="stMetric"] div { color: white !important; }
 
 st.markdown('<div class="main-title">Sports AI Betting Dashboard</div>', unsafe_allow_html=True)
 st.markdown(
-    '<div class="sub-title">Manual live odds scanner with dashboard, alerts, best plays, execution mode, actual plays mode, bet tracking, and NBA AI Engine V6</div>',
+    '<div class="sub-title">Manual live odds scanner with dashboard, alerts, best plays, execution mode, actual plays mode, bet tracking, NBA AI Engine V6, and NHL AI Engine V1</div>',
     unsafe_allow_html=True
 )
 
@@ -519,7 +519,6 @@ def extract_nba_game_features(event):
 
     totals_strength = abs(consensus_total - 225.0) if consensus_total is not None else 0.0
 
-    # momentum-style derived signals from the market snapshot
     home_favorite_flag = 1 if (consensus_home_prob is not None and consensus_home_prob > 0.53) else 0
     away_favorite_flag = 1 if (consensus_away_prob is not None and consensus_away_prob > 0.53) else 0
 
@@ -527,13 +526,8 @@ def extract_nba_game_features(event):
     if consensus_home_prob is not None and consensus_away_prob is not None:
         ml_stability = max(0.0, 1.0 - (safe_std(home_ml_probs + away_ml_probs) * 8.0))
 
-    spread_pressure = 0.0
-    if consensus_home_spread is not None:
-        spread_pressure = abs(consensus_home_spread)
-
-    total_pressure = 0.0
-    if consensus_total is not None:
-        total_pressure = abs(consensus_total - 225.0)
+    spread_pressure = abs(consensus_home_spread) if consensus_home_spread is not None else 0.0
+    total_pressure = abs(consensus_total - 225.0) if consensus_total is not None else 0.0
 
     return {
         "home_team": home_team,
@@ -835,7 +829,6 @@ def nba_final_ai_v6(features, stats_ai, matchup_ai, market_ai, risk_ai, momentum
         "momentum": 0.95,
     }
 
-    # Moneyline weighted voting
     ml_weighted_votes = {home_team: 0.0, away_team: 0.0}
     for model_name, model in [
         ("stats", stats_ai),
@@ -857,7 +850,6 @@ def nba_final_ai_v6(features, stats_ai, matchup_ai, market_ai, risk_ai, momentum
     ml_conf = clamp(round(ml_conf, 1), 50, 95)
     ml_tier = confidence_tier(ml_conf)
 
-    # Spread weighted confidence
     spread_pick = market_ai["spread_pick"] if market_ai["spread_pick"] != "No spread edge" else stats_ai["spread_pick"]
     spread_conf = weighted_average_confidence([
         (stats_ai["spread_confidence"], model_weights["stats"]),
@@ -868,7 +860,6 @@ def nba_final_ai_v6(features, stats_ai, matchup_ai, market_ai, risk_ai, momentum
     spread_conf = clamp(round(spread_conf, 1), 50, 95)
     spread_tier = confidence_tier(spread_conf)
 
-    # Total weighted confidence
     total_pick = market_ai["total_pick"] if market_ai["total_pick"] != "No totals data" else stats_ai["total_pick"]
     total_conf = weighted_average_confidence([
         (stats_ai["total_confidence"], model_weights["stats"]),
@@ -984,6 +975,386 @@ def get_nba_v6_top_plays(board_df):
     best_total = board_df.sort_values(by=["total_conf", "engine_score"], ascending=[False, False]).iloc[0]
 
     return best_overall, best_ml, best_spread, best_total
+
+# -----------------------------
+# NHL AI ENGINE V1
+# -----------------------------
+def extract_nhl_game_features(event):
+    home_team = event.get("home_team")
+    away_team = event.get("away_team")
+
+    home_ml_odds = []
+    away_ml_odds = []
+    home_ml_probs = []
+    away_ml_probs = []
+    puckline_home = []
+    puckline_away = []
+    totals_points = []
+
+    for bookmaker in event.get("bookmakers", []):
+        h2h = get_market_map(bookmaker, "h2h")
+        spreads = get_market_map(bookmaker, "spreads")
+        totals = get_market_map(bookmaker, "totals")
+
+        if home_team in h2h and h2h[home_team].get("price") is not None:
+            price = h2h[home_team]["price"]
+            home_ml_odds.append(price)
+            home_ml_probs.append(implied_prob_from_american(price))
+
+        if away_team in h2h and h2h[away_team].get("price") is not None:
+            price = h2h[away_team]["price"]
+            away_ml_odds.append(price)
+            away_ml_probs.append(implied_prob_from_american(price))
+
+        if home_team in spreads and spreads[home_team].get("point") is not None:
+            puckline_home.append(float(spreads[home_team]["point"]))
+
+        if away_team in spreads and spreads[away_team].get("point") is not None:
+            puckline_away.append(float(spreads[away_team]["point"]))
+
+        if "Over" in totals and totals["Over"].get("point") is not None:
+            totals_points.append(float(totals["Over"]["point"]))
+
+    consensus_home_prob = safe_mean(home_ml_probs)
+    consensus_away_prob = safe_mean(away_ml_probs)
+    consensus_home_puck = safe_mean(puckline_home)
+    consensus_away_puck = safe_mean(puckline_away)
+    consensus_total = safe_mean(totals_points)
+
+    best_home_ml = max(home_ml_odds) if home_ml_odds else None
+    best_away_ml = max(away_ml_odds) if away_ml_odds else None
+
+    win_edge = 0.0
+    if consensus_home_prob is not None and consensus_away_prob is not None:
+        win_edge = (consensus_home_prob - consensus_away_prob) * 100
+
+    goalie_style_signal = 0.0
+    if consensus_total is not None:
+        goalie_style_signal = 6.0 - consensus_total
+
+    market_stability = max(
+        0.0,
+        1.0 - (
+            (safe_std(home_ml_probs + away_ml_probs) * 8.0)
+            + (safe_std(totals_points) * 0.18)
+        )
+    )
+
+    return {
+        "home_team": home_team,
+        "away_team": away_team,
+        "consensus_home_prob": consensus_home_prob,
+        "consensus_away_prob": consensus_away_prob,
+        "consensus_home_puck": consensus_home_puck,
+        "consensus_away_puck": consensus_away_puck,
+        "consensus_total": consensus_total,
+        "best_home_ml": best_home_ml,
+        "best_away_ml": best_away_ml,
+        "home_prob_std": safe_std(home_ml_probs),
+        "away_prob_std": safe_std(away_ml_probs),
+        "puck_std": safe_std(puckline_home + puckline_away),
+        "total_std": safe_std(totals_points),
+        "books_count": len(event.get("bookmakers", [])),
+        "win_edge": round(win_edge, 2),
+        "goalie_style_signal": round(goalie_style_signal, 2),
+        "market_stability": round(market_stability, 3),
+    }
+
+
+def nhl_stats_ai_v1(features):
+    home_team = features["home_team"]
+    away_team = features["away_team"]
+
+    ml_pick = home_team if features["win_edge"] >= 0 else away_team
+    ml_conf = clamp(round(56 + abs(features["win_edge"]) * 1.15, 1), 50, 90)
+
+    if features["consensus_home_puck"] is None:
+        puck_pick = "No puck line edge"
+        puck_conf = 50
+    else:
+        if features["consensus_home_puck"] < 0:
+            puck_pick = f"{home_team} {features['consensus_home_puck']:+.1f}"
+        else:
+            puck_pick = f"{away_team} {features['consensus_away_puck']:+.1f}"
+        puck_conf = clamp(round(53 + abs(features["consensus_home_puck"]) * 8.0 + abs(features["win_edge"]) * 0.2, 1), 50, 87)
+
+    if features["consensus_total"] is None:
+        total_pick = "No totals data"
+        total_conf = 50
+    else:
+        if features["consensus_total"] <= 5.5:
+            total_pick = f"Lean Under {round(features['consensus_total'], 1)}"
+        elif features["consensus_total"] >= 6.5:
+            total_pick = f"Lean Over {round(features['consensus_total'], 1)}"
+        else:
+            total_pick = f"Lean Under {round(features['consensus_total'], 1)}"
+        total_conf = clamp(round(52 + abs(features["goalie_style_signal"]) * 6.5, 1), 50, 85)
+
+    return {
+        "name": "Stats AI",
+        "ml_pick": ml_pick,
+        "spread_pick": puck_pick,
+        "total_pick": total_pick,
+        "ml_confidence": ml_conf,
+        "spread_confidence": puck_conf,
+        "total_confidence": total_conf,
+        "reason": (
+            f"Win edge {features['win_edge']:+.2f}. "
+            f"Goalie/total signal {features['goalie_style_signal']:+.2f}."
+        ),
+    }
+
+
+def nhl_market_ai_v1(features):
+    home_team = features["home_team"]
+    away_team = features["away_team"]
+
+    best_home_prob = implied_prob_from_american(features["best_home_ml"]) if features["best_home_ml"] is not None else None
+    best_away_prob = implied_prob_from_american(features["best_away_ml"]) if features["best_away_ml"] is not None else None
+
+    home_value = None
+    away_value = None
+    if features["consensus_home_prob"] is not None and best_home_prob is not None:
+        home_value = features["consensus_home_prob"] - best_home_prob
+    if features["consensus_away_prob"] is not None and best_away_prob is not None:
+        away_value = features["consensus_away_prob"] - best_away_prob
+
+    if home_value is None and away_value is None:
+        ml_pick = "No edge"
+        ml_conf = 50
+    else:
+        home_value = home_value if home_value is not None else -999
+        away_value = away_value if away_value is not None else -999
+        ml_pick = home_team if home_value >= away_value else away_team
+        ml_conf = clamp(round(54 + max(home_value, away_value) * 270, 1), 50, 89)
+
+    if features["consensus_home_puck"] is None:
+        spread_pick = "No puck line edge"
+        spread_conf = 50
+    else:
+        if abs(features["win_edge"]) >= 6.0:
+            spread_pick = f"{home_team if features['win_edge'] >= 0 else away_team} {'-1.5' if features['win_edge'] >= 0 else '-1.5'}"
+            spread_conf = clamp(round(53 + abs(features["win_edge"]) * 0.7, 1), 50, 84)
+        else:
+            spread_pick = "No puck line edge"
+            spread_conf = 51
+
+    if features["consensus_total"] is None:
+        total_pick = "No totals data"
+        total_conf = 50
+    else:
+        if features["consensus_total"] <= 5.5:
+            total_pick = f"Lean Under {round(features['consensus_total'], 1)}"
+        elif features["consensus_total"] >= 6.5:
+            total_pick = f"Lean Over {round(features['consensus_total'], 1)}"
+        else:
+            total_pick = f"Lean Pass {round(features['consensus_total'], 1)}"
+        total_conf = clamp(round(52 + abs(features["goalie_style_signal"]) * 5.5, 1), 50, 83)
+
+    return {
+        "name": "Market AI",
+        "ml_pick": ml_pick,
+        "spread_pick": spread_pick,
+        "total_pick": total_pick,
+        "ml_confidence": ml_conf,
+        "spread_confidence": spread_conf,
+        "total_confidence": total_conf,
+        "reason": (
+            f"Market value home={round(home_value, 4) if home_value is not None else 'N/A'}, "
+            f"away={round(away_value, 4) if away_value is not None else 'N/A'}."
+        ),
+    }
+
+
+def nhl_momentum_ai_v1(features):
+    home_team = features["home_team"]
+    away_team = features["away_team"]
+
+    momentum_score = features["win_edge"] + (features["market_stability"] * 6.0) - (features["total_std"] * 0.8)
+
+    ml_pick = home_team if momentum_score >= 0 else away_team
+    ml_conf = clamp(round(53 + abs(momentum_score) * 1.0, 1), 50, 88)
+
+    if features["consensus_home_puck"] is None:
+        spread_pick = "No puck line edge"
+        spread_conf = 50
+    else:
+        if abs(momentum_score) >= 6:
+            spread_pick = f"{home_team if momentum_score >= 0 else away_team} -1.5"
+            spread_conf = clamp(round(52 + abs(momentum_score) * 0.8, 1), 50, 84)
+        else:
+            spread_pick = "No puck line edge"
+            spread_conf = 51
+
+    if features["consensus_total"] is None:
+        total_pick = "No totals data"
+        total_conf = 50
+    else:
+        if features["goalie_style_signal"] > 0:
+            total_pick = f"Lean Under {round(features['consensus_total'], 1)}"
+        else:
+            total_pick = f"Lean Over {round(features['consensus_total'], 1)}"
+        total_conf = clamp(round(52 + abs(features["goalie_style_signal"]) * 4.8 + features["market_stability"] * 4.0, 1), 50, 84)
+
+    return {
+        "name": "Momentum AI",
+        "ml_pick": ml_pick,
+        "spread_pick": spread_pick,
+        "total_pick": total_pick,
+        "ml_confidence": ml_conf,
+        "spread_confidence": spread_conf,
+        "total_confidence": total_conf,
+        "reason": (
+            f"Momentum score {momentum_score:+.2f}. Market stability {features['market_stability']}."
+        ),
+    }
+
+
+def nhl_risk_ai_v1(features):
+    risk_score = 0
+    if features["books_count"] < 5:
+        risk_score += 2
+    if features["home_prob_std"] > 0.035:
+        risk_score += 2
+    if features["total_std"] > 0.8:
+        risk_score += 2
+
+    if risk_score <= 1:
+        risk_level = "Low"
+        confidence_adj = 0
+    elif risk_score <= 3:
+        risk_level = "Moderate"
+        confidence_adj = -4
+    else:
+        risk_level = "High"
+        confidence_adj = -8
+
+    return {
+        "name": "Risk AI",
+        "risk_level": risk_level,
+        "confidence_adjustment": confidence_adj,
+        "reason": (
+            f"Books {features['books_count']}. "
+            f"ML std {round(features['home_prob_std'], 3)}. "
+            f"Total std {round(features['total_std'], 2)}."
+        ),
+    }
+
+
+def nhl_final_ai_v1(features, stats_ai, market_ai, momentum_ai, risk_ai):
+    home_team = features["home_team"]
+    away_team = features["away_team"]
+
+    weights = {"stats": 1.10, "market": 1.15, "momentum": 0.95}
+
+    ml_votes = {home_team: 0.0, away_team: 0.0}
+    for model_name, model in [("stats", stats_ai), ("market", market_ai), ("momentum", momentum_ai)]:
+        pick = model["ml_pick"]
+        if pick in ml_votes:
+            ml_votes[pick] += weights[model_name]
+
+    ml_pick = max(ml_votes, key=ml_votes.get)
+    ml_conf = weighted_average_confidence([
+        (stats_ai["ml_confidence"], weights["stats"]),
+        (market_ai["ml_confidence"], weights["market"]),
+        (momentum_ai["ml_confidence"], weights["momentum"]),
+    ]) + risk_ai["confidence_adjustment"]
+    ml_conf = clamp(round(ml_conf, 1), 50, 94)
+
+    spread_pick = market_ai["spread_pick"] if market_ai["spread_pick"] != "No puck line edge" else stats_ai["spread_pick"]
+    spread_conf = weighted_average_confidence([
+        (stats_ai["spread_confidence"], weights["stats"]),
+        (market_ai["spread_confidence"], weights["market"]),
+        (momentum_ai["spread_confidence"], weights["momentum"]),
+    ]) + risk_ai["confidence_adjustment"]
+    spread_conf = clamp(round(spread_conf, 1), 50, 90)
+
+    total_pick = market_ai["total_pick"] if market_ai["total_pick"] != "No totals data" else stats_ai["total_pick"]
+    total_conf = weighted_average_confidence([
+        (stats_ai["total_confidence"], weights["stats"]),
+        (market_ai["total_confidence"], weights["market"]),
+        (momentum_ai["total_confidence"], weights["momentum"]),
+    ]) + risk_ai["confidence_adjustment"]
+    total_conf = clamp(round(total_conf, 1), 50, 90)
+
+    best = max([
+        ("Moneyline", ml_pick, ml_conf),
+        ("Puck Line", spread_pick, spread_conf),
+        ("Total", total_pick, total_conf),
+    ], key=lambda x: x[2])
+
+    best_type, best_pick, best_conf = best
+
+    return {
+        "ml": {"pick": ml_pick, "confidence": ml_conf, "tier": confidence_tier(ml_conf)},
+        "spread": {"pick": spread_pick, "confidence": spread_conf, "tier": confidence_tier(spread_conf)},
+        "total": {"pick": total_pick, "confidence": total_conf, "tier": confidence_tier(total_conf)},
+        "best_bet": {
+            "type": best_type,
+            "pick": best_pick,
+            "confidence": best_conf,
+            "grade": grade_play(best_conf),
+        },
+        "final_score": round(best_conf + abs(features["win_edge"]) * 0.6 + features["market_stability"] * 4.0, 1),
+        "debate_summary": (
+            f"ML weighted votes {ml_votes}. "
+            f"Stats={stats_ai['ml_pick']}, Market={market_ai['ml_pick']}, Momentum={momentum_ai['ml_pick']}."
+        ),
+        "summary_reason": (
+            f"NHL V1 combined Stats, Market, and Momentum AI, then adjusted for {risk_ai['risk_level']} risk."
+        ),
+    }
+
+
+def run_nhl_ai_engine_v1(event):
+    features = extract_nhl_game_features(event)
+    stats_ai = nhl_stats_ai_v1(features)
+    market_ai = nhl_market_ai_v1(features)
+    momentum_ai = nhl_momentum_ai_v1(features)
+    risk_ai = nhl_risk_ai_v1(features)
+    final_ai = nhl_final_ai_v1(features, stats_ai, market_ai, momentum_ai, risk_ai)
+
+    return {
+        "features": features,
+        "stats_ai": stats_ai,
+        "market_ai": market_ai,
+        "momentum_ai": momentum_ai,
+        "risk_ai": risk_ai,
+        "final_ai": final_ai,
+    }
+
+
+def build_nhl_v1_ranking_board(events):
+    rows = []
+
+    for event in events:
+        try:
+            result = run_nhl_ai_engine_v1(event)
+            final_ai = result["final_ai"]
+            features = result["features"]
+            best_bet = final_ai["best_bet"]
+
+            rows.append({
+                "game": f"{features['away_team']} @ {features['home_team']}",
+                "best_bet_type": best_bet["type"],
+                "best_pick": best_bet["pick"],
+                "confidence": best_bet["confidence"],
+                "grade": best_bet["grade"],
+                "ml_pick": final_ai["ml"]["pick"],
+                "ml_conf": final_ai["ml"]["confidence"],
+                "puck_pick": final_ai["spread"]["pick"],
+                "puck_conf": final_ai["spread"]["confidence"],
+                "total_pick": final_ai["total"]["pick"],
+                "total_conf": final_ai["total"]["confidence"],
+                "engine_score": final_ai["final_score"],
+            })
+        except Exception:
+            continue
+
+    board = pd.DataFrame(rows)
+    if not board.empty:
+        board = board.sort_values(by=["engine_score", "confidence"], ascending=[False, False]).reset_index(drop=True)
+    return board
 
 # -----------------------------
 # UI RENDER HELPERS
@@ -1613,12 +1984,13 @@ if scan_button:
 # -----------------------------
 # TABS
 # -----------------------------
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "Dashboard",
     "Middle Plays",
     "Arbitrage Plays",
     "Bet Tracker",
-    "NBA AI Engine V6"
+    "NBA AI Engine V6",
+    "NHL AI Engine V1"
 ])
 
 with tab1:
@@ -2005,6 +2377,129 @@ with tab5:
                 "ml_stability": features["ml_stability"],
                 "spread_pressure": features["spread_pressure"],
                 "total_pressure": features["total_pressure"],
+                "books_count": features["books_count"],
+            }])
+
+            st.dataframe(snapshot_rows, use_container_width=True)
+
+with tab6:
+    st.subheader("NHL AI Engine V1")
+
+    if not st.session_state.scan_complete:
+        st.info("Run a scan first so the NHL AI Engine has games to analyze.")
+    elif st.session_state.latest_sport_key != "icehockey_nhl":
+        st.info("Switch the sport to NHL, run a scan, then come back to this tab.")
+    else:
+        nhl_events = st.session_state.latest_filtered_events
+
+        if not nhl_events:
+            st.warning("No NHL games are currently available in the latest scan.")
+        else:
+            ranking_board = build_nhl_v1_ranking_board(nhl_events)
+
+            st.markdown("### NHL Slate Ranking Board")
+            if not ranking_board.empty:
+                st.dataframe(ranking_board, use_container_width=True)
+
+            nhl_game_labels = [
+                f"{event.get('away_team')} @ {event.get('home_team')}"
+                for event in nhl_events
+            ]
+
+            selected_game_label = st.selectbox("Choose NHL game to analyze", nhl_game_labels)
+            selected_game_index = nhl_game_labels.index(selected_game_label)
+            selected_event = nhl_events[selected_game_index]
+
+            ai_results = run_nhl_ai_engine_v1(selected_event)
+            features = ai_results["features"]
+            stats_ai = ai_results["stats_ai"]
+            market_ai = ai_results["market_ai"]
+            momentum_ai = ai_results["momentum_ai"]
+            risk_ai = ai_results["risk_ai"]
+            final_ai = ai_results["final_ai"]
+            best_bet = final_ai["best_bet"]
+
+            top1, top2, top3, top4 = st.columns(4)
+            top1.metric("Best ML", final_ai["ml"]["pick"])
+            top2.metric("Best Puck Line", final_ai["spread"]["pick"])
+            top3.metric("Best Total", final_ai["total"]["pick"])
+            top4.metric("Engine Score", final_ai["final_score"])
+
+            st.markdown(
+                f"""
+                <div class="best-bet-card">
+                    <b>Selected Game Best Bet:</b> {best_bet['type']}<br>
+                    <b>Pick:</b> {best_bet['pick']}<br>
+                    <b>Confidence:</b> {best_bet['confidence']} ({confidence_tier(best_bet['confidence'])})<br>
+                    <b>Grade:</b> {best_bet['grade']}
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+            render_ai_card(
+                "Final NHL Scorecards",
+                [
+                    f"<b>Moneyline:</b> {final_ai['ml']['pick']} | {final_ai['ml']['confidence']} | {final_ai['ml']['tier']}",
+                    f"<b>Puck Line:</b> {final_ai['spread']['pick']} | {final_ai['spread']['confidence']} | {final_ai['spread']['tier']}",
+                    f"<b>Total:</b> {final_ai['total']['pick']} | {final_ai['total']['confidence']} | {final_ai['total']['tier']}",
+                    f"<b>Engine Score:</b> {final_ai['final_score']}",
+                    f"<b>Debate:</b> {final_ai['debate_summary']}",
+                    f"<b>Summary:</b> {final_ai['summary_reason']}",
+                ]
+            )
+
+            render_ai_card(
+                "Stats AI",
+                [
+                    f"<b>ML Pick:</b> {stats_ai['ml_pick']} ({stats_ai['ml_confidence']})",
+                    f"<b>Puck Line Pick:</b> {stats_ai['spread_pick']} ({stats_ai['spread_confidence']})",
+                    f"<b>Total Pick:</b> {stats_ai['total_pick']} ({stats_ai['total_confidence']})",
+                    f"<b>Reason:</b> {stats_ai['reason']}",
+                ]
+            )
+
+            render_ai_card(
+                "Market AI",
+                [
+                    f"<b>ML Pick:</b> {market_ai['ml_pick']} ({market_ai['ml_confidence']})",
+                    f"<b>Puck Line Pick:</b> {market_ai['spread_pick']} ({market_ai['spread_confidence']})",
+                    f"<b>Total Pick:</b> {market_ai['total_pick']} ({market_ai['total_confidence']})",
+                    f"<b>Reason:</b> {market_ai['reason']}",
+                ]
+            )
+
+            render_ai_card(
+                "Momentum AI",
+                [
+                    f"<b>ML Pick:</b> {momentum_ai['ml_pick']} ({momentum_ai['ml_confidence']})",
+                    f"<b>Puck Line Pick:</b> {momentum_ai['spread_pick']} ({momentum_ai['spread_confidence']})",
+                    f"<b>Total Pick:</b> {momentum_ai['total_pick']} ({momentum_ai['total_confidence']})",
+                    f"<b>Reason:</b> {momentum_ai['reason']}",
+                ]
+            )
+
+            render_ai_card(
+                "Risk AI",
+                [
+                    f"<b>Risk Level:</b> {risk_ai['risk_level']}",
+                    f"<b>Confidence Adjustment:</b> {risk_ai['confidence_adjustment']}",
+                    f"<b>Reason:</b> {risk_ai['reason']}",
+                ]
+            )
+
+            st.markdown("### NHL Market Snapshot")
+            snapshot_rows = pd.DataFrame([{
+                "home_team": features["home_team"],
+                "away_team": features["away_team"],
+                "consensus_home_prob": round(features["consensus_home_prob"], 4) if features["consensus_home_prob"] is not None else None,
+                "consensus_away_prob": round(features["consensus_away_prob"], 4) if features["consensus_away_prob"] is not None else None,
+                "consensus_home_puck": round(features["consensus_home_puck"], 1) if features["consensus_home_puck"] is not None else None,
+                "consensus_away_puck": round(features["consensus_away_puck"], 1) if features["consensus_away_puck"] is not None else None,
+                "consensus_total": round(features["consensus_total"], 1) if features["consensus_total"] is not None else None,
+                "win_edge": features["win_edge"],
+                "goalie_style_signal": features["goalie_style_signal"],
+                "market_stability": features["market_stability"],
                 "books_count": features["books_count"],
             }])
 

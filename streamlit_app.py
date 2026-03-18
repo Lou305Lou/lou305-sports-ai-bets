@@ -142,7 +142,7 @@ div[data-testid="stMetric"] div { color: white !important; }
 
 st.markdown('<div class="main-title">Sports AI Betting Dashboard</div>', unsafe_allow_html=True)
 st.markdown(
-    '<div class="sub-title">Manual live odds scanner with dashboard, alerts, best plays, execution mode, actual plays mode, bet tracking, and Unified AI Engine V7 (NBA + NHL)</div>',
+    '<div class="sub-title">Manual live odds scanner with dashboard, alerts, best plays, execution mode, actual plays mode, bet tracking, Unified AI Engine V7, and Performance Learning System V8</div>',
     unsafe_allow_html=True
 )
 
@@ -457,6 +457,301 @@ def get_tracker_summary(tracker_df):
         "profit": round(float(total_profit), 2),
         "roi": round(float(roi), 2),
     }
+
+# -----------------------------
+# PERFORMANCE LEARNING V8 HELPERS
+# -----------------------------
+def get_market_key_from_bet_type(features, bet_type):
+    if bet_type == "Moneyline":
+        return "ml"
+    if bet_type == "Total":
+        return "total"
+    return "spread"
+
+
+def create_ai_performance_row(features, final_ai, stats_ai, matchup_ai, market_ai, momentum_ai):
+    bet_type = final_ai["best_bet"]["type"]
+    market_key = get_market_key_from_bet_type(features, bet_type)
+
+    stats_pick = stats_ai[f"{market_key}_pick"]
+    stats_conf = stats_ai[f"{market_key}_confidence"]
+
+    matchup_pick = matchup_ai[f"{market_key}_pick"]
+    matchup_conf = matchup_ai[f"{market_key}_confidence"]
+
+    market_pick = market_ai[f"{market_key}_pick"]
+    market_conf = market_ai[f"{market_key}_confidence"]
+
+    momentum_pick = momentum_ai[f"{market_key}_pick"]
+    momentum_conf = momentum_ai[f"{market_key}_confidence"]
+
+    final_pick = final_ai["best_bet"]["pick"]
+
+    supporters = []
+    if stats_pick == final_pick:
+        supporters.append("Stats")
+    if matchup_pick == final_pick:
+        supporters.append("Matchup")
+    if market_pick == final_pick:
+        supporters.append("Market")
+    if momentum_pick == final_pick:
+        supporters.append("Momentum")
+
+    return {
+        "date_added": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "sport": features["sport_name"],
+        "game": f"{features['away_team']} @ {features['home_team']}",
+        "bet_type": bet_type,
+        "pick": final_pick,
+        "confidence": final_ai["best_bet"]["confidence"],
+        "grade": final_ai["best_bet"]["grade"],
+        "engine_score": final_ai["final_score"],
+        "supporters": ", ".join(supporters) if supporters else "None",
+        "support_count": len(supporters),
+        "stats_pick": stats_pick,
+        "stats_conf": stats_conf,
+        "matchup_pick": matchup_pick,
+        "matchup_conf": matchup_conf,
+        "market_pick": market_pick,
+        "market_conf": market_conf,
+        "momentum_pick": momentum_pick,
+        "momentum_conf": momentum_conf,
+        "status": "Pending",
+        "stake": 100.0,
+        "actual_profit": 0.0,
+        "notes": "",
+    }
+
+
+def get_ai_performance_summary(ai_perf_df):
+    if ai_perf_df.empty:
+        return {
+            "total_picks": 0,
+            "wins": 0,
+            "losses": 0,
+            "pushes": 0,
+            "pending": 0,
+            "profit": 0.0,
+            "roi": 0.0,
+            "avg_confidence": 0.0,
+        }
+
+    status_series = ai_perf_df["status"].astype(str)
+    actual_profit = pd.to_numeric(ai_perf_df["actual_profit"], errors="coerce").fillna(0)
+    stake = pd.to_numeric(ai_perf_df["stake"], errors="coerce").fillna(0)
+    confidence = pd.to_numeric(ai_perf_df["confidence"], errors="coerce").fillna(0)
+
+    settled_mask = status_series.isin(["Win", "Loss", "Push"])
+    settled_stake = stake[settled_mask].sum()
+    total_profit = actual_profit.sum()
+
+    roi = 0.0
+    if settled_stake > 0:
+        roi = (total_profit / settled_stake) * 100
+
+    return {
+        "total_picks": len(ai_perf_df),
+        "wins": int((status_series == "Win").sum()),
+        "losses": int((status_series == "Loss").sum()),
+        "pushes": int((status_series == "Push").sum()),
+        "pending": int((status_series == "Pending").sum()),
+        "profit": round(float(total_profit), 2),
+        "roi": round(float(roi), 2),
+        "avg_confidence": round(float(confidence.mean()), 2) if len(confidence) else 0.0,
+    }
+
+
+def build_group_performance_table(ai_perf_df, group_col):
+    if ai_perf_df.empty or group_col not in ai_perf_df.columns:
+        return pd.DataFrame()
+
+    df = ai_perf_df.copy()
+    df["stake"] = pd.to_numeric(df["stake"], errors="coerce").fillna(0)
+    df["actual_profit"] = pd.to_numeric(df["actual_profit"], errors="coerce").fillna(0)
+
+    rows = []
+    for group_value, group_df in df.groupby(group_col):
+        status_series = group_df["status"].astype(str)
+        settled_mask = status_series.isin(["Win", "Loss", "Push"])
+
+        settled_stake = group_df.loc[settled_mask, "stake"].sum()
+        profit = group_df["actual_profit"].sum()
+        roi = (profit / settled_stake * 100) if settled_stake > 0 else 0.0
+
+        rows.append({
+            group_col: group_value,
+            "Picks": len(group_df),
+            "Wins": int((status_series == "Win").sum()),
+            "Losses": int((status_series == "Loss").sum()),
+            "Pushes": int((status_series == "Push").sum()),
+            "Pending": int((status_series == "Pending").sum()),
+            "Profit ($)": round(float(profit), 2),
+            "ROI %": round(float(roi), 2),
+            "Avg Confidence": round(pd.to_numeric(group_df["confidence"], errors="coerce").fillna(0).mean(), 2),
+        })
+
+    out = pd.DataFrame(rows)
+    if not out.empty:
+        out = out.sort_values(by=["ROI %", "Profit ($)", "Picks"], ascending=[False, False, False]).reset_index(drop=True)
+    return out
+
+
+def confidence_bucket_label(conf):
+    conf = float(conf)
+    if conf >= 85:
+        return "85+"
+    if conf >= 75:
+        return "75-84.9"
+    if conf >= 65:
+        return "65-74.9"
+    return "Under 65"
+
+
+def build_confidence_bucket_table(ai_perf_df):
+    if ai_perf_df.empty:
+        return pd.DataFrame()
+
+    df = ai_perf_df.copy()
+    df["confidence"] = pd.to_numeric(df["confidence"], errors="coerce").fillna(0)
+    df["stake"] = pd.to_numeric(df["stake"], errors="coerce").fillna(0)
+    df["actual_profit"] = pd.to_numeric(df["actual_profit"], errors="coerce").fillna(0)
+    df["Confidence Bucket"] = df["confidence"].apply(confidence_bucket_label)
+
+    rows = []
+    for bucket, group_df in df.groupby("Confidence Bucket"):
+        status_series = group_df["status"].astype(str)
+        settled_mask = status_series.isin(["Win", "Loss", "Push"])
+
+        settled_stake = group_df.loc[settled_mask, "stake"].sum()
+        profit = group_df["actual_profit"].sum()
+        roi = (profit / settled_stake * 100) if settled_stake > 0 else 0.0
+
+        rows.append({
+            "Confidence Bucket": bucket,
+            "Picks": len(group_df),
+            "Wins": int((status_series == "Win").sum()),
+            "Losses": int((status_series == "Loss").sum()),
+            "Pushes": int((status_series == "Push").sum()),
+            "Pending": int((status_series == "Pending").sum()),
+            "Profit ($)": round(float(profit), 2),
+            "ROI %": round(float(roi), 2),
+        })
+
+    out = pd.DataFrame(rows)
+    order = {"85+": 4, "75-84.9": 3, "65-74.9": 2, "Under 65": 1}
+    if not out.empty:
+        out["sort_order"] = out["Confidence Bucket"].map(order)
+        out = out.sort_values(by="sort_order", ascending=False).drop(columns=["sort_order"]).reset_index(drop=True)
+    return out
+
+
+def build_model_performance_table(ai_perf_df):
+    if ai_perf_df.empty:
+        return pd.DataFrame()
+
+    df = ai_perf_df.copy()
+    df["stake"] = pd.to_numeric(df["stake"], errors="coerce").fillna(0)
+    df["actual_profit"] = pd.to_numeric(df["actual_profit"], errors="coerce").fillna(0)
+
+    model_specs = [
+        ("Stats", "stats_pick", "stats_conf"),
+        ("Matchup", "matchup_pick", "matchup_conf"),
+        ("Market", "market_pick", "market_conf"),
+        ("Momentum", "momentum_pick", "momentum_conf"),
+    ]
+
+    rows = []
+    for model_name, pick_col, conf_col in model_specs:
+        aligned_df = df[df[pick_col].astype(str) == df["pick"].astype(str)].copy()
+        if aligned_df.empty:
+            rows.append({
+                "Model": model_name,
+                "Supported Picks": 0,
+                "Wins": 0,
+                "Losses": 0,
+                "Pushes": 0,
+                "Pending": 0,
+                "Profit ($)": 0.0,
+                "ROI %": 0.0,
+                "Avg Model Confidence": 0.0,
+            })
+            continue
+
+        status_series = aligned_df["status"].astype(str)
+        settled_mask = status_series.isin(["Win", "Loss", "Push"])
+        settled_stake = aligned_df.loc[settled_mask, "stake"].sum()
+        profit = aligned_df["actual_profit"].sum()
+        roi = (profit / settled_stake * 100) if settled_stake > 0 else 0.0
+
+        rows.append({
+            "Model": model_name,
+            "Supported Picks": len(aligned_df),
+            "Wins": int((status_series == "Win").sum()),
+            "Losses": int((status_series == "Loss").sum()),
+            "Pushes": int((status_series == "Push").sum()),
+            "Pending": int((status_series == "Pending").sum()),
+            "Profit ($)": round(float(profit), 2),
+            "ROI %": round(float(roi), 2),
+            "Avg Model Confidence": round(pd.to_numeric(aligned_df[conf_col], errors="coerce").fillna(0).mean(), 2),
+        })
+
+    out = pd.DataFrame(rows)
+    if not out.empty:
+        out = out.sort_values(by=["ROI %", "Profit ($)", "Supported Picks"], ascending=[False, False, False]).reset_index(drop=True)
+    return out
+
+
+def recommend_v8_weights(model_perf_df, current_sport_key):
+    profile = sport_profile(current_sport_key)
+    if profile is None or model_perf_df.empty:
+        return pd.DataFrame()
+
+    base_map = profile["weights"]
+    label_to_key = {
+        "Stats": "stats",
+        "Matchup": "matchup",
+        "Market": "market",
+        "Momentum": "momentum",
+    }
+
+    rows = []
+    for _, row in model_perf_df.iterrows():
+        model_label = row["Model"]
+        model_key = label_to_key[model_label]
+        base_weight = base_map[model_key]
+        picks = float(row["Supported Picks"])
+        wins = float(row["Wins"])
+        losses = float(row["Losses"])
+        roi = float(row["ROI %"])
+
+        settled = wins + losses + float(row["Pushes"])
+        win_rate = (wins / (wins + losses)) * 100 if (wins + losses) > 0 else 0.0
+
+        recommended_weight = base_weight
+        note = "Keep base weight"
+
+        if settled >= 5:
+            if win_rate >= 58 and roi > 0:
+                recommended_weight = round(base_weight + 0.10, 2)
+                note = "Increase slightly"
+            elif win_rate <= 45 or roi < -5:
+                recommended_weight = round(max(0.75, base_weight - 0.10), 2)
+                note = "Reduce slightly"
+            else:
+                recommended_weight = round(base_weight, 2)
+                note = "Stable"
+
+        rows.append({
+            "Model": model_label,
+            "Base Weight": base_weight,
+            "Recommended Weight": recommended_weight,
+            "Settled Picks": int(settled),
+            "Win Rate %": round(win_rate, 2),
+            "ROI %": round(roi, 2),
+            "Note": note,
+        })
+
+    return pd.DataFrame(rows)
 
 # -----------------------------
 # UNIFIED AI ENGINE V7
@@ -1501,6 +1796,16 @@ if "latest_filtered_events" not in st.session_state:
     st.session_state.latest_filtered_events = []
 if "latest_sport_key" not in st.session_state:
     st.session_state.latest_sport_key = ""
+if "ai_perf_df" not in st.session_state:
+    st.session_state.ai_perf_df = pd.DataFrame(columns=[
+        "date_added", "sport", "game", "bet_type", "pick", "confidence", "grade", "engine_score",
+        "supporters", "support_count",
+        "stats_pick", "stats_conf",
+        "matchup_pick", "matchup_conf",
+        "market_pick", "market_conf",
+        "momentum_pick", "momentum_conf",
+        "status", "stake", "actual_profit", "notes"
+    ])
 
 # -----------------------------
 # CONTROLS
@@ -1722,12 +2027,13 @@ if scan_button:
 # -----------------------------
 # TABS
 # -----------------------------
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "Dashboard",
     "Middle Plays",
     "Arbitrage Plays",
     "Bet Tracker",
     "Unified AI Engine V7",
+    "Performance Learning V8",
 ])
 
 with tab1:
@@ -2032,6 +2338,21 @@ with tab5:
                 unsafe_allow_html=True
             )
 
+            if st.button("Save Selected AI Best Bet to Performance Learning V8"):
+                new_ai_row = create_ai_performance_row(
+                    features=features,
+                    final_ai=final_ai,
+                    stats_ai=stats_ai,
+                    matchup_ai=matchup_ai,
+                    market_ai=market_ai,
+                    momentum_ai=momentum_ai,
+                )
+                st.session_state.ai_perf_df = pd.concat(
+                    [st.session_state.ai_perf_df, pd.DataFrame([new_ai_row])],
+                    ignore_index=True
+                )
+                st.success("Selected AI best bet saved to Performance Learning V8.")
+
             render_ai_card(
                 "Final Unified Scorecards",
                 [
@@ -2115,3 +2436,115 @@ with tab5:
             }])
 
             st.dataframe(snapshot_rows, use_container_width=True)
+
+with tab6:
+    st.subheader("Performance Learning V8")
+
+    ai_perf_df = st.session_state.ai_perf_df.copy()
+    perf_summary = get_ai_performance_summary(ai_perf_df)
+
+    p1, p2, p3, p4 = st.columns(4)
+    p1.metric("Tracked AI Picks", perf_summary["total_picks"])
+    p2.metric("Wins", perf_summary["wins"])
+    p3.metric("Losses", perf_summary["losses"])
+    p4.metric("Pending", perf_summary["pending"])
+
+    p5, p6, p7, p8 = st.columns(4)
+    p5.metric("Pushes", perf_summary["pushes"])
+    p6.metric("Total Profit ($)", perf_summary["profit"])
+    p7.metric("ROI %", perf_summary["roi"])
+    p8.metric("Avg Confidence", perf_summary["avg_confidence"])
+
+    if ai_perf_df.empty:
+        st.info("No AI picks saved yet. Save picks from Unified AI Engine V7 first.")
+    else:
+        st.markdown("### Update AI Pick Result")
+
+        perf_options = [
+            f"{i + 1}. {row['sport']} | {row['game']} | {row['bet_type']} | {row['pick']} | {row['status']}"
+            for i, row in ai_perf_df.reset_index(drop=True).iterrows()
+        ]
+
+        selected_perf_label = st.selectbox("Choose AI tracked pick", perf_options)
+        selected_perf_index = perf_options.index(selected_perf_label)
+        selected_perf_row = ai_perf_df.reset_index(drop=True).iloc[selected_perf_index]
+
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            new_status = st.selectbox(
+                "Update result status",
+                ["Pending", "Win", "Loss", "Push"],
+                index=["Pending", "Win", "Loss", "Push"].index(selected_perf_row["status"])
+                if selected_perf_row["status"] in ["Pending", "Win", "Loss", "Push"] else 0,
+                key="v8_status_select"
+            )
+        with c2:
+            new_stake = st.number_input(
+                "Stake ($)",
+                value=float(pd.to_numeric(pd.Series([selected_perf_row["stake"]]), errors="coerce").fillna(100).iloc[0]),
+                step=5.0,
+                key="v8_stake_input"
+            )
+        with c3:
+            new_actual_profit = st.number_input(
+                "Actual Profit / Loss ($)",
+                value=float(pd.to_numeric(pd.Series([selected_perf_row["actual_profit"]]), errors="coerce").fillna(0).iloc[0]),
+                step=1.0,
+                key="v8_profit_input"
+            )
+
+        new_notes = st.text_input(
+            "Performance Notes",
+            value=str(selected_perf_row["notes"]),
+            key="v8_notes_input"
+        )
+
+        if st.button("Save Performance Update"):
+            st.session_state.ai_perf_df.loc[selected_perf_index, "status"] = new_status
+            st.session_state.ai_perf_df.loc[selected_perf_index, "stake"] = round(new_stake, 2)
+            st.session_state.ai_perf_df.loc[selected_perf_index, "actual_profit"] = round(new_actual_profit, 2)
+            st.session_state.ai_perf_df.loc[selected_perf_index, "notes"] = new_notes
+            st.success("AI performance record updated.")
+
+        if st.button("Delete Selected AI Performance Record"):
+            st.session_state.ai_perf_df = st.session_state.ai_perf_df.drop(
+                st.session_state.ai_perf_df.index[selected_perf_index]
+            ).reset_index(drop=True)
+            st.success("AI performance record deleted.")
+
+        ai_perf_df = st.session_state.ai_perf_df.copy()
+
+        st.markdown("### ROI by Sport")
+        sport_perf_df = build_group_performance_table(ai_perf_df, "sport")
+        if not sport_perf_df.empty:
+            st.dataframe(sport_perf_df, use_container_width=True)
+
+        st.markdown("### ROI by Bet Type")
+        bet_type_perf_df = build_group_performance_table(ai_perf_df, "bet_type")
+        if not bet_type_perf_df.empty:
+            st.dataframe(bet_type_perf_df, use_container_width=True)
+
+        st.markdown("### Confidence Bucket Tracking")
+        conf_bucket_df = build_confidence_bucket_table(ai_perf_df)
+        if not conf_bucket_df.empty:
+            st.dataframe(conf_bucket_df, use_container_width=True)
+
+        st.markdown("### Model Support Performance")
+        model_perf_df = build_model_performance_table(ai_perf_df)
+        if not model_perf_df.empty:
+            st.dataframe(model_perf_df, use_container_width=True)
+
+        if st.session_state.latest_sport_key in ["basketball_nba", "icehockey_nhl"]:
+            current_sport_name = SPORT_LABEL_FROM_KEY[st.session_state.latest_sport_key]
+            st.markdown(f"### Recommended Model Weights for {current_sport_name}")
+            recommended_weights_df = recommend_v8_weights(model_perf_df, st.session_state.latest_sport_key)
+            if not recommended_weights_df.empty:
+                st.dataframe(recommended_weights_df, use_container_width=True)
+
+        st.markdown("### AI Performance Records")
+        perf_display_columns = [
+            "date_added", "sport", "game", "bet_type", "pick", "confidence", "grade", "engine_score",
+            "supporters", "support_count",
+            "status", "stake", "actual_profit", "notes"
+        ]
+        st.dataframe(ai_perf_df[perf_display_columns], use_container_width=True)

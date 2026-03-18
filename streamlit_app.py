@@ -167,7 +167,7 @@ div[data-testid="stMetric"] div {
 
 st.markdown('<div class="main-title">Sports AI Betting Dashboard</div>', unsafe_allow_html=True)
 st.markdown(
-    '<div class="sub-title">Manual live odds scanner with dashboard, alerts, best plays, execution mode, actual plays mode, bet tracking, and NBA AI Engine V4</div>',
+    '<div class="sub-title">Manual live odds scanner with dashboard, alerts, best plays, execution mode, actual plays mode, bet tracking, and NBA AI Engine V5</div>',
     unsafe_allow_html=True
 )
 

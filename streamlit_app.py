@@ -751,7 +751,68 @@ def recommend_v8_weights(model_perf_df, current_sport_key):
         })
 
     return pd.DataFrame(rows)
+# -----------------------------
+# AUTO-SAVE V8 HELPERS
+# -----------------------------
+def ai_pick_duplicate_exists(ai_perf_df, sport, game, bet_type, pick, scan_date):
+    if ai_perf_df.empty:
+        return False
 
+    check_df = ai_perf_df.copy()
+    check_df["scan_date_only"] = check_df["date_added"].astype(str).str[:10]
+
+    return (
+        (check_df["sport"] == sport) &
+        (check_df["game"] == game) &
+        (check_df["bet_type"] == bet_type) &
+        (check_df["pick"] == pick) &
+        (check_df["scan_date_only"] == scan_date)
+    ).any()
+
+
+def auto_save_ai_picks_to_v8(events, sport_key, ai_perf_df):
+    if sport_key not in ["basketball_nba", "icehockey_nhl"]:
+        return ai_perf_df, 0, 0
+
+    updated_df = ai_perf_df.copy()
+    auto_saved = 0
+    duplicates = 0
+    scan_date = datetime.now().strftime("%Y-%m-%d")
+
+    for event in events:
+        try:
+            ai = run_unified_ai_engine_v7(event, sport_key)
+            if ai is None:
+                continue
+
+            features = ai["features"]
+            final_ai = ai["final_ai"]
+
+            sport = features["sport_name"]
+            game = f"{features['away_team']} @ {features['home_team']}"
+            bet_type = final_ai["best_bet"]["type"]
+            pick = final_ai["best_bet"]["pick"]
+
+            if ai_pick_duplicate_exists(updated_df, sport, game, bet_type, pick, scan_date):
+                duplicates += 1
+                continue
+
+            new_row = create_ai_performance_row(
+                features,
+                final_ai,
+                ai["stats_ai"],
+                ai["matchup_ai"],
+                ai["market_ai"],
+                ai["momentum_ai"],
+            )
+
+            updated_df = pd.concat([updated_df, pd.DataFrame([new_row])], ignore_index=True)
+            auto_saved += 1
+
+        except:
+            continue
+
+    return updated_df, auto_saved, duplicates
 # -----------------------------
 # UNIFIED AI ENGINE V7
 # -----------------------------

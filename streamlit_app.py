@@ -4,8 +4,54 @@ import requests
 
 st.set_page_config(page_title="Sports AI Betting Dashboard", layout="wide")
 
+# -----------------------------
+# UI STYLING
+# -----------------------------
+st.markdown("""
+<style>
+.block-container {
+    padding-top: 1.5rem;
+    padding-bottom: 2rem;
+}
+
+div[data-testid="stMetric"] {
+    background-color: #111827;
+    border: 1px solid #374151;
+    padding: 14px;
+    border-radius: 14px;
+}
+
+div[data-testid="stMetric"] label {
+    color: #D1D5DB !important;
+}
+
+div[data-testid="stMetric"] div {
+    color: white !important;
+}
+
+.stButton > button {
+    border-radius: 10px;
+    font-weight: 600;
+    padding: 0.6rem 1rem;
+}
+
+.section-card {
+    background: #0F172A;
+    border: 1px solid #334155;
+    padding: 14px;
+    border-radius: 14px;
+    margin-bottom: 12px;
+}
+
+.small-note {
+    color: #94A3B8;
+    font-size: 0.9rem;
+}
+</style>
+""", unsafe_allow_html=True)
+
 st.title("Sports AI Betting Dashboard")
-st.caption("Manual live odds scanner with sportsbook selection, arbitrage, middles, bet sizing, and sharp filters")
+st.caption("Manual live odds scanner with sportsbook selection, scoring, bet sizing, Kelly-style middle sizing, and upgraded UI")
 
 API_KEY = st.secrets.get("ODDS_API_KEY", "")
 
@@ -21,7 +67,9 @@ if not API_KEY:
     st.error("Missing ODDS_API_KEY in Streamlit secrets.")
     st.stop()
 
-
+# -----------------------------
+# HELPERS
+# -----------------------------
 def american_to_decimal(odds):
     if odds is None:
         return None
@@ -129,7 +177,58 @@ def get_market_map(bookmaker, market_key):
     return market_map
 
 
-def detect_arbitrage(events, bankroll, min_profit=1.0, min_profit_dollars=1.0, min_stake_filter=5.0):
+def kelly_fraction_from_edge(edge_pct, kelly_multiplier):
+    edge_decimal = edge_pct / 100.0
+    raw_fraction = max(edge_decimal, 0.0)
+    adjusted_fraction = raw_fraction * kelly_multiplier
+    return adjusted_fraction
+
+
+def score_arbitrage_row(profit_pct, guaranteed_profit):
+    profit_pct = 0 if pd.isna(profit_pct) else float(profit_pct)
+    guaranteed_profit = 0 if pd.isna(guaranteed_profit) else float(guaranteed_profit)
+    score = (profit_pct * 4.0) + (guaranteed_profit * 0.4)
+    return round(score, 2)
+
+
+def score_middle_row(middle_gap, odds_a, odds_b):
+    middle_gap = 0 if pd.isna(middle_gap) else float(middle_gap)
+    bonus = 0
+
+    try:
+        if float(odds_a) > 0:
+            bonus += 0.5
+    except Exception:
+        pass
+
+    try:
+        if float(odds_b) > 0:
+            bonus += 0.5
+    except Exception:
+        pass
+
+    score = (middle_gap * 3.0) + bonus
+    return round(score, 2)
+
+
+def classify_middle_strength(gap):
+    if gap >= 5:
+        return "Strong"
+    if gap >= 3:
+        return "Medium"
+    return "Weak"
+
+
+# -----------------------------
+# DETECTORS
+# -----------------------------
+def detect_arbitrage(
+    events,
+    bankroll,
+    min_profit=1.0,
+    min_profit_dollars=1.0,
+    min_stake_filter=5.0,
+):
     rows = []
 
     for event in events:
@@ -190,9 +289,12 @@ def detect_arbitrage(events, bankroll, min_profit=1.0, min_profit_dollars=1.0, m
                         if stake_a < min_stake_filter or stake_b < min_stake_filter:
                             continue
 
+                        score = score_arbitrage_row(profit_pct, guaranteed_profit)
+
                         rows.append({
                             "type": "Arbitrage",
                             "game": game,
+                            "score": score,
                             "profit_%": profit_pct,
                             "bet_a": home_offer["team"],
                             "book_a": home_offer["book"],
@@ -206,13 +308,26 @@ def detect_arbitrage(events, bankroll, min_profit=1.0, min_profit_dollars=1.0, m
                             "middle_strength": None,
                             "expected_payout": payout,
                             "guaranteed_profit": guaranteed_profit,
+                            "kelly_note": "Use arb split",
+                            "kelly_stake_each": None,
                         })
 
     return pd.DataFrame(rows)
 
 
-def detect_spread_middles(events, middle_stake, min_gap=2.0):
+def detect_spread_middles(
+    events,
+    middle_stake,
+    min_gap=2.0,
+    middle_edge_pct=2.0,
+    middle_kelly_bankroll=500.0,
+    kelly_multiplier=0.5,
+):
     rows = []
+
+    kelly_fraction = kelly_fraction_from_edge(middle_edge_pct, kelly_multiplier)
+    kelly_total_stake = round(middle_kelly_bankroll * kelly_fraction, 2)
+    kelly_stake_each = round(kelly_total_stake / 2, 2)
 
     for event in events:
         home_team = event.get("home_team")
@@ -252,16 +367,13 @@ def detect_spread_middles(events, middle_stake, min_gap=2.0):
                 home_gap = a["home_point"] - b["home_point"]
                 if home_gap >= min_gap:
                     gap = round(home_gap, 2)
-
-                    strength = "Weak"
-                    if gap >= 3:
-                        strength = "Medium"
-                    if gap >= 5:
-                        strength = "Strong"
+                    strength = classify_middle_strength(gap)
+                    score = score_middle_row(gap, a["home_price"], b["away_price"])
 
                     rows.append({
                         "type": "Middle",
                         "game": game,
+                        "score": score,
                         "profit_%": None,
                         "bet_a": f"{home_team} {a['home_point']:+}",
                         "book_a": a["book"],
@@ -275,21 +387,20 @@ def detect_spread_middles(events, middle_stake, min_gap=2.0):
                         "middle_strength": strength,
                         "expected_payout": None,
                         "guaranteed_profit": None,
+                        "kelly_note": "Kelly-style middle cap",
+                        "kelly_stake_each": kelly_stake_each,
                     })
 
                 away_gap = a["away_point"] - b["away_point"]
                 if away_gap >= min_gap:
                     gap = round(away_gap, 2)
-
-                    strength = "Weak"
-                    if gap >= 3:
-                        strength = "Medium"
-                    if gap >= 5:
-                        strength = "Strong"
+                    strength = classify_middle_strength(gap)
+                    score = score_middle_row(gap, a["away_price"], b["home_price"])
 
                     rows.append({
                         "type": "Middle",
                         "game": game,
+                        "score": score,
                         "profit_%": None,
                         "bet_a": f"{away_team} {a['away_point']:+}",
                         "book_a": a["book"],
@@ -303,6 +414,8 @@ def detect_spread_middles(events, middle_stake, min_gap=2.0):
                         "middle_strength": strength,
                         "expected_payout": None,
                         "guaranteed_profit": None,
+                        "kelly_note": "Kelly-style middle cap",
+                        "kelly_stake_each": kelly_stake_each,
                     })
 
     return pd.DataFrame(rows)
@@ -310,16 +423,24 @@ def detect_spread_middles(events, middle_stake, min_gap=2.0):
 
 def highlight_rows(row):
     if row["type"] == "Arbitrage":
-        return ["background-color: #90EE90"] * len(row)
+        return ["background-color: #DCFCE7"] * len(row)
     if row["type"] == "Middle":
-        return ["background-color: #FFFACD"] * len(row)
+        return ["background-color: #FEF9C3"] * len(row)
     return [""] * len(row)
 
 
+# -----------------------------
+# SESSION STATE
+# -----------------------------
 if "available_books" not in st.session_state:
     st.session_state.available_books = {}
 if "selected_books" not in st.session_state:
     st.session_state.selected_books = []
+
+# -----------------------------
+# CONTROLS
+# -----------------------------
+st.markdown('<div class="section-card">', unsafe_allow_html=True)
 
 sport_label = st.selectbox("Choose sport", list(SPORT_OPTIONS.keys()), index=0)
 sport_key = SPORT_OPTIONS[sport_label]
@@ -346,23 +467,42 @@ with col5:
 col6, col7 = st.columns(2)
 
 with col6:
-    min_profit_dollars = st.number_input(
-        "Min Arb Profit ($)",
-        min_value=0.0,
-        value=1.0,
-        step=0.5
-    )
+    min_profit_dollars = st.number_input("Min Arb Profit ($)", min_value=0.0, value=1.0, step=0.5)
 
 with col7:
-    min_stake_filter = st.number_input(
-        "Min Bet Size ($)",
-        min_value=0.0,
-        value=5.0,
-        step=1.0
-    )
+    min_stake_filter = st.number_input("Min Bet Size ($)", min_value=0.0, value=5.0, step=1.0)
 
-min_gap = st.number_input("Min Middle Gap", min_value=0.5, value=2.0, step=0.5)
+col8, col9, col10 = st.columns(3)
 
+with col8:
+    min_gap = st.number_input("Min Middle Gap", min_value=0.5, value=2.0, step=0.5)
+
+with col9:
+    middle_edge_pct = st.number_input("Estimated Middle Edge %", min_value=0.0, value=2.0, step=0.5)
+
+with col10:
+    middle_kelly_bankroll = st.number_input("Middle Kelly Bankroll ($)", min_value=1.0, value=500.0, step=25.0)
+
+kelly_mode = st.selectbox("Kelly Mode", ["Quarter Kelly", "Half Kelly", "Full Kelly"], index=1)
+
+if kelly_mode == "Quarter Kelly":
+    kelly_multiplier = 0.25
+elif kelly_mode == "Half Kelly":
+    kelly_multiplier = 0.50
+else:
+    kelly_multiplier = 1.00
+
+st.markdown(
+    '<div class="small-note">Arbitrage uses the exact arb split. Kelly is applied here as a conservative middle stake cap based on your estimated edge.</div>',
+    unsafe_allow_html=True,
+)
+
+st.markdown('</div>', unsafe_allow_html=True)
+
+# -----------------------------
+# SPORTSBOOK SELECTION
+# -----------------------------
+st.markdown('<div class="section-card">', unsafe_allow_html=True)
 st.markdown("### Sportsbook Selection")
 
 load_books = st.button("Load Available Sportsbooks")
@@ -392,10 +532,14 @@ else:
     selected_books = []
     st.info("Press 'Load Available Sportsbooks' first, then choose the books you want to use.")
 
-scan_button = st.button("Scan Live Odds", type="primary")
+st.markdown('</div>', unsafe_allow_html=True)
 
+scan_button = st.button("Scan Live Odds", type="primary")
 st.info("The app only scans when you press a button. No automatic scanning is running.")
 
+# -----------------------------
+# SCAN + RESULTS
+# -----------------------------
 if scan_button:
     with st.spinner("Scanning live odds..."):
         try:
@@ -415,7 +559,7 @@ if scan_button:
                     min_stake_filter=min_stake_filter,
                 )
                 if not arb_df.empty:
-                    arb_df = arb_df.sort_values(by="guaranteed_profit", ascending=False)
+                    arb_df = arb_df.sort_values(by="score", ascending=False)
                     results.append(arb_df)
 
             if show_middles:
@@ -423,18 +567,43 @@ if scan_button:
                     events,
                     middle_stake=middle_stake,
                     min_gap=min_gap,
+                    middle_edge_pct=middle_edge_pct,
+                    middle_kelly_bankroll=middle_kelly_bankroll,
+                    kelly_multiplier=kelly_multiplier,
                 )
                 if not mid_df.empty:
-                    mid_df = mid_df.sort_values(by="middle_gap", ascending=False)
+                    mid_df = mid_df.sort_values(by="score", ascending=False)
                     results.append(mid_df)
 
-            st.subheader("Detected Opportunities")
+            st.subheader("Dashboard Summary")
 
             if results:
                 final_df = pd.concat(results, ignore_index=True)
 
+                arb_count = int((final_df["type"] == "Arbitrage").sum())
+                middle_count = int((final_df["type"] == "Middle").sum())
+
+                best_score = round(final_df["score"].max(), 2) if "score" in final_df.columns else 0
+
+                arb_profit_total = 0.0
+                if "guaranteed_profit" in final_df.columns:
+                    arb_profit_total = pd.to_numeric(final_df["guaranteed_profit"], errors="coerce").fillna(0).sum()
+
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("Total Opportunities", len(final_df))
+                m2.metric("Arbitrage Rows", arb_count)
+                m3.metric("Middle Rows", middle_count)
+                m4.metric("Best Score", best_score)
+
+                m5, m6 = st.columns(2)
+                m5.metric("Total Arb Profit ($)", round(arb_profit_total, 2))
+                m6.metric("Kelly Mode", kelly_mode)
+
+                st.subheader("Detected Opportunities")
+
                 display_columns = [
                     "type",
+                    "score",
                     "game",
                     "profit_%",
                     "bet_a",
@@ -447,11 +616,14 @@ if scan_button:
                     "stake_b",
                     "middle_gap",
                     "middle_strength",
+                    "kelly_note",
+                    "kelly_stake_each",
                     "expected_payout",
                     "guaranteed_profit",
                 ]
 
                 final_df = final_df[display_columns]
+                final_df = final_df.sort_values(by="score", ascending=False).reset_index(drop=True)
 
                 if selected_books:
                     chosen_names = [

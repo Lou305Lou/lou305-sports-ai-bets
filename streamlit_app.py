@@ -19,10 +19,11 @@ st.markdown("""
     font-size: 2rem;
     font-weight: 800;
     margin-bottom: 0.2rem;
+    color: #F8FAFC;
 }
 
 .sub-title {
-    color: #94A3B8;
+    color: #CBD5E1;
     margin-bottom: 1rem;
 }
 
@@ -32,20 +33,28 @@ st.markdown("""
     padding: 16px;
     border-radius: 16px;
     margin-bottom: 14px;
+    color: #F8FAFC;
 }
 
 .play-card {
     background: #111827;
-    border: 1px solid #374151;
+    border: 1px solid #475569;
     padding: 14px;
     border-radius: 14px;
     margin-bottom: 10px;
+    color: #F8FAFC;
+    line-height: 1.6;
+    font-size: 0.98rem;
+}
+
+.play-card b {
+    color: #FFFFFF;
 }
 
 .alert-green {
     background: #052e16;
     border: 1px solid #166534;
-    color: #dcfce7;
+    color: #DCFCE7;
     padding: 12px;
     border-radius: 12px;
     margin-bottom: 10px;
@@ -55,7 +64,7 @@ st.markdown("""
 .alert-yellow {
     background: #3f2f00;
     border: 1px solid #a16207;
-    color: #fef3c7;
+    color: #FEF3C7;
     padding: 12px;
     border-radius: 12px;
     margin-bottom: 10px;
@@ -65,7 +74,7 @@ st.markdown("""
 .alert-blue {
     background: #172554;
     border: 1px solid #1d4ed8;
-    color: #dbeafe;
+    color: #DBEAFE;
     padding: 12px;
     border-radius: 12px;
     margin-bottom: 10px;
@@ -94,14 +103,17 @@ div[data-testid="stMetric"] div {
 }
 
 .small-note {
-    color: #94A3B8;
+    color: #CBD5E1;
     font-size: 0.9rem;
 }
 </style>
 """, unsafe_allow_html=True)
 
 st.markdown('<div class="main-title">Sports AI Betting Dashboard</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-title">Manual live odds scanner with dashboard, alerts, best plays, actual plays mode, middle plays, and arbitrage plays</div>', unsafe_allow_html=True)
+st.markdown(
+    '<div class="sub-title">Manual live odds scanner with dashboard, alerts, best plays, actual plays mode, middle plays, and arbitrage plays</div>',
+    unsafe_allow_html=True
+)
 
 API_KEY = st.secrets.get("ODDS_API_KEY", "")
 
@@ -117,12 +129,14 @@ if not API_KEY:
     st.error("Missing ODDS_API_KEY in Streamlit secrets.")
     st.stop()
 
+
 # -----------------------------
 # HELPERS
 # -----------------------------
 def american_to_decimal(odds):
     if odds is None:
         return None
+
     try:
         odds = float(odds)
     except Exception:
@@ -189,7 +203,6 @@ def extract_available_books(events):
             title = bookmaker.get("title")
             if key and title:
                 books[key] = title
-
     return dict(sorted(books.items(), key=lambda x: x[1].lower()))
 
 
@@ -215,6 +228,7 @@ def filter_events_by_books(events, selected_book_keys):
 
 def get_market_map(bookmaker, market_key):
     market_map = {}
+
     for market in bookmaker.get("markets", []):
         if market.get("key") == market_key:
             for outcome in market.get("outcomes", []):
@@ -224,6 +238,7 @@ def get_market_map(bookmaker, market_key):
                         "price": outcome.get("price"),
                         "point": outcome.get("point"),
                     }
+
     return market_map
 
 
@@ -301,21 +316,21 @@ def apply_actual_plays_filter(
     if df.empty or not actual_plays_only:
         return df.copy()
 
-    df = df.copy()
+    filtered = df.copy()
 
     middle_mask = (
-        (df["type"] == "Middle") &
-        (pd.to_numeric(df["middle_gap"], errors="coerce").fillna(0) >= actual_middle_min_gap) &
-        (pd.to_numeric(df["score"], errors="coerce").fillna(0) >= actual_middle_min_score)
+        (filtered["type"] == "Middle") &
+        (pd.to_numeric(filtered["middle_gap"], errors="coerce").fillna(0) >= actual_middle_min_gap) &
+        (pd.to_numeric(filtered["score"], errors="coerce").fillna(0) >= actual_middle_min_score)
     )
 
     arb_mask = (
-        (df["type"] == "Arbitrage") &
-        (pd.to_numeric(df["profit_%"], errors="coerce").fillna(0) >= actual_arb_min_profit_pct) &
-        (pd.to_numeric(df["guaranteed_profit"], errors="coerce").fillna(0) >= actual_arb_min_profit_dollars)
+        (filtered["type"] == "Arbitrage") &
+        (pd.to_numeric(filtered["profit_%"], errors="coerce").fillna(0) >= actual_arb_min_profit_pct) &
+        (pd.to_numeric(filtered["guaranteed_profit"], errors="coerce").fillna(0) >= actual_arb_min_profit_dollars)
     )
 
-    return df[middle_mask | arb_mask].copy()
+    return filtered[middle_mask | arb_mask].copy()
 
 
 def render_top_play_cards(final_df):
@@ -326,6 +341,7 @@ def render_top_play_cards(final_df):
     top_df = final_df.sort_values(by="score", ascending=False).head(3).reset_index(drop=True)
 
     st.markdown("### Best Plays")
+
     for idx, (_, row) in enumerate(top_df.iterrows(), start=1):
         type_label = row.get("type", "")
         game = row.get("game", "")
@@ -338,18 +354,18 @@ def render_top_play_cards(final_df):
         odds_b = row.get("odds_b", "")
 
         if type_label == "Arbitrage":
-            extra_line = f"Profit %: {row.get('profit_%', '')} | Guaranteed Profit: ${row.get('guaranteed_profit', '')}"
+            details = f"Profit %: {row.get('profit_%', '')} | Guaranteed Profit: ${row.get('guaranteed_profit', '')}"
         else:
-            extra_line = f"Middle Gap: {row.get('middle_gap', '')} | Strength: {row.get('middle_strength', '')}"
+            details = f"Middle Gap: {row.get('middle_gap', '')} | Strength: {row.get('middle_strength', '')}"
 
         st.markdown(
             f"""
             <div class="play-card">
-                <b>#{idx} {type_label}</b> | <b>Score:</b> {score}<br>
-                <b>Game:</b> {game}<br>
-                <b>Play A:</b> {bet_a} @ {book_a} ({odds_a})<br>
-                <b>Play B:</b> {bet_b} @ {book_b} ({odds_b})<br>
-                <b>Details:</b> {extra_line}
+                <div><b>#{idx} {type_label}</b> | <b>Score:</b> {score}</div>
+                <div><b>Game:</b> {game}</div>
+                <div><b>Play A:</b> {bet_a} @ {book_a} ({odds_a})</div>
+                <div><b>Play B:</b> {bet_b} @ {book_b} ({odds_b})</div>
+                <div><b>Details:</b> {details}</div>
             </div>
             """,
             unsafe_allow_html=True
@@ -422,10 +438,18 @@ def detect_arbitrage(events, bankroll, min_profit=0.0, min_profit_dollars=0.0, m
             book_title = bookmaker.get("title", "Unknown")
 
             if home_team in h2h and h2h[home_team].get("price") is not None:
-                home_prices.append({"book": book_title, "team": home_team, "odds": h2h[home_team]["price"]})
+                home_prices.append({
+                    "book": book_title,
+                    "team": home_team,
+                    "odds": h2h[home_team]["price"],
+                })
 
             if away_team in h2h and h2h[away_team].get("price") is not None:
-                away_prices.append({"book": book_title, "team": away_team, "odds": h2h[away_team]["price"]})
+                away_prices.append({
+                    "book": book_title,
+                    "team": away_team,
+                    "odds": h2h[away_team]["price"],
+                })
 
         for home_offer in home_prices:
             for away_offer in away_prices:
@@ -445,7 +469,9 @@ def detect_arbitrage(events, bankroll, min_profit=0.0, min_profit_dollars=0.0, m
 
                     if profit_pct >= min_profit:
                         stake_a, stake_b, payout, guaranteed_profit = calculate_arb_stakes(
-                            home_offer["odds"], away_offer["odds"], bankroll
+                            home_offer["odds"],
+                            away_offer["odds"],
+                            bankroll,
                         )
 
                         if guaranteed_profit is None:

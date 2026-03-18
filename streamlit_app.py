@@ -1,65 +1,47 @@
-import streamlit as st
-import pandas as pd
+def detect_opportunities(df):
+    opportunities = []
 
-st.title("Sports AI Betting Dashboard")
-st.subheader("Auto Opportunity Scanner")
+    for game in df["game_id"].unique():
+        game_df = df[df["game_id"] == game]
 
-data = [
-    {"Game": "Lakers vs Heat", "Team": "Lakers", "Spread": -4.5, "Odds": -110, "Book": "DK"},
-    {"Game": "Lakers vs Heat", "Team": "Heat", "Spread": 5.5, "Odds": -110, "Book": "FD"},
-    {"Game": "Celtics vs Bulls", "Team": "Celtics", "Spread": -3.5, "Odds": -105, "Book": "MGM"},
-    {"Game": "Celtics vs Bulls", "Team": "Bulls", "Spread": 4.5, "Odds": -110, "Book": "Caesars"},
-]
+        for i, row_a in game_df.iterrows():
+            for j, row_b in game_df.iterrows():
 
-df = pd.DataFrame(data)
-st.dataframe(df)
+                if i == j:
+                    continue
 
-def find_middle_opportunities(df):
-    results = []
+                # ARBITRAGE CHECK
+                if row_a["team"] != row_b["team"]:
+                    prob = (1 / row_a["odds"]) + (1 / row_b["odds"])
 
-    for game in df["Game"].unique():
-        game_df = df[df["Game"] == game].reset_index(drop=True)
+                    if prob < 1:
+                        profit = round((1 - prob) * 100, 2)
 
-        for i in range(len(game_df)):
-            for j in range(i + 1, len(game_df)):
-                bet1 = game_df.iloc[i]
-                bet2 = game_df.iloc[j]
+                        if profit > 1:  # FILTER (only good arbs)
+                            opportunities.append({
+                                "type": "Arbitrage",
+                                "game": game,
+                                "profit_%": profit,
+                                "bet_a": row_a["team"],
+                                "odds_a": row_a["odds"],
+                                "bet_b": row_b["team"],
+                                "odds_b": row_b["odds"],
+                            })
 
-                if bet1["Spread"] < 0 and bet2["Spread"] > 0:
-                    if bet2["Spread"] > abs(bet1["Spread"]):
-                        middle_size = bet2["Spread"] - abs(bet1["Spread"])
-                        results.append({
-                            "Game": game,
-                            "Book A": bet1["Book"],
-                            "Bet A": f"{bet1['Team']} {bet1['Spread']}",
-                            "Odds A": bet1["Odds"],
-                            "Book B": bet2["Book"],
-                            "Bet B": f"{bet2['Team']} +{bet2['Spread']}",
-                            "Odds B": bet2["Odds"],
-                            "Middle Size": middle_size
-                        })
+                # MIDDLE CHECK (spread + ML combo)
+                if row_a["team"] != row_b["team"]:
+                    if row_a["market"] == "spreads" and row_b["market"] == "h2h":
 
-                if bet2["Spread"] < 0 and bet1["Spread"] > 0:
-                    if bet1["Spread"] > abs(bet2["Spread"]):
-                        middle_size = bet1["Spread"] - abs(bet2["Spread"])
-                        results.append({
-                            "Game": game,
-                            "Book A": bet2["Book"],
-                            "Bet A": f"{bet2['Team']} {bet2['Spread']}",
-                            "Odds A": bet2["Odds"],
-                            "Book B": bet1["Book"],
-                            "Bet B": f"{bet1['Team']} +{bet1['Spread']}",
-                            "Odds B": bet1["Odds"],
-                            "Middle Size": middle_size
-                        })
+                        spread = row_a["point"]
 
-    return pd.DataFrame(results)
+                        if spread and abs(spread) > 1.5:
+                            opportunities.append({
+                                "type": "Middle",
+                                "game": game,
+                                "spread_side": row_a["team"],
+                                "spread": spread,
+                                "ml_side": row_b["team"],
+                                "ml_odds": row_b["odds"],
+                            })
 
-st.subheader("Detected Middle Opportunities")
-
-middle_df = find_middle_opportunities(df)
-
-if not middle_df.empty:
-    st.dataframe(middle_df)
-else:
-    st.info("No middle opportunities found.")
+    return pd.DataFrame(opportunities)

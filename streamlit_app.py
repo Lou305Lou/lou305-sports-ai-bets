@@ -19,11 +19,11 @@ st.markdown("""
     font-size: 2rem;
     font-weight: 800;
     margin-bottom: 0.2rem;
-    color: #F8FAFC;
+    color: #111827;
 }
 
 .sub-title {
-    color: #CBD5E1;
+    color: #475569;
     margin-bottom: 1rem;
 }
 

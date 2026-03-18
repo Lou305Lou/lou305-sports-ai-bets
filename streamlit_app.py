@@ -446,4 +446,15 @@ def get_tracker_summary(tracker_df):
     total_profit = actual_profit.sum()
 
     roi = 0.0
-    if settled_stake > 
+    if settled_stake > 0:
+        roi = (total_profit / settled_stake) * 100
+
+    return {
+        "total_tracked": len(tracker_df),
+        "wins": int((status_series == "Win").sum()),
+        "losses": int((status_series == "Loss").sum()),
+        "pushes": int((status_series == "Push").sum()),
+        "pending": int((status_series == "Pending").sum()),
+        "profit": round(float(total_profit), 2),
+        "roi": round(float(roi), 2),
+    }

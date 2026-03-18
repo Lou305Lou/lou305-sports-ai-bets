@@ -97,6 +97,26 @@ st.markdown("""
     color: #FFFFFF;
 }
 
+.ai-final-card {
+    background: #0B1220;
+    border: 2px solid #2563EB;
+    padding: 18px;
+    border-radius: 16px;
+    margin-bottom: 12px;
+    color: #F8FAFC;
+    line-height: 1.7;
+}
+
+.best-bet-card {
+    background: #052e16;
+    border: 2px solid #22c55e;
+    padding: 18px;
+    border-radius: 16px;
+    margin-bottom: 12px;
+    color: #DCFCE7;
+    line-height: 1.7;
+}
+
 .alert-green {
     background: #052e16;
     border: 1px solid #166534;
@@ -157,7 +177,7 @@ div[data-testid="stMetric"] div {
 
 st.markdown('<div class="main-title">Sports AI Betting Dashboard</div>', unsafe_allow_html=True)
 st.markdown(
-    '<div class="sub-title">Manual live odds scanner with dashboard, alerts, best plays, execution mode, actual plays mode, bet tracking, and NBA AI Engine V1</div>',
+    '<div class="sub-title">Manual live odds scanner with dashboard, alerts, best plays, execution mode, actual plays mode, bet tracking, and NBA AI Engine V2</div>',
     unsafe_allow_html=True
 )
 
@@ -215,6 +235,10 @@ def safe_std(values):
     mean_val = sum(vals) / len(vals)
     variance = sum((v - mean_val) ** 2 for v in vals) / len(vals)
     return variance ** 0.5
+
+
+def clamp(value, low, high):
+    return max(low, min(high, value))
 
 
 def calculate_arb_stakes(odds_a, odds_b, bankroll):
@@ -455,7 +479,7 @@ def get_tracker_summary(tracker_df):
 
 
 # -----------------------------
-# NBA AI ENGINE V1
+# NBA AI ENGINE V2
 # -----------------------------
 def extract_nba_game_features(event):
     home_team = event.get("home_team")
@@ -468,8 +492,12 @@ def extract_nba_game_features(event):
 
     home_spread_points = []
     away_spread_points = []
+    home_spread_prices = []
+    away_spread_prices = []
 
     totals_points = []
+    over_prices = []
+    under_prices = []
 
     for bookmaker in event.get("bookmakers", []):
         h2h = get_market_map(bookmaker, "h2h")
@@ -488,70 +516,118 @@ def extract_nba_game_features(event):
 
         if home_team in spreads and spreads[home_team].get("point") is not None:
             home_spread_points.append(float(spreads[home_team]["point"]))
+            home_spread_prices.append(spreads[home_team].get("price"))
 
         if away_team in spreads and spreads[away_team].get("point") is not None:
             away_spread_points.append(float(spreads[away_team]["point"]))
+            away_spread_prices.append(spreads[away_team].get("price"))
 
         if "Over" in totals and totals["Over"].get("point") is not None:
             totals_points.append(float(totals["Over"]["point"]))
+            over_prices.append(totals["Over"].get("price"))
+
+        if "Under" in totals and totals["Under"].get("point") is not None:
+            under_prices.append(totals["Under"].get("price"))
+
+    consensus_home_prob = safe_mean(home_ml_probs)
+    consensus_away_prob = safe_mean(away_ml_probs)
+
+    consensus_home_spread = safe_mean(home_spread_points)
+    consensus_away_spread = safe_mean(away_spread_points)
+    consensus_total = safe_mean(totals_points)
+
+    best_home_ml = max(home_ml_odds) if home_ml_odds else None
+    best_away_ml = max(away_ml_odds) if away_ml_odds else None
+
+    best_home_spread = max(home_spread_points) if home_spread_points else None
+    best_away_spread = max(away_spread_points) if away_spread_points else None
+
+    best_over_total = min(totals_points) if totals_points else None
+    best_under_total = max(totals_points) if totals_points else None
+
+    market_form_home = 0.0
+    market_form_away = 0.0
+    if consensus_home_prob is not None and consensus_away_prob is not None:
+        market_form_home = (consensus_home_prob - 0.50) * 100
+        market_form_away = (consensus_away_prob - 0.50) * 100
+
+    power_edge = 0.0
+    if consensus_home_prob is not None and consensus_away_prob is not None:
+        power_edge = (consensus_home_prob - consensus_away_prob) * 100
+
+    spread_edge = 0.0
+    if consensus_home_spread is not None and best_home_spread is not None:
+        spread_edge = best_home_spread - consensus_home_spread
+
+    total_edge_over = 0.0
+    total_edge_under = 0.0
+    if consensus_total is not None and best_over_total is not None and best_under_total is not None:
+        total_edge_over = consensus_total - best_over_total
+        total_edge_under = best_under_total - consensus_total
 
     return {
         "home_team": home_team,
         "away_team": away_team,
-        "consensus_home_prob": safe_mean(home_ml_probs),
-        "consensus_away_prob": safe_mean(away_ml_probs),
-        "consensus_home_spread": safe_mean(home_spread_points),
-        "consensus_away_spread": safe_mean(away_spread_points),
-        "consensus_total": safe_mean(totals_points),
-        "best_home_ml": max(home_ml_odds) if home_ml_odds else None,
-        "best_away_ml": max(away_ml_odds) if away_ml_odds else None,
-        "best_home_spread": max(home_spread_points) if home_spread_points else None,
-        "best_away_spread": max(away_spread_points) if away_spread_points else None,
+        "consensus_home_prob": consensus_home_prob,
+        "consensus_away_prob": consensus_away_prob,
+        "consensus_home_spread": consensus_home_spread,
+        "consensus_away_spread": consensus_away_spread,
+        "consensus_total": consensus_total,
+        "best_home_ml": best_home_ml,
+        "best_away_ml": best_away_ml,
+        "best_home_spread": best_home_spread,
+        "best_away_spread": best_away_spread,
+        "best_over_total": best_over_total,
+        "best_under_total": best_under_total,
         "home_prob_std": safe_std(home_ml_probs),
         "away_prob_std": safe_std(away_ml_probs),
         "spread_std": safe_std(home_spread_points),
         "total_std": safe_std(totals_points),
         "books_count": len(event.get("bookmakers", [])),
+        "market_form_home": round(market_form_home, 2),
+        "market_form_away": round(market_form_away, 2),
+        "power_edge": round(power_edge, 2),
+        "spread_edge": round(spread_edge, 2),
+        "total_edge_over": round(total_edge_over, 2),
+        "total_edge_under": round(total_edge_under, 2),
     }
 
 
-def nba_stats_ai(features):
+def nba_stats_ai_v2(features):
     home_team = features["home_team"]
     away_team = features["away_team"]
-    home_prob = features["consensus_home_prob"]
-    away_prob = features["consensus_away_prob"]
-    home_spread = features["consensus_home_spread"]
+    power_edge = features["power_edge"]
     total_line = features["consensus_total"]
+    home_spread = features["consensus_home_spread"]
 
-    if home_prob is None or away_prob is None:
-        ml_pick = "No edge"
-        ml_conf = 50
-    else:
-        ml_pick = home_team if home_prob > away_prob else away_team
-        prob_gap = abs(home_prob - away_prob)
-        ml_conf = min(90, round(50 + prob_gap * 120, 1))
+    ml_pick = home_team if power_edge >= 0 else away_team
+    ml_conf = clamp(round(56 + abs(power_edge) * 1.3, 1), 50, 92)
 
     if home_spread is None:
         spread_pick = "No spread edge"
+        spread_conf = 50
     else:
         if home_spread < 0:
             spread_pick = f"{home_team} {home_spread:+.1f}"
         else:
             spread_pick = f"{away_team} {features['consensus_away_spread']:+.1f}"
+        spread_conf = clamp(round(54 + abs(home_spread) * 2.0, 1), 50, 90)
 
     if total_line is None:
         total_pick = "No totals data"
+        total_conf = 50
     else:
-        if total_line >= 230:
+        if total_line >= 231:
             total_pick = f"Lean Under {round(total_line, 1)}"
         elif total_line <= 220:
             total_pick = f"Lean Over {round(total_line, 1)}"
         else:
             total_pick = f"Lean Pass / Slight Under {round(total_line, 1)}"
+        total_conf = clamp(round(52 + abs(total_line - 225) * 0.8, 1), 50, 82)
 
     reason = (
-        f"Consensus implied win rates favor {ml_pick}. "
-        f"Average home spread is {round(home_spread, 1) if home_spread is not None else 'N/A'}. "
+        f"Power edge is {power_edge:+.2f} toward the {'home' if power_edge >= 0 else 'away'} side. "
+        f"Consensus spread is {round(home_spread, 1) if home_spread is not None else 'N/A'} for the home team. "
         f"Consensus total is {round(total_line, 1) if total_line is not None else 'N/A'}."
     )
 
@@ -560,39 +636,37 @@ def nba_stats_ai(features):
         "ml_pick": ml_pick,
         "spread_pick": spread_pick,
         "total_pick": total_pick,
-        "confidence": ml_conf,
+        "ml_confidence": ml_conf,
+        "spread_confidence": spread_conf,
+        "total_confidence": total_conf,
         "reason": reason,
     }
 
 
-def nba_matchup_ai(features):
+def nba_matchup_ai_v2(features):
     home_team = features["home_team"]
     away_team = features["away_team"]
-    home_prob = features["consensus_home_prob"]
-    away_prob = features["consensus_away_prob"]
-    total_line = features["consensus_total"]
+
+    adjusted_power_edge = features["power_edge"] + 2.0
+    ml_pick = home_team if adjusted_power_edge >= 0 else away_team
+    ml_conf = clamp(round(55 + abs(adjusted_power_edge) * 1.15, 1), 50, 88)
+
     home_spread = features["consensus_home_spread"]
-
-    if home_prob is None or away_prob is None:
-        ml_pick = "No edge"
-        confidence = 50
-    else:
-        adjusted_home = home_prob + 0.02
-        adjusted_away = away_prob
-        ml_pick = home_team if adjusted_home >= adjusted_away else away_team
-        confidence = min(85, round(52 + abs(adjusted_home - adjusted_away) * 100, 1))
-
     if home_spread is None:
         spread_pick = "No spread edge"
+        spread_conf = 50
     else:
         adjusted_spread = home_spread - 1.0
         if adjusted_spread < 0:
             spread_pick = f"{home_team} {home_spread:+.1f}"
         else:
             spread_pick = f"{away_team} {features['consensus_away_spread']:+.1f}"
+        spread_conf = clamp(round(53 + abs(adjusted_spread) * 2.1, 1), 50, 86)
 
+    total_line = features["consensus_total"]
     if total_line is None:
         total_pick = "No totals data"
+        total_conf = 50
     else:
         if 222 <= total_line <= 228:
             total_pick = f"Lean Under {round(total_line, 1)}"
@@ -600,10 +674,12 @@ def nba_matchup_ai(features):
             total_pick = f"Lean Over {round(total_line, 1)}"
         else:
             total_pick = f"Lean Over {round(total_line, 1)}"
+        total_conf = clamp(round(52 + abs(total_line - 225) * 0.75, 1), 50, 80)
 
     reason = (
-        f"This model adds a small home-court bump and checks whether the matchup still supports the side. "
-        f"It sees the total around {round(total_line, 1) if total_line is not None else 'N/A'}."
+        f"This model applies a home-court/context bump. "
+        f"Adjusted power edge is {adjusted_power_edge:+.2f}. "
+        f"It treats neutral totals around 225 as tighter and extreme totals as stronger leans."
     )
 
     return {
@@ -611,18 +687,19 @@ def nba_matchup_ai(features):
         "ml_pick": ml_pick,
         "spread_pick": spread_pick,
         "total_pick": total_pick,
-        "confidence": confidence,
+        "ml_confidence": ml_conf,
+        "spread_confidence": spread_conf,
+        "total_confidence": total_conf,
         "reason": reason,
     }
 
 
-def nba_market_ai(features):
+def nba_market_ai_v2(features):
     home_team = features["home_team"]
     away_team = features["away_team"]
 
     consensus_home_prob = features["consensus_home_prob"]
     consensus_away_prob = features["consensus_away_prob"]
-
     best_home_ml = features["best_home_ml"]
     best_away_ml = features["best_away_ml"]
 
@@ -639,12 +716,12 @@ def nba_market_ai(features):
 
     if home_value is None and away_value is None:
         ml_pick = "No edge"
-        confidence = 50
+        ml_conf = 50
     else:
         home_value = home_value if home_value is not None else -999
         away_value = away_value if away_value is not None else -999
         ml_pick = home_team if home_value >= away_value else away_team
-        confidence = min(88, round(52 + max(home_value, away_value) * 250, 1))
+        ml_conf = clamp(round(54 + max(home_value, away_value) * 260, 1), 50, 90)
 
     home_spread = features["consensus_home_spread"]
     away_spread = features["consensus_away_spread"]
@@ -653,27 +730,37 @@ def nba_market_ai(features):
 
     if home_spread is None or away_spread is None or best_home_spread is None or best_away_spread is None:
         spread_pick = "No spread edge"
+        spread_conf = 50
     else:
         home_spread_edge = best_home_spread - home_spread
         away_spread_edge = best_away_spread - away_spread
         if home_spread_edge >= away_spread_edge:
             spread_pick = f"{home_team} {best_home_spread:+.1f}"
+            spread_conf = clamp(round(53 + abs(home_spread_edge) * 12, 1), 50, 88)
         else:
             spread_pick = f"{away_team} {best_away_spread:+.1f}"
+            spread_conf = clamp(round(53 + abs(away_spread_edge) * 12, 1), 50, 88)
 
     total_pick = "No totals data"
-    if features["consensus_total"] is not None:
-        total_line = features["consensus_total"]
-        if total_line >= 230:
-            total_pick = f"Lean Under {round(total_line, 1)}"
-        elif total_line <= 220:
-            total_pick = f"Lean Over {round(total_line, 1)}"
+    total_conf = 50
+    consensus_total = features["consensus_total"]
+    over_edge = features["total_edge_over"]
+    under_edge = features["total_edge_under"]
+
+    if consensus_total is not None:
+        if over_edge > under_edge and over_edge > 0:
+            total_pick = f"Lean Over {round(features['best_over_total'], 1)}"
+            total_conf = clamp(round(53 + over_edge * 10, 1), 50, 84)
+        elif under_edge >= over_edge and under_edge > 0:
+            total_pick = f"Lean Under {round(features['best_under_total'], 1)}"
+            total_conf = clamp(round(53 + under_edge * 10, 1), 50, 84)
         else:
-            total_pick = f"Lean Pass {round(total_line, 1)}"
+            total_pick = f"Lean Pass {round(consensus_total, 1)}"
+            total_conf = 52
 
     reason = (
-        "This model compares consensus pricing to the best available prices and lines. "
-        "It prefers value, not just the most likely favorite."
+        "This model compares consensus numbers to the best available market prices and lines. "
+        "It prefers the side or total with the strongest pricing edge."
     )
 
     return {
@@ -681,12 +768,14 @@ def nba_market_ai(features):
         "ml_pick": ml_pick,
         "spread_pick": spread_pick,
         "total_pick": total_pick,
-        "confidence": confidence,
+        "ml_confidence": ml_conf,
+        "spread_confidence": spread_conf,
+        "total_confidence": total_conf,
         "reason": reason,
     }
 
 
-def nba_risk_ai(features):
+def nba_risk_ai_v2(features):
     risk_score = 0
 
     if features["books_count"] < 5:
@@ -713,7 +802,7 @@ def nba_risk_ai(features):
         f"ML disagreement std: {round(features['home_prob_std'], 3)}. "
         f"Spread disagreement std: {round(features['spread_std'], 2)}. "
         f"Totals disagreement std: {round(features['total_std'], 2)}. "
-        f"Overall risk is {risk_level}."
+        f"Risk level: {risk_level}."
     )
 
     return {
@@ -733,63 +822,139 @@ def parse_team_from_pick(pick_text, home_team, away_team):
     return None
 
 
-def nba_final_ai(features, stats_ai, matchup_ai, market_ai, risk_ai):
+def summarize_votes(items):
+    counts = {}
+    for item in items:
+        counts[item] = counts.get(item, 0) + 1
+    return counts
+
+
+def choose_best_bet(final_ml, final_spread, final_total):
+    candidates = [
+        {
+            "bet_type": "Moneyline",
+            "pick": final_ml["pick"],
+            "confidence": final_ml["confidence"],
+            "reason": final_ml["reason"]
+        },
+        {
+            "bet_type": "Spread",
+            "pick": final_spread["pick"],
+            "confidence": final_spread["confidence"],
+            "reason": final_spread["reason"]
+        },
+        {
+            "bet_type": "Total",
+            "pick": final_total["pick"],
+            "confidence": final_total["confidence"],
+            "reason": final_total["reason"]
+        },
+    ]
+
+    filtered = [c for c in candidates if c["pick"] not in ["No edge", "No spread edge", "No totals data"]]
+    if not filtered:
+        return {
+            "bet_type": "No Best Bet",
+            "pick": "No strong edge",
+            "confidence": 50,
+            "reason": "The current market snapshot does not show a strong enough edge."
+        }
+
+    return max(filtered, key=lambda x: x["confidence"])
+
+
+def nba_final_ai_v2(features, stats_ai, matchup_ai, market_ai, risk_ai):
     home_team = features["home_team"]
     away_team = features["away_team"]
 
+    # ML
     ml_votes = {home_team: 0, away_team: 0}
-    for model_pick in [stats_ai["ml_pick"], matchup_ai["ml_pick"], market_ai["ml_pick"]]:
+    ml_picks = [stats_ai["ml_pick"], matchup_ai["ml_pick"], market_ai["ml_pick"]]
+    for model_pick in ml_picks:
         if model_pick in ml_votes:
             ml_votes[model_pick] += 1
 
-    final_ml = max(ml_votes, key=ml_votes.get)
+    final_ml_pick = max(ml_votes, key=ml_votes.get)
+    base_ml_conf = safe_mean([
+        stats_ai["ml_confidence"],
+        matchup_ai["ml_confidence"],
+        market_ai["ml_confidence"],
+    ])
+    base_ml_conf = 55 if base_ml_conf is None else base_ml_conf
+    final_ml_conf = clamp(round(base_ml_conf + risk_ai["confidence_adjustment"], 1), 50, 95)
+    final_ml = {
+        "pick": final_ml_pick,
+        "confidence": final_ml_conf,
+        "reason": f"ML votes: {ml_votes}. Risk adjustment {risk_ai['confidence_adjustment']}."
+    }
 
+    # Spread
     spread_votes = {home_team: 0, away_team: 0}
-    for pick in [stats_ai["spread_pick"], matchup_ai["spread_pick"], market_ai["spread_pick"]]:
+    spread_picks = [stats_ai["spread_pick"], matchup_ai["spread_pick"], market_ai["spread_pick"]]
+    for pick in spread_picks:
         team = parse_team_from_pick(pick, home_team, away_team)
         if team in spread_votes:
             spread_votes[team] += 1
 
     final_spread_team = max(spread_votes, key=spread_votes.get)
     if final_spread_team == home_team and features["best_home_spread"] is not None:
-        final_spread = f"{home_team} {features['best_home_spread']:+.1f}"
+        final_spread_pick = f"{home_team} {features['best_home_spread']:+.1f}"
     elif final_spread_team == away_team and features["best_away_spread"] is not None:
-        final_spread = f"{away_team} {features['best_away_spread']:+.1f}"
+        final_spread_pick = f"{away_team} {features['best_away_spread']:+.1f}"
     else:
-        final_spread = "No spread edge"
+        final_spread_pick = "No spread edge"
 
-    total_votes = {}
-    for pick in [stats_ai["total_pick"], matchup_ai["total_pick"], market_ai["total_pick"]]:
-        total_votes[pick] = total_votes.get(pick, 0) + 1
-    final_total = max(total_votes, key=total_votes.get) if total_votes else "No totals data"
+    base_spread_conf = safe_mean([
+        stats_ai["spread_confidence"],
+        matchup_ai["spread_confidence"],
+        market_ai["spread_confidence"],
+    ])
+    base_spread_conf = 55 if base_spread_conf is None else base_spread_conf
+    final_spread_conf = clamp(round(base_spread_conf + risk_ai["confidence_adjustment"], 1), 50, 95)
+    final_spread = {
+        "pick": final_spread_pick,
+        "confidence": final_spread_conf,
+        "reason": f"Spread votes: {spread_votes}. Risk adjustment {risk_ai['confidence_adjustment']}."
+    }
 
-    base_conf = safe_mean([stats_ai["confidence"], matchup_ai["confidence"], market_ai["confidence"]])
-    base_conf = 55 if base_conf is None else base_conf
-    final_conf = max(50, min(95, round(base_conf + risk_ai["confidence_adjustment"], 1)))
+    # Total
+    total_picks = [stats_ai["total_pick"], matchup_ai["total_pick"], market_ai["total_pick"]]
+    total_votes = summarize_votes(total_picks)
+    final_total_pick = max(total_votes, key=total_votes.get) if total_votes else "No totals data"
 
-    reason = (
-        f"Final AI combines the model votes. ML votes: {ml_votes}. "
-        f"Spread votes: {spread_votes}. "
-        f"Risk adjustment: {risk_ai['confidence_adjustment']} from {risk_ai['risk_level']} market conditions."
-    )
+    base_total_conf = safe_mean([
+        stats_ai["total_confidence"],
+        matchup_ai["total_confidence"],
+        market_ai["total_confidence"],
+    ])
+    base_total_conf = 55 if base_total_conf is None else base_total_conf
+    final_total_conf = clamp(round(base_total_conf + risk_ai["confidence_adjustment"], 1), 50, 95)
+    final_total = {
+        "pick": final_total_pick,
+        "confidence": final_total_conf,
+        "reason": f"Total votes: {total_votes}. Risk adjustment {risk_ai['confidence_adjustment']}."
+    }
+
+    best_bet = choose_best_bet(final_ml, final_spread, final_total)
 
     return {
-        "name": "Final AI",
-        "ml_pick": final_ml,
-        "spread_pick": final_spread,
-        "total_pick": final_total,
-        "confidence": final_conf,
-        "reason": reason,
+        "ml": final_ml,
+        "spread": final_spread,
+        "total": final_total,
+        "best_bet": best_bet,
+        "summary_reason": (
+            f"Final engine combined Stats AI, Matchup AI, and Market AI, then adjusted confidence for {risk_ai['risk_level']} risk."
+        ),
     }
 
 
-def run_nba_ai_engine_v1(event):
+def run_nba_ai_engine_v2(event):
     features = extract_nba_game_features(event)
-    stats_ai = nba_stats_ai(features)
-    matchup_ai = nba_matchup_ai(features)
-    market_ai = nba_market_ai(features)
-    risk_ai = nba_risk_ai(features)
-    final_ai = nba_final_ai(features, stats_ai, matchup_ai, market_ai, risk_ai)
+    stats_ai = nba_stats_ai_v2(features)
+    matchup_ai = nba_matchup_ai_v2(features)
+    market_ai = nba_market_ai_v2(features)
+    risk_ai = nba_risk_ai_v2(features)
+    final_ai = nba_final_ai_v2(features, stats_ai, matchup_ai, market_ai, risk_ai)
 
     return {
         "features": features,
@@ -1440,7 +1605,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "Middle Plays",
     "Arbitrage Plays",
     "Bet Tracker",
-    "NBA AI Engine V1"
+    "NBA AI Engine V2"
 ])
 
 with tab1:
@@ -1642,7 +1807,7 @@ with tab4:
         )
 
 with tab5:
-    st.subheader("NBA AI Engine V1")
+    st.subheader("NBA AI Engine V2")
 
     if not st.session_state.scan_complete:
         st.info("Run a scan first so the NBA AI Engine has games to analyze.")
@@ -1663,47 +1828,60 @@ with tab5:
             selected_game_index = nba_game_labels.index(selected_game_label)
             selected_event = nba_events[selected_game_index]
 
-            ai_results = run_nba_ai_engine_v1(selected_event)
-            final_ai = ai_results["final_ai"]
-            risk_ai = ai_results["risk_ai"]
+            ai_results = run_nba_ai_engine_v2(selected_event)
             features = ai_results["features"]
+            stats_ai = ai_results["stats_ai"]
+            matchup_ai = ai_results["matchup_ai"]
+            market_ai = ai_results["market_ai"]
+            risk_ai = ai_results["risk_ai"]
+            final_ai = ai_results["final_ai"]
+            best_bet = final_ai["best_bet"]
 
-            a1, a2, a3, a4 = st.columns(4)
-            a1.metric("Final ML Pick", final_ai["ml_pick"])
-            a2.metric("Final Spread Pick", final_ai["spread_pick"])
-            a3.metric("Final Total Lean", final_ai["total_pick"])
-            a4.metric("Confidence", final_ai["confidence"])
+            top1, top2, top3, top4 = st.columns(4)
+            top1.metric("Best ML", final_ai["ml"]["pick"])
+            top2.metric("Best Spread", final_ai["spread"]["pick"])
+            top3.metric("Best Total", final_ai["total"]["pick"])
+            top4.metric("Best Bet Confidence", best_bet["confidence"])
+
+            st.markdown(
+                f"""
+                <div class="best-bet-card">
+                    <b>Final Recommended Best Bet:</b> {best_bet['bet_type']}<br>
+                    <b>Pick:</b> {best_bet['pick']}<br>
+                    <b>Confidence:</b> {best_bet['confidence']}<br>
+                    <b>Reason:</b> {best_bet['reason']}
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
 
             render_ai_card(
                 "Stats AI",
                 [
-                    f"<b>ML Pick:</b> {ai_results['stats_ai']['ml_pick']}",
-                    f"<b>Spread Pick:</b> {ai_results['stats_ai']['spread_pick']}",
-                    f"<b>Total Lean:</b> {ai_results['stats_ai']['total_pick']}",
-                    f"<b>Confidence:</b> {ai_results['stats_ai']['confidence']}",
-                    f"<b>Reason:</b> {ai_results['stats_ai']['reason']}",
+                    f"<b>ML Pick:</b> {stats_ai['ml_pick']} ({stats_ai['ml_confidence']})",
+                    f"<b>Spread Pick:</b> {stats_ai['spread_pick']} ({stats_ai['spread_confidence']})",
+                    f"<b>Total Pick:</b> {stats_ai['total_pick']} ({stats_ai['total_confidence']})",
+                    f"<b>Reason:</b> {stats_ai['reason']}",
                 ]
             )
 
             render_ai_card(
                 "Matchup AI",
                 [
-                    f"<b>ML Pick:</b> {ai_results['matchup_ai']['ml_pick']}",
-                    f"<b>Spread Pick:</b> {ai_results['matchup_ai']['spread_pick']}",
-                    f"<b>Total Lean:</b> {ai_results['matchup_ai']['total_pick']}",
-                    f"<b>Confidence:</b> {ai_results['matchup_ai']['confidence']}",
-                    f"<b>Reason:</b> {ai_results['matchup_ai']['reason']}",
+                    f"<b>ML Pick:</b> {matchup_ai['ml_pick']} ({matchup_ai['ml_confidence']})",
+                    f"<b>Spread Pick:</b> {matchup_ai['spread_pick']} ({matchup_ai['spread_confidence']})",
+                    f"<b>Total Pick:</b> {matchup_ai['total_pick']} ({matchup_ai['total_confidence']})",
+                    f"<b>Reason:</b> {matchup_ai['reason']}",
                 ]
             )
 
             render_ai_card(
                 "Market AI",
                 [
-                    f"<b>ML Pick:</b> {ai_results['market_ai']['ml_pick']}",
-                    f"<b>Spread Pick:</b> {ai_results['market_ai']['spread_pick']}",
-                    f"<b>Total Lean:</b> {ai_results['market_ai']['total_pick']}",
-                    f"<b>Confidence:</b> {ai_results['market_ai']['confidence']}",
-                    f"<b>Reason:</b> {ai_results['market_ai']['reason']}",
+                    f"<b>ML Pick:</b> {market_ai['ml_pick']} ({market_ai['ml_confidence']})",
+                    f"<b>Spread Pick:</b> {market_ai['spread_pick']} ({market_ai['spread_confidence']})",
+                    f"<b>Total Pick:</b> {market_ai['total_pick']} ({market_ai['total_confidence']})",
+                    f"<b>Reason:</b> {market_ai['reason']}",
                 ]
             )
 
@@ -1719,11 +1897,10 @@ with tab5:
             render_ai_card(
                 "Final AI Consensus",
                 [
-                    f"<b>Final ML Pick:</b> {final_ai['ml_pick']}",
-                    f"<b>Final Spread Pick:</b> {final_ai['spread_pick']}",
-                    f"<b>Final Total Lean:</b> {final_ai['total_pick']}",
-                    f"<b>Final Confidence:</b> {final_ai['confidence']}",
-                    f"<b>Reason:</b> {final_ai['reason']}",
+                    f"<b>Final ML:</b> {final_ai['ml']['pick']} ({final_ai['ml']['confidence']})",
+                    f"<b>Final Spread:</b> {final_ai['spread']['pick']} ({final_ai['spread']['confidence']})",
+                    f"<b>Final Total:</b> {final_ai['total']['pick']} ({final_ai['total']['confidence']})",
+                    f"<b>Summary:</b> {final_ai['summary_reason']}",
                 ]
             )
 
@@ -1736,10 +1913,12 @@ with tab5:
                 "consensus_home_spread": round(features["consensus_home_spread"], 1) if features["consensus_home_spread"] is not None else None,
                 "consensus_away_spread": round(features["consensus_away_spread"], 1) if features["consensus_away_spread"] is not None else None,
                 "consensus_total": round(features["consensus_total"], 1) if features["consensus_total"] is not None else None,
-                "best_home_ml": features["best_home_ml"],
-                "best_away_ml": features["best_away_ml"],
-                "best_home_spread": features["best_home_spread"],
-                "best_away_spread": features["best_away_spread"],
+                "power_edge": features["power_edge"],
+                "market_form_home": features["market_form_home"],
+                "market_form_away": features["market_form_away"],
+                "spread_edge": features["spread_edge"],
+                "total_edge_over": features["total_edge_over"],
+                "total_edge_under": features["total_edge_under"],
                 "books_count": features["books_count"],
             }])
 

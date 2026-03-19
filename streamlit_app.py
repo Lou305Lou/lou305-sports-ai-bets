@@ -759,12 +759,25 @@ def render_top_play_card(row, rank_num):
     )
 
 st.sidebar.header("Provider 1: The Odds API")
+
 the_odds_api_key = ""
+
 try:
-    the_odds_api_key = st.secrets.get("ODDS_API_KEY", "")
+    the_odds_api_key = st.secrets.get("THE_ODDS_API_KEY", "")
 except Exception:
     pass
-the_odds_api_key = st.sidebar.text_input("The Odds API key", value=the_odds_api_key, type="password")
+
+if not the_odds_api_key:
+    try:
+        the_odds_api_key = st.secrets.get("ODDS_API_KEY", "")
+    except Exception:
+        pass
+
+the_odds_api_key = st.sidebar.text_input(
+    "The Odds API key",
+    value=the_odds_api_key,
+    type="password"
+)
 sport_name = st.sidebar.selectbox("Sport", list(SPORT_KEY_MAP.keys()), index=0)
 regions = st.sidebar.text_input("Regions", value="us")
 bookmakers = st.sidebar.text_input("Bookmakers (optional)", value="")

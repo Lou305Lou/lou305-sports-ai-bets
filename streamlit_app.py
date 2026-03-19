@@ -1,15 +1,15 @@
 
 # ============================================================
-# SPORTS AI BETTING DASHBOARD — DEV MODE V15
-# TIER SYSTEM V2 (RECALIBRATED)
+# SPORTS AI BETTING DASHBOARD — DEV MODE V16
+# MODEL VARIANCE V1
 # ============================================================
 # Real working file
 #
 # What changed:
-# - Recalibrated tier thresholds for the calibrated model
-# - Good plays now reach Tier 2 more appropriately
-# - Bet sizing unlocks 0.5u more often for real playable edges
-# - Correlation Filter V3 smart ranking retained
+# - Adds player-specific and prop-specific variance
+# - Adds matchup dispersion so outputs stop clustering
+# - Creates better separation between elite / good / marginal plays
+# - Keeps Tier System V2 and Correlation Filter V3
 # ============================================================
 
 import math
@@ -20,9 +20,9 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Sports AI Betting Dashboard DEV MODE V15", page_icon="🏀", layout="wide")
-st.title("🏀 Sports AI Betting Dashboard — DEV MODE V15")
-st.caption("TIER SYSTEM V2 (RECALIBRATED)")
+st.set_page_config(page_title="Sports AI Betting Dashboard DEV MODE V16", page_icon="🏀", layout="wide")
+st.title("🏀 Sports AI Betting Dashboard — DEV MODE V16")
+st.caption("MODEL VARIANCE V1")
 
 SPORTS = ["NBA", "WNBA", "NHL", "MLB", "NFL"]
 BOOKS = ["DraftKings", "FanDuel", "BetMGM"]
@@ -66,6 +66,35 @@ TEAM_MATCHUP = {
 SIGMA_MAP = {
     "points": 6.5, "rebounds": 3.0, "assists": 3.2, "3pt_made": 1.6,
     "turnovers": 1.8, "pra": 8.4, "pr": 6.8, "pa": 7.0, "ra": 5.2
+}
+
+# MODEL VARIANCE V1
+PLAYER_VARIANCE = {
+    "Giannis Antetokounmpo": 1.10,
+    "Tyrese Haliburton": 1.08,
+    "LeBron James": 1.04,
+    "Jayson Tatum": 1.00,
+    "Stephen Curry": 1.12,
+}
+
+PROP_VARIANCE = {
+    "points": 1.05,
+    "rebounds": 0.96,
+    "assists": 1.00,
+    "3pt_made": 1.14,
+    "turnovers": 0.92,
+    "pra": 1.08,
+    "pr": 1.03,
+    "pa": 1.01,
+    "ra": 0.98,
+}
+
+TEAM_DISPERSION = {
+    "Bucks": 1.02,
+    "Pacers": 1.10,
+    "Lakers": 1.03,
+    "Celtics": 0.98,
+    "Warriors": 1.08,
 }
 
 def normalize_text(x):
@@ -187,30 +216,64 @@ def sample_bet_log_import_template():
 def apply_auto_projections(df, dev_strength):
     out = df.copy()
     projections = []
+    variance_tags = []
     for _, row in out.iterrows():
         line = safe_float(row["line"])
-        base_multiplier = PLAYER_PROFILE.get(row["player"], {}).get(row["prop_type"], 1.0)
-        pace = TEAM_MATCHUP.get(row["team"], {}).get("pace", 1.0)
-        matchup = TEAM_MATCHUP.get(row["team"], {}).get("matchup", 1.0)
-        bump = (((sum(ord(c) for c in row["player"] + row["prop_type"] + row["team"]) % 9) - 4) * 0.010 * dev_strength)
-        projection = line * base_multiplier * pace * matchup * (1 + bump)
+        player = row["player"]
+        prop_type = row["prop_type"]
+        team = row["team"]
+
+        base_multiplier = PLAYER_PROFILE.get(player, {}).get(prop_type, 1.0)
+        pace = TEAM_MATCHUP.get(team, {}).get("pace", 1.0)
+        matchup = TEAM_MATCHUP.get(team, {}).get("matchup", 1.0)
+
+        player_var = PLAYER_VARIANCE.get(player, 1.0)
+        prop_var = PROP_VARIANCE.get(prop_type, 1.0)
+        team_var = TEAM_DISPERSION.get(team, 1.0)
+
+        deterministic_seed = ((sum(ord(c) for c in player + prop_type + team) % 17) - 8) / 100.0
+        shaped_variance = deterministic_seed * player_var * prop_var * team_var * dev_strength
+
+        projection = line * base_multiplier * pace * matchup * (1 + shaped_variance)
+
         cap = {
-            "points": 4.5, "pra": 5.0, "assists": 3.8, "rebounds": 4.0,
-            "3pt_made": 1.7, "pr": 4.5, "pa": 4.5, "ra": 3.5
-        }.get(row["prop_type"], 4.0)
+            "points": 5.0, "pra": 5.5, "assists": 4.0, "rebounds": 4.2,
+            "3pt_made": 1.9, "pr": 4.8, "pa": 4.8, "ra": 3.8
+        }.get(prop_type, 4.0)
         projection = min(max(projection, line - cap), line + cap)
         projections.append(projection)
+
+        if shaped_variance >= 0.05:
+            variance_tags.append("High-upside profile")
+        elif shaped_variance <= -0.04:
+            variance_tags.append("Lower-volatility profile")
+        else:
+            variance_tags.append("Neutral variance")
     out["projection"] = projections
+    out["variance_note"] = variance_tags
     return out
 
 def calibrated_hit_probability(row):
     line = safe_float(row["line"])
     proj = safe_float(row["projection"])
     sigma = SIGMA_MAP.get(row["prop_type"], 5.5)
-    z = (proj - line) / sigma if sigma > 0 else 0
+
+    # MODEL VARIANCE V1: different props/players get different spread compression
+    player_var = PLAYER_VARIANCE.get(row["player"], 1.0)
+    prop_var = PROP_VARIANCE.get(row["prop_type"], 1.0)
+    team_var = TEAM_DISPERSION.get(row["team"], 1.0)
+
+    sigma_adj = sigma / max(0.85, min(1.18, (player_var * 0.45 + prop_var * 0.35 + team_var * 0.20)))
+    z = (proj - line) / sigma_adj if sigma_adj > 0 else 0
+
     raw = 0.5 * (1 + math.erf(z / math.sqrt(2)))
-    calibrated = 0.50 + (raw - 0.50) * 0.58
-    calibrated = max(0.36, min(0.66, calibrated))
+
+    # variable compression to break clustering
+    compress = 0.52 + ((player_var - 1.0) * 0.10) + ((prop_var - 1.0) * 0.08) + ((team_var - 1.0) * 0.06)
+    compress = max(0.46, min(0.62, compress))
+
+    calibrated = 0.50 + (raw - 0.50) * compress
+    calibrated = max(0.36, min(0.69, calibrated))
     return calibrated if proj > line else 1 - calibrated
 
 def classify_play_tier(row):
@@ -218,11 +281,8 @@ def classify_play_tier(row):
     hitp = safe_float(row["hit_probability"]) * 100
     ev = safe_float(row["expected_value_edge"])
 
-    # RECALIBRATED
-    # Tier 1 stays rare
     if score >= 80 and hitp >= 61 and ev >= 6.5:
         return "Tier 1", "Core play profile"
-    # Tier 2 now matches calibrated outputs better
     if score >= 68 and hitp >= 57 and ev >= 2.5:
         return "Tier 2", "Strong secondary play"
     return "Tier 3", "Watchlist / lower conviction"
@@ -234,12 +294,17 @@ def compute_prop_scores(df):
     out["hit_probability"] = out.apply(calibrated_hit_probability, axis=1)
     out["book_implied_prob"] = out["odds"].apply(implied_prob_american)
     raw_ev = ((out["hit_probability"] - out["book_implied_prob"]) * 100)
-    out["expected_value_edge"] = np.clip(raw_ev, -8, 12).round(2)
+    out["expected_value_edge"] = np.clip(raw_ev, -8, 13).round(2)
+
+    player_var_component = out["player"].map(lambda p: PLAYER_VARIANCE.get(p, 1.0))
+    prop_var_component = out["prop_type"].map(lambda p: PROP_VARIANCE.get(p, 1.0))
 
     score = (
-        np.clip(out["proj_edge"].abs() * 7.5, 0, 32) +
-        np.clip((out["hit_probability"] - 0.50) * 125, 0, 22) +
-        np.clip(out["expected_value_edge"] * 1.7, 0, 20)
+        np.clip(out["proj_edge"].abs() * 7.6, 0, 32) +
+        np.clip((out["hit_probability"] - 0.50) * 130, 0, 24) +
+        np.clip(out["expected_value_edge"] * 1.7, 0, 21) +
+        np.clip((player_var_component - 1.0) * 18, -2, 3) +
+        np.clip((prop_var_component - 1.0) * 14, -2, 3)
     )
     out["edge_score"] = np.clip(score, 0, 100).round(1)
     out["bet_grade"] = out["edge_score"].apply(edge_bucket)
@@ -345,7 +410,6 @@ def apply_correlation_filter_v3(df):
                 group.loc[idx, "exposure_flag"] = f"Light reduction vs top prop: {anchor_prop}"
                 group.loc[idx, "correlation_rank_note"] = "Light reduction"
             else:
-                group.loc[idx, "correlation_penalty"] = 0.0
                 group.loc[idx, "correlation_rank_note"] = "No meaningful overlap"
         parts.append(group)
 
@@ -407,7 +471,7 @@ def apply_bet_sizing(df):
             units = min(units, kelly_cap)
             reasons.append("Kelly cap")
 
-        units = max(0.0, min(1.0, round(units * 20) / 20))  # 0.05 increments
+        units = max(0.0, min(1.0, round(units * 20) / 20))
         if units >= 0.75:
             label = "0.75u Strong"
         elif units >= 0.50:
@@ -457,10 +521,11 @@ def render_top_play_card(row, rank_num):
     <b>Kelly:</b> {row['kelly_fraction']*100:.2f}%
   </div>
   <div style="margin-top:8px;">
-    <b>Correlation:</b> {row['correlation_flag'] if row['correlation_flag'] else 'None'} |
-    <b>Note:</b> {row['correlation_rank_note'] if row['correlation_rank_note'] else 'Top play or no issue'}
+    <b>Variance:</b> {row['variance_note']} |
+    <b>Correlation:</b> {row['correlation_flag'] if row['correlation_flag'] else 'None'}
   </div>
   <div style="margin-top:8px;">
+    <b>Note:</b> {row['correlation_rank_note'] if row['correlation_rank_note'] else 'Top play or no issue'} |
     <b>Exposure:</b> {row['exposure_flag'] if row['exposure_flag'] else 'OK'}
   </div>
 </div>
@@ -622,7 +687,7 @@ def tracker_summary(df):
 # Build live data
 init_tracker_state()
 
-st.sidebar.header("DEV MODE V15")
+st.sidebar.header("DEV MODE V16")
 sport_name = st.sidebar.selectbox("Sport", SPORTS, index=0)
 dev_strength = st.sidebar.slider("Auto projection aggressiveness", 0.50, 1.50, 1.00, 0.05)
 projection_file = st.sidebar.file_uploader("Optional projection CSV override", type=["csv", "xlsx"])
@@ -665,7 +730,7 @@ tab_home, tab_best, tab_tracker, tab_import, tab_templates = st.tabs([
 ])
 
 with tab_home:
-    st.subheader("Tier System V2 audit")
+    st.subheader("Model Variance V1 audit")
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Props Rows", len(props_live))
     c2.metric("Tier 1", int((props_live["play_tier"] == "Tier 1").sum()))
@@ -673,11 +738,11 @@ with tab_home:
     c4.metric("0.5u+", int((props_live["bet_size_units"] >= 0.5).sum()))
     audit = props_shop[[
         "player", "prop_type", "line", "projection", "hit_probability", "expected_value_edge",
-        "edge_score", "play_tier", "bet_size_units", "correlation_flag", "correlation_rank_note"
+        "edge_score", "play_tier", "bet_size_units", "variance_note"
     ]].head(12).copy()
     audit["hit_probability"] = (audit["hit_probability"] * 100).round(1)
     st.dataframe(audit, use_container_width=True)
-    st.info("Tier System V2 lowers the Tier 2 threshold to fit the calibrated model while keeping Tier 1 rare.")
+    st.info("Model Variance V1 adds player, prop, and matchup dispersion so outputs separate more naturally into elite, good, and marginal plays.")
 
 with tab_best:
     st.subheader("Best Bets")
@@ -692,7 +757,7 @@ with tab_best:
             "player", "prop_type", "recommended_side", "line", "odds", "projection",
             "proj_edge", "hit_probability", "expected_value_edge", "edge_score",
             "play_tier", "steam_flag", "bet_size_units", "bet_size_label",
-            "correlation_flag", "correlation_rank_note", "exposure_flag", "bet_size_reason"
+            "variance_note", "correlation_flag", "correlation_rank_note", "bet_size_reason"
         ]].copy()
         show["hit_probability"] = (show["hit_probability"] * 100).round(1)
         st.dataframe(show, use_container_width=True)
@@ -734,7 +799,7 @@ with tab_tracker:
                     "result": st.column_config.SelectboxColumn("result", options=["Open", "Win", "Loss", "Push"]),
                     "notes": st.column_config.TextColumn("notes")
                 },
-                key="grade_editor_v15"
+                key="grade_editor_v16"
             )
             if st.button("Save manual grading"):
                 tracker_update_results(edited[["bet_id", "actual_stat", "result", "notes"]])
@@ -743,7 +808,7 @@ with tab_tracker:
         auto_template = sample_auto_grade_template()
         st.dataframe(auto_template, use_container_width=True)
         st.download_button("Download auto-grade template CSV", auto_template.to_csv(index=False).encode("utf-8"), "auto_grade_template.csv", "text/csv")
-        auto_file = st.file_uploader("Upload stats file for auto-grading", type=["csv", "xlsx"], key="auto_grade_v15")
+        auto_file = st.file_uploader("Upload stats file for auto-grading", type=["csv", "xlsx"], key="auto_grade_v16")
         if auto_file is not None:
             auto_df = load_csv_or_empty(auto_file)
             if not auto_df.empty:
@@ -755,11 +820,11 @@ with tab_tracker:
                     else:
                         st.success(f"Auto-graded {updated} bet(s).")
 
-        st.download_button("Download bet tracker CSV", tracker_df.to_csv(index=False).encode("utf-8"), "bet_tracker_v15.csv", "text/csv")
+        st.download_button("Download bet tracker CSV", tracker_df.to_csv(index=False).encode("utf-8"), "bet_tracker_v16.csv", "text/csv")
         xlsx_buffer = BytesIO()
         with pd.ExcelWriter(xlsx_buffer, engine="openpyxl") as writer:
             tracker_df.to_excel(writer, sheet_name="Bets", index=False)
-        st.download_button("Download bet tracker Excel", xlsx_buffer.getvalue(), "bet_tracker_v15.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.download_button("Download bet tracker Excel", xlsx_buffer.getvalue(), "bet_tracker_v16.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 with tab_import:
     st.subheader("CSV Bet Log Import")
@@ -767,7 +832,7 @@ with tab_import:
     st.dataframe(template_df, use_container_width=True)
     st.download_button("Download bet log import template CSV", template_df.to_csv(index=False).encode("utf-8"), "bet_log_import_template.csv", "text/csv")
 
-    import_file = st.file_uploader("Upload historical bet log CSV or Excel", type=["csv", "xlsx"], key="bet_log_import_v15")
+    import_file = st.file_uploader("Upload historical bet log CSV or Excel", type=["csv", "xlsx"], key="bet_log_import_v16")
     replace_existing = st.checkbox("Replace existing tracker with imported file", value=False)
     if import_file is not None:
         import_df = load_csv_or_empty(import_file)

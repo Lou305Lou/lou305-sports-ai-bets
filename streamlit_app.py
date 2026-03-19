@@ -1,15 +1,15 @@
 
 # ============================================================
-# SPORTS AI BETTING DASHBOARD — DEV MODE V16
-# MODEL VARIANCE V1
+# SPORTS AI BETTING DASHBOARD — DEV MODE V17
+# EV CURVE V1
 # ============================================================
 # Real working file
 #
 # What changed:
-# - Adds player-specific and prop-specific variance
-# - Adds matchup dispersion so outputs stop clustering
-# - Creates better separation between elite / good / marginal plays
-# - Keeps Tier System V2 and Correlation Filter V3
+# - Replaces flat EV cap behavior with a curved EV model
+# - Better separates strong plays from merely good plays
+# - Makes 0.75u plays more meaningful
+# - Keeps Model Variance V1, Tier System V2, Correlation Filter V3
 # ============================================================
 
 import math
@@ -20,9 +20,9 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Sports AI Betting Dashboard DEV MODE V16", page_icon="🏀", layout="wide")
-st.title("🏀 Sports AI Betting Dashboard — DEV MODE V16")
-st.caption("MODEL VARIANCE V1")
+st.set_page_config(page_title="Sports AI Betting Dashboard DEV MODE V17", page_icon="🏀", layout="wide")
+st.title("🏀 Sports AI Betting Dashboard — DEV MODE V17")
+st.caption("EV CURVE V1")
 
 SPORTS = ["NBA", "WNBA", "NHL", "MLB", "NFL"]
 BOOKS = ["DraftKings", "FanDuel", "BetMGM"]
@@ -68,7 +68,6 @@ SIGMA_MAP = {
     "turnovers": 1.8, "pra": 8.4, "pr": 6.8, "pa": 7.0, "ra": 5.2
 }
 
-# MODEL VARIANCE V1
 PLAYER_VARIANCE = {
     "Giannis Antetokounmpo": 1.10,
     "Tyrese Haliburton": 1.08,
@@ -258,7 +257,6 @@ def calibrated_hit_probability(row):
     proj = safe_float(row["projection"])
     sigma = SIGMA_MAP.get(row["prop_type"], 5.5)
 
-    # MODEL VARIANCE V1: different props/players get different spread compression
     player_var = PLAYER_VARIANCE.get(row["player"], 1.0)
     prop_var = PROP_VARIANCE.get(row["prop_type"], 1.0)
     team_var = TEAM_DISPERSION.get(row["team"], 1.0)
@@ -268,7 +266,6 @@ def calibrated_hit_probability(row):
 
     raw = 0.5 * (1 + math.erf(z / math.sqrt(2)))
 
-    # variable compression to break clustering
     compress = 0.52 + ((player_var - 1.0) * 0.10) + ((prop_var - 1.0) * 0.08) + ((team_var - 1.0) * 0.06)
     compress = max(0.46, min(0.62, compress))
 
@@ -276,12 +273,49 @@ def calibrated_hit_probability(row):
     calibrated = max(0.36, min(0.69, calibrated))
     return calibrated if proj > line else 1 - calibrated
 
+# EV CURVE V1
+def curved_ev_edge(prob, implied_prob, edge_abs, prop_type, variance_note):
+    prob = safe_float(prob)
+    implied_prob = safe_float(implied_prob)
+    edge_abs = safe_float(edge_abs)
+    if pd.isna(prob) or pd.isna(implied_prob):
+        return np.nan
+
+    raw_gap = (prob - implied_prob) * 100.0
+
+    edge_factor = 1.0 + min(0.30, max(0.0, edge_abs) / 20.0)
+    prop_factor = {
+        "points": 1.04,
+        "rebounds": 0.96,
+        "assists": 0.99,
+        "3pt_made": 1.08,
+        "turnovers": 0.94,
+        "pra": 1.03,
+        "pr": 1.01,
+        "pa": 1.00,
+        "ra": 0.97,
+    }.get(prop_type, 1.0)
+    variance_factor = {
+        "High-upside profile": 1.05,
+        "Neutral variance": 1.00,
+        "Lower-volatility profile": 0.95,
+    }.get(str(variance_note), 1.0)
+
+    shaped_gap = raw_gap * edge_factor * prop_factor * variance_factor
+
+    if shaped_gap >= 0:
+        curved = 13.5 * math.tanh(shaped_gap / 11.5)
+    else:
+        curved = -8.0 * math.tanh(abs(shaped_gap) / 8.5)
+
+    return round(curved, 2)
+
 def classify_play_tier(row):
     score = safe_float(row["edge_score"])
     hitp = safe_float(row["hit_probability"]) * 100
     ev = safe_float(row["expected_value_edge"])
 
-    if score >= 80 and hitp >= 61 and ev >= 6.5:
+    if score >= 81 and hitp >= 61 and ev >= 6.2:
         return "Tier 1", "Core play profile"
     if score >= 68 and hitp >= 57 and ev >= 2.5:
         return "Tier 2", "Strong secondary play"
@@ -293,16 +327,25 @@ def compute_prop_scores(df):
     out["recommended_side"] = np.where(out["projection"] > out["line"], "Over", "Under")
     out["hit_probability"] = out.apply(calibrated_hit_probability, axis=1)
     out["book_implied_prob"] = out["odds"].apply(implied_prob_american)
-    raw_ev = ((out["hit_probability"] - out["book_implied_prob"]) * 100)
-    out["expected_value_edge"] = np.clip(raw_ev, -8, 13).round(2)
+
+    out["expected_value_edge"] = out.apply(
+        lambda r: curved_ev_edge(
+            r["hit_probability"],
+            r["book_implied_prob"],
+            abs(safe_float(r["proj_edge"])),
+            r["prop_type"],
+            r.get("variance_note", "Neutral variance")
+        ),
+        axis=1
+    )
 
     player_var_component = out["player"].map(lambda p: PLAYER_VARIANCE.get(p, 1.0))
     prop_var_component = out["prop_type"].map(lambda p: PROP_VARIANCE.get(p, 1.0))
 
     score = (
-        np.clip(out["proj_edge"].abs() * 7.6, 0, 32) +
-        np.clip((out["hit_probability"] - 0.50) * 130, 0, 24) +
-        np.clip(out["expected_value_edge"] * 1.7, 0, 21) +
+        np.clip(out["proj_edge"].abs() * 7.4, 0, 31) +
+        np.clip((out["hit_probability"] - 0.50) * 126, 0, 24) +
+        np.clip(out["expected_value_edge"] * 1.55, -6, 20) +
         np.clip((player_var_component - 1.0) * 18, -2, 3) +
         np.clip((prop_var_component - 1.0) * 14, -2, 3)
     )
@@ -444,7 +487,7 @@ def base_bet_size(row):
         units += 0.25
         reasons.append("Steam boost")
 
-    if safe_float(row["expected_value_edge"]) >= 7.0 and safe_float(row["edge_score"]) >= 76:
+    if safe_float(row["expected_value_edge"]) >= 7.5 and safe_float(row["edge_score"]) >= 77:
         units += 0.25
         reasons.append("High-quality boost")
 
@@ -687,7 +730,7 @@ def tracker_summary(df):
 # Build live data
 init_tracker_state()
 
-st.sidebar.header("DEV MODE V16")
+st.sidebar.header("DEV MODE V17")
 sport_name = st.sidebar.selectbox("Sport", SPORTS, index=0)
 dev_strength = st.sidebar.slider("Auto projection aggressiveness", 0.50, 1.50, 1.00, 0.05)
 projection_file = st.sidebar.file_uploader("Optional projection CSV override", type=["csv", "xlsx"])
@@ -730,19 +773,19 @@ tab_home, tab_best, tab_tracker, tab_import, tab_templates = st.tabs([
 ])
 
 with tab_home:
-    st.subheader("Model Variance V1 audit")
+    st.subheader("EV Curve V1 audit")
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Props Rows", len(props_live))
     c2.metric("Tier 1", int((props_live["play_tier"] == "Tier 1").sum()))
     c3.metric("Tier 2", int((props_live["play_tier"] == "Tier 2").sum()))
-    c4.metric("0.5u+", int((props_live["bet_size_units"] >= 0.5).sum()))
+    c4.metric("0.75u", int((props_live["bet_size_units"] >= 0.75).sum()))
     audit = props_shop[[
         "player", "prop_type", "line", "projection", "hit_probability", "expected_value_edge",
         "edge_score", "play_tier", "bet_size_units", "variance_note"
     ]].head(12).copy()
     audit["hit_probability"] = (audit["hit_probability"] * 100).round(1)
     st.dataframe(audit, use_container_width=True)
-    st.info("Model Variance V1 adds player, prop, and matchup dispersion so outputs separate more naturally into elite, good, and marginal plays.")
+    st.info("EV Curve V1 uses a nonlinear curve instead of a flat ceiling so top plays separate more cleanly and repeated EV plateaus show up less often.")
 
 with tab_best:
     st.subheader("Best Bets")
@@ -799,7 +842,7 @@ with tab_tracker:
                     "result": st.column_config.SelectboxColumn("result", options=["Open", "Win", "Loss", "Push"]),
                     "notes": st.column_config.TextColumn("notes")
                 },
-                key="grade_editor_v16"
+                key="grade_editor_v17"
             )
             if st.button("Save manual grading"):
                 tracker_update_results(edited[["bet_id", "actual_stat", "result", "notes"]])
@@ -808,7 +851,7 @@ with tab_tracker:
         auto_template = sample_auto_grade_template()
         st.dataframe(auto_template, use_container_width=True)
         st.download_button("Download auto-grade template CSV", auto_template.to_csv(index=False).encode("utf-8"), "auto_grade_template.csv", "text/csv")
-        auto_file = st.file_uploader("Upload stats file for auto-grading", type=["csv", "xlsx"], key="auto_grade_v16")
+        auto_file = st.file_uploader("Upload stats file for auto-grading", type=["csv", "xlsx"], key="auto_grade_v17")
         if auto_file is not None:
             auto_df = load_csv_or_empty(auto_file)
             if not auto_df.empty:
@@ -820,11 +863,11 @@ with tab_tracker:
                     else:
                         st.success(f"Auto-graded {updated} bet(s).")
 
-        st.download_button("Download bet tracker CSV", tracker_df.to_csv(index=False).encode("utf-8"), "bet_tracker_v16.csv", "text/csv")
+        st.download_button("Download bet tracker CSV", tracker_df.to_csv(index=False).encode("utf-8"), "bet_tracker_v17.csv", "text/csv")
         xlsx_buffer = BytesIO()
         with pd.ExcelWriter(xlsx_buffer, engine="openpyxl") as writer:
             tracker_df.to_excel(writer, sheet_name="Bets", index=False)
-        st.download_button("Download bet tracker Excel", xlsx_buffer.getvalue(), "bet_tracker_v16.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.download_button("Download bet tracker Excel", xlsx_buffer.getvalue(), "bet_tracker_v17.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 with tab_import:
     st.subheader("CSV Bet Log Import")
@@ -832,7 +875,7 @@ with tab_import:
     st.dataframe(template_df, use_container_width=True)
     st.download_button("Download bet log import template CSV", template_df.to_csv(index=False).encode("utf-8"), "bet_log_import_template.csv", "text/csv")
 
-    import_file = st.file_uploader("Upload historical bet log CSV or Excel", type=["csv", "xlsx"], key="bet_log_import_v16")
+    import_file = st.file_uploader("Upload historical bet log CSV or Excel", type=["csv", "xlsx"], key="bet_log_import_v17")
     replace_existing = st.checkbox("Replace existing tracker with imported file", value=False)
     if import_file is not None:
         import_df = load_csv_or_empty(import_file)

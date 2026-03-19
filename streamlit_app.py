@@ -1,13 +1,14 @@
 
 # ============================================================
-# SPORTS AI BETTING DASHBOARD — DEV MODE V3 FULL SHARP
+# SPORTS AI BETTING DASHBOARD — DEV MODE V4 SUPER SHARP
 # ============================================================
-# FULL V3 SHARP INTEGRATION
+# SUPER SHARP V1
 #
 # INCLUDED FEATURES
 # - DEV MODE sample odds and props
 # - AUTO PROJECTIONS V1
 # - SHARP MODE V1
+# - SUPER SHARP V1
 # - Best Bets board
 # - Prop Sections
 # - Arbitrage tab
@@ -23,9 +24,9 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Sports AI Betting Dashboard DEV MODE V3", page_icon="🏀", layout="wide")
-st.title("🏀 Sports AI Betting Dashboard — DEV MODE V3")
-st.caption("FULL V3 SHARP INTEGRATION • Auto Projections + Sharp Mode + Full Props Engine")
+st.set_page_config(page_title="Sports AI Betting Dashboard DEV MODE V4", page_icon="🏀", layout="wide")
+st.title("🏀 Sports AI Betting Dashboard — DEV MODE V4")
+st.caption("SUPER SHARP V1 • Auto Projections + Sharp Mode + Score Compression")
 
 # ============================================================
 # STEP 1 — CORE SETTINGS
@@ -71,7 +72,7 @@ PLAYER_PROFILE = {
     "Tyrese Haliburton": {"assists": 1.20, "points": 0.97, "3pt_made": 1.00, "turnovers": 1.06, "pra": 1.10},
     "Tyrese Maxey": {"points": 1.08, "3pt_made": 1.10, "assists": 0.96},
     "Paolo Banchero": {"points": 1.04, "rebounds": 1.05, "assists": 1.00, "turnovers": 1.03},
-    "Stephen Curry": {"points": 1.12, "3pt_made": 1.22, "assists": 0.92, "turnovers": 1.04},
+    "Stephen Curry": {"points": 1.12, "3pt_made": 1.22, "assists": 0.92, "turnovers": 1.04, "pr": 1.08},
     "LeBron James": {"points": 1.02, "rebounds": 1.03, "assists": 1.14, "3pt_made": 0.96, "pra": 1.08},
 }
 
@@ -89,10 +90,11 @@ TEAM_MATCHUP = {
 }
 
 # ============================================================
-# STEP 2 — SHARP MODE SETTINGS
+# STEP 2 — SHARP / SUPER SHARP SETTINGS
 # ============================================================
 
 SHARP_MODE = True
+SUPER_SHARP_MODE = True
 
 MAX_EDGE_CAP = {
     "points": 5.5,
@@ -120,6 +122,11 @@ EDGE_SOFT_CAP = {
     "pr": 4.5,
     "pa": 4.5,
     "ra": 3.5,
+}
+
+SUPER_SHARP_HIT_CLAMP = {
+    "min": 0.07,
+    "max": 0.74,
 }
 
 # ============================================================
@@ -420,7 +427,7 @@ def auto_projection_row(row, dev_strength: float):
         mins = 35.0 if row["is_starter"] >= 1 else 24.0
 
     player_hash = (sum(ord(c) for c in player + prop_type + team) % 9) - 4
-    deterministic_bump = player_hash * 0.015 * dev_strength
+    deterministic_bump = player_hash * 0.012 * dev_strength
     projection = line * base_multiplier * pace * matchup * segment_multiplier * (1 + deterministic_bump)
 
     if normalize_text(row.get("injury_status", "")) in ["questionable", "doubtful"]:
@@ -441,21 +448,27 @@ def auto_projection_row(row, dev_strength: float):
             dampened = soft_cap + (excess * 0.4)
             projection = line + dampened if edge > 0 else line - dampened
 
-    recent_avg = projection * (0.96 + ((sum(ord(c) for c in player) % 5) * 0.015))
-    return projection, mins, recent_avg, pace, matchup
+    if SUPER_SHARP_MODE and not pd.isna(line):
+        super_cap = MAX_EDGE_CAP.get(prop_type, 5.0) - 0.5
+        projection = min(projection, line + super_cap)
+        projection = max(projection, line - super_cap)
+
+    recent_avg = projection * (0.97 + ((sum(ord(c) for c in player) % 4) * 0.01))
+    return projection, mins, recent_avg, pace, matchup, base_multiplier
 
 def apply_auto_projections(props_df, dev_strength: float):
     if props_df.empty:
         return props_df.copy()
     out = props_df.copy()
     generated = out.apply(lambda r: auto_projection_row(r, dev_strength), axis=1, result_type="expand")
-    generated.columns = ["auto_projection", "auto_minutes", "auto_recent_avg", "auto_pace", "auto_matchup"]
+    generated.columns = ["auto_projection", "auto_minutes", "auto_recent_avg", "auto_pace", "auto_matchup", "driver_multiplier"]
 
     out["projection"] = np.where(pd.isna(out["projection"]), generated["auto_projection"], out["projection"])
     out["minutes_projection"] = np.where(pd.isna(out["minutes_projection"]), generated["auto_minutes"], out["minutes_projection"])
     out["recent_avg"] = np.where(pd.isna(out["recent_avg"]), generated["auto_recent_avg"], out["recent_avg"])
     out["pace_factor"] = np.where(pd.isna(out["pace_factor"]), generated["auto_pace"], out["pace_factor"])
     out["matchup_factor"] = np.where(pd.isna(out["matchup_factor"]), generated["auto_matchup"], out["matchup_factor"])
+    out["driver_multiplier"] = generated["driver_multiplier"]
     return out
 
 # ============================================================
@@ -498,6 +511,8 @@ def hit_probability_from_edge(row):
 
     if SHARP_MODE:
         prob_over = max(0.05, min(0.85, prob_over))
+    if SUPER_SHARP_MODE:
+        prob_over = max(SUPER_SHARP_HIT_CLAMP["min"], min(SUPER_SHARP_HIT_CLAMP["max"], prob_over))
 
     return max(0.01, min(0.99, prob_over))
 
@@ -523,7 +538,7 @@ def confidence_status(row):
     return "🟡 Watch"
 
 # ============================================================
-# STEP 8 — SHARP MODE SCORING
+# STEP 8 — SUPER SHARP SCORING
 # ============================================================
 
 def compute_prop_scores(df):
@@ -539,6 +554,9 @@ def compute_prop_scores(df):
     out["is_starter"] = np.where(pd.isna(out["is_starter"]), 1, out["is_starter"])
     out["starter_confirmed"] = np.where(pd.isna(out["starter_confirmed"]), 1, out["starter_confirmed"])
 
+    if "driver_multiplier" not in out.columns:
+        out["driver_multiplier"] = 1.0
+
     out["proj_edge"] = out["projection"] - out["line"]
     out["proj_edge_abs"] = out["proj_edge"].abs()
     out["recommended_side"] = np.where(out["projection"] > out["line"], "Over", "Under")
@@ -549,23 +567,23 @@ def compute_prop_scores(df):
     out["model_fair_odds"] = out["hit_probability"].apply(prob_to_american)
     out["expected_value_edge"] = ((out["hit_probability"] - out["book_implied_prob"]) * 100).round(2)
 
-    minutes_score = np.where(out["game_segment"] == "1q", np.clip((out["minutes_projection"] / 12) * 16, 0, 16), np.clip((out["minutes_projection"] / 36) * 18, 0, 18))
-    edge_score_component = np.clip(out["proj_edge_abs"] * 5.5, 0, 22)
+    minutes_score = np.where(out["game_segment"] == "1q", np.clip((out["minutes_projection"] / 12) * 15, 0, 15), np.clip((out["minutes_projection"] / 36) * 17, 0, 17))
+    edge_score_component = np.clip(out["proj_edge_abs"] * 5.0, 0, 20)
     recent_gap = (out["recent_avg"] - out["line"]).abs()
-    recent_score = np.clip(recent_gap * 2.0, 0, 12)
+    recent_score = np.clip(recent_gap * 1.8, 0, 10)
     starter_score = np.where(out["is_starter"] >= 1, 8, 0)
-    confirmed_bonus = np.where(out["starter_confirmed"] >= 1, 6, 0)
-    pace_score = np.clip((out["pace_factor"] - 1.0) * 100, -4, 10)
-    matchup_score = np.clip((out["matchup_factor"] - 1.0) * 100, -4, 12)
-    probability_score = np.clip((out["hit_probability"] - 0.50) * 100, 0, 14)
-    ev_score = np.clip(out["expected_value_edge"], 0, 10)
+    confirmed_bonus = np.where(out["starter_confirmed"] >= 1, 5, 0)
+    pace_score = np.clip((out["pace_factor"] - 1.0) * 100, -3, 8)
+    matchup_score = np.clip((out["matchup_factor"] - 1.0) * 100, -3, 10)
+    probability_score = np.clip((out["hit_probability"] - 0.50) * 85, 0, 11)
+    ev_score = np.clip(out["expected_value_edge"] * 0.6, 0, 8)
     price_score = np.select(
         [
             (out["odds"] >= -125) & (out["odds"] <= 140),
             (out["odds"] >= -150) & (out["odds"] < -125),
             (out["odds"] > 140) & (out["odds"] <= 200),
         ],
-        [10, 7, 8],
+        [9, 6, 7],
         default=4,
     )
     caution_penalty = np.select(
@@ -578,12 +596,15 @@ def compute_prop_scores(df):
         default=0,
     )
 
+    extreme_penalty = 0
     if SHARP_MODE:
         extreme_penalty = np.where(out["proj_edge_abs"] > 6, 6, np.where(out["proj_edge_abs"] > 5, 3, 0))
-    else:
-        extreme_penalty = 0
+    if SUPER_SHARP_MODE:
+        extreme_penalty = extreme_penalty + np.where(out["proj_edge_abs"] > 4.5, 2, 0)
 
-    out["edge_score"] = (
+    multiplier_penalty = np.where(out["driver_multiplier"] > 1.14, 3, np.where(out["driver_multiplier"] > 1.10, 1.5, 0)) if SUPER_SHARP_MODE else 0
+
+    raw_score = (
         minutes_score
         + edge_score_component
         + recent_score
@@ -596,7 +617,15 @@ def compute_prop_scores(df):
         + ev_score
         - caution_penalty
         - extreme_penalty
-    ).round(1)
+        - multiplier_penalty
+    )
+
+    if SUPER_SHARP_MODE:
+        compressed = np.where(raw_score > 88, 88 + (raw_score - 88) * 0.35, raw_score)
+        compressed = np.where(compressed > 94, 94 + (compressed - 94) * 0.20, compressed)
+        out["edge_score"] = compressed.round(1)
+    else:
+        out["edge_score"] = raw_score.round(1)
 
     out["edge_score"] = np.clip(out["edge_score"], 0, 100)
     out["bet_grade"] = out["edge_score"].apply(edge_bucket)
@@ -685,8 +714,8 @@ def render_top_play_card(row, rank_num):
 # STEP 10 — SIDEBAR CONTROLS
 # ============================================================
 
-st.sidebar.header("DEV MODE V3")
-st.sidebar.success("FULL V3 SHARP INTEGRATION enabled.")
+st.sidebar.header("DEV MODE V4")
+st.sidebar.success("SUPER SHARP V1 enabled.")
 sport_name = st.sidebar.selectbox("Sport", SPORTS, index=0)
 best_shop_only = st.sidebar.checkbox("Best line shop only", value=True)
 projection_mode = st.sidebar.selectbox("Projection source", ["Auto Projections V1", "Upload CSV Override"], index=0)
@@ -736,9 +765,10 @@ props_shop = best_line_shop(props_live)
 st.session_state["latest_props_live"] = props_live.copy()
 
 source_status = pd.DataFrame([
-    ["Mode", "DEV MODE V3", "Active"],
+    ["Mode", "DEV MODE V4", "Active"],
     ["Projection Source", projection_mode, "Active"],
     ["Sharp Mode", "ON" if SHARP_MODE else "OFF", "Active"],
+    ["Super Sharp", "ON" if SUPER_SHARP_MODE else "OFF", "Active"],
     ["Odds Rows", len(odds_df), "Sample"],
     ["Props Rows", len(props_live), "Sample"],
     ["Books", props_live["book"].nunique() if not props_live.empty else 0, "Sample"],
@@ -754,14 +784,14 @@ tab_home, tab_best, tab_sections, tab_arb, tab_inj, tab_template = st.tabs([
 ])
 
 with tab_home:
-    st.subheader("DEV MODE V3 Home")
+    st.subheader("DEV MODE V4 Home")
     c1, c2, c3 = st.columns(3)
     c1.metric("Odds Rows", len(odds_df))
     c2.metric("Props Rows", len(props_live))
     c3.metric("Books", props_live["book"].nunique() if not props_live.empty else 0)
     st.markdown("### Feed status")
     st.dataframe(source_status, use_container_width=True)
-    st.info("This build uses auto projections plus Sharp Mode to create more realistic edges.")
+    st.info("This build uses Super Sharp score compression and hit-rate control for more realistic top plays.")
 
 with tab_best:
     st.subheader("Auto Best Bets Board")
@@ -917,4 +947,3 @@ with tab_template:
     st.download_button("Download projection template CSV", csv_bytes, "full_props_projection_template.csv", "text/csv")
     st.write("Required columns: player, prop_type, game_segment, projection")
     st.write("Recommended columns: minutes_projection, recent_avg, pace_factor, matchup_factor, team")
-

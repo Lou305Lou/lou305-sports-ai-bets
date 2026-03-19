@@ -1997,14 +1997,14 @@ scan_button = st.button("Scan Live Odds", type="primary")
 st.info("The app only scans when you press the button. No automatic refresh is running.")
 
 # -----------------------------
-# SCAN
-# -----------------------------if scan_button:
+# SCAN BUTTON LOGIC (CLEAN)
+# -----------------------------
+if scan_button:
     with st.spinner("Scanning live odds..."):
-        filtered_events = []
-
         try:
             raw_events = fetch_odds(sport_key)
 
+            # Filter sportsbooks
             if selected_books:
                 filtered_events = filter_events_by_books(raw_events, selected_books)
             else:
@@ -2017,6 +2017,7 @@ st.info("The app only scans when you press the button. No automatic refresh is r
             mid_df = pd.DataFrame()
             results = []
 
+            # Arbitrage
             if show_arbs:
                 arb_df = detect_arbitrage(
                     filtered_events,
@@ -2028,6 +2029,7 @@ st.info("The app only scans when you press the button. No automatic refresh is r
                 if not arb_df.empty:
                     arb_df = arb_df.sort_values(by="score", ascending=False)
 
+            # Middles
             if show_middles:
                 raw_mid_df = detect_spread_middles(
                     filtered_events,
@@ -2043,52 +2045,37 @@ st.info("The app only scans when you press the button. No automatic refresh is r
                 mid_df = raw_mid_df.copy()
 
                 if not mid_df.empty and middle_focus_mode:
-                    mid_df = mid_df[mid_df["middle_strength"].isin(["Medium", "Strong"])].copy()
+                    mid_df = mid_df[mid_df["middle_strength"].isin(["Medium", "Strong"])]
 
                 if not mid_df.empty:
-                    mid_df["strength_rank"] = mid_df["middle_strength"].map({
-                        "Strong": 3,
-                        "Medium": 2,
-                        "Weak": 1
-                    })
+                    mid_df["rank"] = mid_df["middle_strength"].map({"Strong": 3, "Medium": 2, "Weak": 1})
                     mid_df = mid_df.sort_values(
-                        by=["strength_rank", "middle_gap", "score"],
+                        by=["rank", "middle_gap", "score"],
                         ascending=[False, False, False]
-                    ).drop(columns=["strength_rank"])
+                    ).drop(columns=["rank"])
 
             if not arb_df.empty:
                 results.append(arb_df)
-
             if not mid_df.empty:
                 results.append(mid_df)
 
             final_df = pd.concat(results, ignore_index=True) if results else pd.DataFrame()
-            distribution_df = build_middle_distribution(raw_mid_df)
 
-            final_df = apply_actual_plays_filter(
-                final_df,
-                actual_plays_only=actual_plays_only,
-                actual_middle_min_gap=actual_middle_min_gap,
-                actual_middle_min_score=actual_middle_min_score,
-                actual_arb_min_profit_pct=actual_arb_min_profit_pct,
-                actual_arb_min_profit_dollars=actual_arb_min_profit_dollars,
-            )
+            filtered_mid_df = final_df[final_df["type"] == "Middle"] if not final_df.empty else pd.DataFrame()
+            filtered_arb_df = final_df[final_df["type"] == "Arbitrage"] if not final_df.empty else pd.DataFrame()
 
-            filtered_mid_df = final_df[final_df["type"] == "Middle"].copy() if not final_df.empty else pd.DataFrame()
-            filtered_arb_df = final_df[final_df["type"] == "Arbitrage"].copy() if not final_df.empty else pd.DataFrame()
-
+            # Save to session
             st.session_state.scan_complete = True
             st.session_state.final_df = final_df
             st.session_state.arb_df = filtered_arb_df
             st.session_state.mid_df = filtered_mid_df
             st.session_state.raw_mid_df = raw_mid_df
-            st.session_state.distribution_df = distribution_df
             st.session_state.raw_events_count = len(raw_events)
             st.session_state.raw_books_count = raw_books_count
             st.session_state.latest_filtered_events = filtered_events
             st.session_state.latest_sport_key = sport_key
 
-            # AUTO SAVE AI PICKS
+            # AUTO SAVE AI PICKS (V8)
             updated_df, auto_saved, duplicates = auto_save_ai_picks_to_v8(
                 filtered_events,
                 sport_key,

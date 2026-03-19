@@ -2156,11 +2156,11 @@ with tab1:
             m3.metric("Middle Rows Shown", middle_count)
             m4.metric("Best Score", best_score)
 
-           m5, m6, m7, m8 = st.columns(4)
-m5.metric("Total Arb Profit ($)", round(arb_profit_total, 2))
-m6.metric("Kelly Mode", kelly_mode)
-m7.metric("AI Picks Auto-Saved", st.session_state.auto_saved_ai_count)
-m8.metric("Duplicates Skipped", st.session_state.duplicate_ai_skipped_count)
+                       m5, m6, m7, m8 = st.columns(4)
+            m5.metric("Total Arb Profit ($)", round(arb_profit_total, 2))
+            m6.metric("Kelly Mode", kelly_mode)
+            m7.metric("AI Picks Auto-Saved", st.session_state.auto_saved_ai_count)
+            m8.metric("Duplicates Skipped", st.session_state.duplicate_ai_skipped_count)
 
             if selected_books:
                 chosen_names = [

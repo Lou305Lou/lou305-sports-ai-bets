@@ -2,6 +2,9 @@
 import streamlit as st
 import pandas as pd
 import requests
+import re
+import json
+import unicodedata
 from datetime import datetime
 
 st.set_page_config(page_title="Sports AI Betting Dashboard", layout="wide")
@@ -1167,6 +1170,69 @@ PROP_MARKET_MAP = {
 }
 
 
+def normalize_player_name(name):
+    if not name:
+        return ""
+    text = unicodedata.normalize("NFKD", str(name)).encode("ascii", "ignore").decode("ascii")
+    text = re.sub(r"\b(jr|sr|ii|iii|iv|v)\.?$", "", text.strip(), flags=re.IGNORECASE)
+    text = re.sub(r"[^A-Za-z'\- ]", " ", text)
+    text = re.sub(r"\s+", " ", text).strip().lower()
+    return text
+
+
+def fetch_nba_starters_today():
+    """Best-effort starter pull from NBA.com's Today's Lineups page.
+    Returns a set of normalized player names. If parsing fails, returns an empty set.
+    """
+    url = "https://www.nba.com/players/todays-lineups"
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://www.nba.com/",
+    }
+    names = set()
+    try:
+        resp = requests.get(url, headers=headers, timeout=20)
+        resp.raise_for_status()
+        html = resp.text
+
+        patterns = [
+            r'\"displayName\"\s*:\s*\"([^\"]+)\"',
+            r'\"playerName\"\s*:\s*\"([^\"]+)\"',
+            r'\"personName\"\s*:\s*\"([^\"]+)\"',
+            r'\"name\"\s*:\s*\"([^\"]+)\"',
+        ]
+        for pat in patterns:
+            for nm in re.findall(pat, html):
+                norm = normalize_player_name(nm)
+                if len(norm.split()) >= 2:
+                    names.add(norm)
+
+        # Best-effort HTML table parse fallback
+        try:
+            tables = pd.read_html(html)
+            for tbl in tables:
+                for col in tbl.columns:
+                    if isinstance(col, str) and any(k in col.lower() for k in ["starter", "player", "lineup"]):
+                        for val in tbl[col].astype(str).tolist():
+                            norm = normalize_player_name(val)
+                            if len(norm.split()) >= 2:
+                                names.add(norm)
+        except Exception:
+            pass
+
+        # Keep only realistic basketball names (2-4 tokens)
+        cleaned = set()
+        for nm in names:
+            toks = nm.split()
+            if 2 <= len(toks) <= 4 and all(len(t) > 1 for t in toks):
+                cleaned.add(nm)
+        return cleaned
+    except Exception:
+        return set()
+
+
 def fetch_event_prop_odds(event_id, markets, bookmakers=None, regions="us"):
     if not API_KEY:
         raise Exception("Missing ODDS_API_KEY in Streamlit secrets.")
@@ -1186,8 +1252,9 @@ def fetch_event_prop_odds(event_id, markets, bookmakers=None, regions="us"):
     return response.json()
 
 
-def parse_nba_props_from_events(events, market_keys, bookmakers=None, odds_min=-300, odds_max=200, player_search=""):
+def parse_nba_props_from_events(events, market_keys, bookmakers=None, odds_min=-300, odds_max=200, player_search="", starters_only=False, starters_set=None, over_only=False):
     rows = []
+    starters_set = starters_set or set()
     for event in events:
         event_id = event.get("id")
         if not event_id:
@@ -1215,13 +1282,23 @@ def parse_nba_props_from_events(events, market_keys, bookmakers=None, odds_min=-
                         continue
                     if odds_val < odds_min or odds_val > odds_max:
                         continue
+                    if over_only and str(side).lower() != "over":
+                        continue
                     if player_search and player_search.lower() not in player.lower():
                         continue
+
+                    player_norm = normalize_player_name(player)
+                    starter_confirmed = player_norm in starters_set if starters_set else False
+                    if starters_only and not starter_confirmed:
+                        continue
+
                     rows.append({
                         "event_id": event_id,
                         "game": game,
                         "commence_time": commence_time,
                         "player": player,
+                        "player_norm": player_norm,
+                        "starter_confirmed": starter_confirmed,
                         "market_key": market_key,
                         "market_label": next((k for k, v in PROP_MARKET_MAP.items() if v == market_key), market_key),
                         "side": side,
@@ -1248,8 +1325,10 @@ def score_nba_props(prop_df):
         best_prob = implied_prob_from_american(best_row["odds"])
         edge = (avg_prob - (best_prob or 0)) * 100
         support_boost = min(books, 8) * 1.5
-        confidence = clamp(round((avg_prob * 100) + support_boost + max(edge, 0) * 3.0, 1), 50, 95)
-        score = round(confidence + max(edge, 0) * 4.0, 1)
+        starter_confirmed = bool(grp["starter_confirmed"].fillna(False).any()) if "starter_confirmed" in grp.columns else False
+        starter_boost = 6.0 if starter_confirmed else 0.0
+        confidence = clamp(round((avg_prob * 100) + support_boost + max(edge, 0) * 3.0 + starter_boost, 1), 50, 95)
+        score = round(confidence + max(edge, 0) * 4.0 + starter_boost, 1)
         grouped_rows.append({
             "event_id": event_id,
             "game": game,
@@ -1261,6 +1340,7 @@ def score_nba_props(prop_df):
             "best_book": best_row["book"],
             "best_odds": int(best_row["odds"]),
             "books": int(books),
+            "starter_confirmed": starter_confirmed,
             "avg_implied_prob": round(avg_prob * 100, 1),
             "edge_vs_consensus": round(edge, 2),
             "confidence": confidence,
@@ -1283,7 +1363,7 @@ def create_prop_tracker_row(row):
         "confidence": row.get("confidence", 0),
         "grade": grade_play(row.get("confidence", 0)),
         "engine_score": row.get("score", 0),
-        "supporters": f"Books:{row.get('books', 0)}",
+        "supporters": f"Books:{row.get('books', 0)} | Starter:{'Yes' if row.get('starter_confirmed', False) else 'No'}",
         "support_count": row.get("books", 0),
         "stats_pick": "",
         "stats_conf": "",
@@ -1351,6 +1431,8 @@ if "duplicate_ai_skipped_count" not in st.session_state:
     st.session_state.duplicate_ai_skipped_count = 0
 if "props_df" not in st.session_state:
     st.session_state.props_df = pd.DataFrame()
+if "props_starters_count" not in st.session_state:
+    st.session_state.props_starters_count = 0
 
 
 # -----------------------------
@@ -1548,7 +1630,7 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "Arbitrage Plays",
     "Bet Tracker",
     "Unified AI + V8",
-    "NBA Player Props V1",
+    "NBA Player Props V2",
 ])
 
 with tab1:
@@ -1702,10 +1784,10 @@ with tab5:
 
 
 with tab6:
-    st.subheader("NBA Player Props V1")
-    st.caption("Ranks props by market-implied probability, consensus edge, and book support. This is not a player projection model.")
+    st.subheader("NBA Player Props V2 — Starters Only")
+    st.caption("Ranks props by market-implied probability, consensus edge, book support, and starter confirmation. This is not a player projection model.")
 
-    p1, p2, p3 = st.columns(3)
+    p1, p2, p3, p4 = st.columns(4)
     with p1:
         prop_market_labels = st.multiselect(
             "Prop markets",
@@ -1716,11 +1798,15 @@ with tab6:
         prop_odds_min, prop_odds_max = st.slider("Odds filter (American)", -300, 200, (-300, 200), step=5)
     with p3:
         high_probability_only = st.checkbox("High probability only (confidence 70+)", value=True)
-
-    p4, p5 = st.columns(2)
     with p4:
-        player_search = st.text_input("Player search", value="")
+        starters_only = st.checkbox("Starters only", value=True)
+
+    p5, p6, p7 = st.columns(3)
     with p5:
+        over_only = st.checkbox("Overs only", value=True)
+    with p6:
+        player_search = st.text_input("Player search", value="")
+    with p7:
         auto_save_props = st.checkbox("Auto-save shown props to V8", value=False)
 
     prop_scan = st.button("Scan NBA Player Props", type="secondary")
@@ -1731,6 +1817,7 @@ with tab6:
                 base_events = fetch_odds("basketball_nba", markets="h2h")
                 filtered_base_events = filter_events_by_books(base_events, selected_books) if selected_books else base_events
                 market_keys = [PROP_MARKET_MAP[label] for label in prop_market_labels] if prop_market_labels else list(PROP_MARKET_MAP.values())
+                starters_set = fetch_nba_starters_today() if starters_only else set()
                 props_raw_df = parse_nba_props_from_events(
                     filtered_base_events,
                     market_keys=market_keys,
@@ -1738,6 +1825,9 @@ with tab6:
                     odds_min=prop_odds_min,
                     odds_max=prop_odds_max,
                     player_search=player_search,
+                    starters_only=starters_only,
+                    starters_set=starters_set,
+                    over_only=over_only,
                 )
                 props_df = score_nba_props(props_raw_df)
                 if high_probability_only and not props_df.empty:
@@ -1761,6 +1851,9 @@ with tab6:
                             add_rows.append(create_prop_tracker_row(row))
                     if add_rows:
                         st.session_state.ai_perf_df = pd.concat([st.session_state.ai_perf_df, pd.DataFrame(add_rows)], ignore_index=True)
+                st.session_state.props_starters_count = len(starters_set) if starters_only else 0
+                if starters_only and len(starters_set) == 0:
+                    st.warning("Starter filter was on, but no starter names could be confirmed from the lineup source at scan time.")
                 st.success(f"Player props loaded: {len(st.session_state.props_df)} rows")
             except Exception as e:
                 st.error(f"Error loading NBA player props: {e}")
@@ -1769,11 +1862,12 @@ with tab6:
     if props_df.empty:
         st.info("Run NBA Player Props scan to view ranked props.")
     else:
-        m1, m2, m3, m4 = st.columns(4)
+        m1, m2, m3, m4, m5 = st.columns(5)
         m1.metric("Props Shown", len(props_df))
         m2.metric("Best Confidence", round(float(props_df["confidence"].max()), 1))
         m3.metric("Avg Confidence", round(float(props_df["confidence"].mean()), 1))
         m4.metric("Players", int(props_df["player"].nunique()))
+        m5.metric("Starter-Confirmed", int(props_df["starter_confirmed"].fillna(False).sum()) if "starter_confirmed" in props_df.columns else 0)
 
         st.dataframe(props_df, use_container_width=True)
 
@@ -1790,6 +1884,7 @@ with tab6:
                 <b>Pick:</b> {selected_prop_row['side']} {selected_prop_row['line']} @ {selected_prop_row['best_odds']}<br>
                 <b>Best Book:</b> {selected_prop_row['best_book']}<br>
                 <b>Books:</b> {selected_prop_row['books']}<br>
+                <b>Starter Confirmed:</b> {'Yes' if bool(selected_prop_row.get('starter_confirmed', False)) else 'No'}<br>
                 <b>Avg Implied Probability:</b> {selected_prop_row['avg_implied_prob']}%<br>
                 <b>Confidence:</b> {selected_prop_row['confidence']} ({selected_prop_row['tier']})
             </div>

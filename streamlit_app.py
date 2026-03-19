@@ -1,18 +1,18 @@
 
 import math
 from datetime import datetime, timedelta
-from typing import Optional
 
 import numpy as np
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Sports AI Betting Dashboard DEV MODE", page_icon="🏀", layout="wide")
-st.title("🏀 Sports AI Betting Dashboard — DEV MODE")
-st.caption("No API credits needed • Sample odds + full props engine + projection CSV support")
+st.set_page_config(page_title="Sports AI Betting Dashboard DEV MODE V2", page_icon="🏀", layout="wide")
+st.title("🏀 Sports AI Betting Dashboard — DEV MODE V2")
+st.caption("AUTO PROJECTIONS V1 • Sample odds + auto projections + full props engine")
 
 SPORTS = ["NBA", "WNBA", "NHL", "MLB", "NFL"]
 BOOKS = ["DraftKings", "FanDuel", "BetMGM", "Caesars", "ESPN BET", "Fanatics"]
+
 NBA_PLAYERS = [
     ("Jalen Brunson", "Knicks"),
     ("Jayson Tatum", "Celtics"),
@@ -25,6 +25,32 @@ NBA_PLAYERS = [
     ("Stephen Curry", "Warriors"),
     ("LeBron James", "Lakers"),
 ]
+
+PLAYER_PROFILE = {
+    "Jalen Brunson": {"points": 1.10, "assists": 1.12, "rebounds": 0.95, "3pt_made": 1.08, "turnovers": 1.02},
+    "Jayson Tatum": {"points": 1.08, "rebounds": 1.08, "assists": 0.95, "3pt_made": 1.12, "blocks": 1.05},
+    "Giannis Antetokounmpo": {"points": 1.14, "rebounds": 1.15, "assists": 1.00, "3pt_made": 0.70, "pra": 1.12},
+    "Jimmy Butler": {"points": 0.96, "assists": 1.02, "steals": 1.12, "3pt_made": 0.82},
+    "Donovan Mitchell": {"points": 1.09, "3pt_made": 1.15, "assists": 0.94, "turnovers": 1.05},
+    "Tyrese Haliburton": {"assists": 1.20, "points": 0.97, "3pt_made": 1.00, "turnovers": 1.06},
+    "Tyrese Maxey": {"points": 1.08, "3pt_made": 1.10, "assists": 0.96},
+    "Paolo Banchero": {"points": 1.04, "rebounds": 1.05, "assists": 1.00, "turnovers": 1.03},
+    "Stephen Curry": {"points": 1.12, "3pt_made": 1.22, "assists": 0.92, "turnovers": 1.04},
+    "LeBron James": {"points": 1.02, "rebounds": 1.03, "assists": 1.14, "3pt_made": 0.96, "pra": 1.08},
+}
+
+TEAM_MATCHUP = {
+    "Knicks": {"pace": 0.99, "matchup": 1.02},
+    "Celtics": {"pace": 1.03, "matchup": 1.01},
+    "Bucks": {"pace": 1.02, "matchup": 1.00},
+    "Heat": {"pace": 0.96, "matchup": 0.97},
+    "Cavaliers": {"pace": 0.98, "matchup": 1.00},
+    "Pacers": {"pace": 1.06, "matchup": 1.07},
+    "76ers": {"pace": 0.99, "matchup": 1.01},
+    "Magic": {"pace": 0.97, "matchup": 0.98},
+    "Warriors": {"pace": 1.04, "matchup": 1.05},
+    "Lakers": {"pace": 1.01, "matchup": 1.02},
+}
 
 DEFAULT_PROPS_COLS = [
     "sport", "event_id", "player", "team", "opponent", "is_starter", "starter_status",
@@ -39,10 +65,6 @@ DEFAULT_PROPS_COLS = [
 
 PROP_TYPES_BY_SPORT = {
     "NBA": ["points", "rebounds", "assists", "3pt_made", "blocks", "steals", "turnovers", "pra", "pr", "pa", "ra"],
-    "WNBA": ["points", "rebounds", "assists", "3pt_made", "steals", "turnovers", "pra"],
-    "NHL": ["goals", "assists", "shots_on_goal", "points", "saves"],
-    "MLB": ["hits", "total_bases", "rbis", "runs", "walks", "pitcher_strikeouts", "earned_runs", "pitcher_outs"],
-    "NFL": ["pass_yds", "pass_tds", "receptions", "reception_yds", "rush_yds", "rush_attempts"],
 }
 
 
@@ -114,22 +136,33 @@ def prepare_props_df(df):
         "sport": "", "event_id": "", "player": "", "team": "", "opponent": "",
         "is_starter": 1, "starter_status": "unknown", "starter_confirmed": 0,
         "prop_type": "", "game_segment": "full_game", "book": "Unknown",
-        "recommended_side_from_book": "", "source_time": "",
-        "injury_status": "unknown", "injury_note": "", "recommended_side": "",
-        "bet_grade": "", "confidence_warning": "", "confidence_status": "",
-        "last_5_games": 5, "pace_factor": 1.0, "matchup_factor": 1.0,
+        "recommended_side_from_book": "", "source_time": "", "injury_status": "unknown",
+        "injury_note": "", "recommended_side": "", "bet_grade": "",
+        "confidence_warning": "", "confidence_status": "", "last_5_games": 5,
+        "pace_factor": 1.0, "matchup_factor": 1.0,
     })
     if df is None or df.empty:
         return pd.DataFrame(columns=DEFAULT_PROPS_COLS)
+
     out = df.copy()
     out.columns = [c.strip().lower() for c in out.columns]
     out = add_missing_cols(out, defaults)
-    numeric_cols = ["is_starter", "starter_confirmed", "line", "projection", "minutes_projection", "recent_avg", "last_5_games", "pace_factor", "matchup_factor", "odds", "proj_edge", "proj_edge_abs", "hit_prob_over", "hit_prob_under", "hit_probability", "book_implied_prob", "model_fair_odds", "expected_value_edge", "edge_score", "odds_move"]
-    for col in numeric_cols:
+
+    num_cols = ["is_starter", "starter_confirmed", "line", "projection", "minutes_projection",
+                "recent_avg", "last_5_games", "pace_factor", "matchup_factor", "odds",
+                "proj_edge", "proj_edge_abs", "hit_prob_over", "hit_prob_under",
+                "hit_probability", "book_implied_prob", "model_fair_odds",
+                "expected_value_edge", "edge_score", "odds_move"]
+    for col in num_cols:
         out[col] = pd.to_numeric(out[col], errors="coerce")
-    text_cols = ["sport", "event_id", "player", "team", "opponent", "starter_status", "prop_type", "game_segment", "book", "recommended_side_from_book", "source_time", "injury_status", "injury_note", "recommended_side", "bet_grade", "confidence_warning", "confidence_status"]
+
+    text_cols = ["sport", "event_id", "player", "team", "opponent", "starter_status",
+                 "prop_type", "game_segment", "book", "recommended_side_from_book",
+                 "source_time", "injury_status", "injury_note", "recommended_side",
+                 "bet_grade", "confidence_warning", "confidence_status"]
     for col in text_cols:
         out[col] = out[col].fillna("").astype(str)
+
     out["prop_type"] = out["prop_type"].apply(normalize_text)
     out["game_segment"] = out["game_segment"].apply(normalize_text)
     out["starter_status"] = out["starter_status"].apply(normalize_text)
@@ -187,18 +220,20 @@ def make_sample_props_df():
             for book_idx, book in enumerate(BOOKS[:3]):
                 rows.append({
                     "sport": "NBA", "event_id": event_id, "player": player, "team": team, "opponent": opponent,
-                    "is_starter": 1, "starter_status": "confirmed", "starter_confirmed": 1, "prop_type": prop_type,
-                    "line": round(line_base + (-0.5 + book_idx * 0.5), 1), "projection": np.nan, "minutes_projection": np.nan,
-                    "recent_avg": np.nan, "last_5_games": 5, "pace_factor": 1.00, "matchup_factor": 1.00,
-                    "odds": [-115, -110, 100][book_idx], "game_segment": "full_game", "book": book,
-                    "recommended_side_from_book": "Over", "source_time": current_ts_str(), "injury_status": "available", "injury_note": "",
+                    "is_starter": 1, "starter_status": "confirmed", "starter_confirmed": 1,
+                    "prop_type": prop_type, "line": round(line_base + (-0.5 + book_idx * 0.5), 1),
+                    "projection": np.nan, "minutes_projection": np.nan, "recent_avg": np.nan,
+                    "last_5_games": 5, "pace_factor": 1.00, "matchup_factor": 1.00,
+                    "odds": [-115, -110, 100][book_idx], "game_segment": "full_game",
+                    "book": book, "recommended_side_from_book": "Over", "source_time": current_ts_str(),
+                    "injury_status": "available", "injury_note": "",
                 })
         rows.append({
             "sport": "NBA", "event_id": event_id, "player": player, "team": team, "opponent": opponent,
-            "is_starter": 1, "starter_status": "confirmed", "starter_confirmed": 1, "prop_type": "points",
-            "line": 7.5, "projection": np.nan, "minutes_projection": np.nan, "recent_avg": np.nan,
-            "last_5_games": 5, "pace_factor": 1.00, "matchup_factor": 1.00, "odds": -110,
-            "game_segment": "1q", "book": "DraftKings", "recommended_side_from_book": "Over",
+            "is_starter": 1, "starter_status": "confirmed", "starter_confirmed": 1,
+            "prop_type": "points", "line": 7.5, "projection": np.nan, "minutes_projection": np.nan,
+            "recent_avg": np.nan, "last_5_games": 5, "pace_factor": 1.00, "matchup_factor": 1.00,
+            "odds": -110, "game_segment": "1q", "book": "DraftKings", "recommended_side_from_book": "Over",
             "source_time": current_ts_str(), "injury_status": "available", "injury_note": "",
         })
     return prepare_props_df(pd.DataFrame(rows))
@@ -213,17 +248,6 @@ def make_sample_injuries_df():
     return pd.DataFrame(rows, columns=["sport", "team", "player", "injury_status", "starter_status", "injury_note", "source_time"])
 
 
-def load_csv_or_empty(uploaded_file):
-    if uploaded_file is None:
-        return pd.DataFrame()
-    try:
-        if str(uploaded_file.name).lower().endswith(".csv"):
-            return pd.read_csv(uploaded_file)
-        return pd.read_excel(uploaded_file)
-    except Exception:
-        return pd.DataFrame()
-
-
 def sample_full_props_projection_template():
     rows = [
         ["NBA", "Jalen Brunson", "points", "full_game", 30.4, 36, 31.1, 1.04, 1.02, "Knicks"],
@@ -234,6 +258,17 @@ def sample_full_props_projection_template():
         ["NBA", "Stephen Curry", "3pt_made", "1q", 1.7, 10, 1.5, 1.03, 1.01, "Warriors"],
     ]
     return pd.DataFrame(rows, columns=["sport", "player", "prop_type", "game_segment", "projection", "minutes_projection", "recent_avg", "pace_factor", "matchup_factor", "team"])
+
+
+def load_csv_or_empty(uploaded_file):
+    if uploaded_file is None:
+        return pd.DataFrame()
+    try:
+        if str(uploaded_file.name).lower().endswith(".csv"):
+            return pd.read_csv(uploaded_file)
+        return pd.read_excel(uploaded_file)
+    except Exception:
+        return pd.DataFrame()
 
 
 def prepare_projection_overlay_df(df):
@@ -275,6 +310,51 @@ def apply_injuries(props_df, injuries_df):
     merged["starter_status"] = np.where(merged["starter_status_inj"].fillna("").astype(str).str.len() > 0, merged["starter_status_inj"], merged["starter_status"])
     merged["injury_note"] = np.where(merged["injury_note_inj"].fillna("").astype(str).str.len() > 0, merged["injury_note_inj"], merged["injury_note"])
     return merged.drop(columns=[c for c in merged.columns if c.endswith("_inj")])
+
+
+def auto_projection_row(row, dev_strength: float):
+    player = row["player"]
+    team = row["team"]
+    prop_type = row["prop_type"]
+    seg = row["game_segment"]
+    line = safe_float(row["line"])
+
+    base_multiplier = PLAYER_PROFILE.get(player, {}).get(prop_type, 1.0)
+    pace = TEAM_MATCHUP.get(team, {}).get("pace", 1.0)
+    matchup = TEAM_MATCHUP.get(team, {}).get("matchup", 1.0)
+
+    if seg == "1q":
+        segment_multiplier = 1.02
+        mins = 9.5 if row["is_starter"] >= 1 else 6.5
+    else:
+        segment_multiplier = 1.00
+        mins = 35.0 if row["is_starter"] >= 1 else 24.0
+
+    player_hash = (sum(ord(c) for c in player + prop_type + team) % 9) - 4
+    deterministic_bump = player_hash * 0.015 * dev_strength
+    projection = line * base_multiplier * pace * matchup * segment_multiplier * (1 + deterministic_bump)
+
+    if normalize_text(row.get("injury_status", "")) in ["questionable", "doubtful"]:
+        projection *= 0.96
+        mins *= 0.94
+
+    recent_avg = projection * (0.96 + ((sum(ord(c) for c in player) % 5) * 0.015))
+    return projection, mins, recent_avg, pace, matchup
+
+
+def apply_auto_projections(props_df, dev_strength: float):
+    if props_df.empty:
+        return props_df.copy()
+    out = props_df.copy()
+    generated = out.apply(lambda r: auto_projection_row(r, dev_strength), axis=1, result_type="expand")
+    generated.columns = ["auto_projection", "auto_minutes", "auto_recent_avg", "auto_pace", "auto_matchup"]
+
+    out["projection"] = np.where(pd.isna(out["projection"]), generated["auto_projection"], out["projection"])
+    out["minutes_projection"] = np.where(pd.isna(out["minutes_projection"]), generated["auto_minutes"], out["minutes_projection"])
+    out["recent_avg"] = np.where(pd.isna(out["recent_avg"]), generated["auto_recent_avg"], out["recent_avg"])
+    out["pace_factor"] = np.where(pd.isna(out["pace_factor"]), generated["auto_pace"], out["pace_factor"])
+    out["matchup_factor"] = np.where(pd.isna(out["matchup_factor"]), generated["auto_matchup"], out["matchup_factor"])
+    return out
 
 
 def hit_probability_from_edge(row):
@@ -359,7 +439,7 @@ def compute_prop_scores(df):
     matchup_score = np.clip((out["matchup_factor"] - 1.0) * 100, -4, 12)
     probability_score = np.clip((out["hit_probability"] - 0.50) * 100, 0, 14)
     ev_score = np.clip(out["expected_value_edge"], 0, 10)
-    price_score = np.select([ (out["odds"] >= -125) & (out["odds"] <= 140), (out["odds"] >= -150) & (out["odds"] < -125), (out["odds"] > 140) & (out["odds"] <= 200) ], [10, 7, 8], default=4)
+    price_score = np.select([(out["odds"] >= -125) & (out["odds"] <= 140), (out["odds"] >= -150) & (out["odds"] < -125), (out["odds"] > 140) & (out["odds"] <= 200)], [10, 7, 8], default=4)
     caution_penalty = np.select([out["starter_confirmed"] < 1, out["injury_status"].isin(["questionable", "doubtful"]), out["minutes_projection"] < np.where(out["game_segment"] == "1q", 8, 26)], [6, 5, 4], default=0)
     out["edge_score"] = (minutes_score + edge_score_component + recent_score + starter_score + confirmed_bonus + pace_score + matchup_score + price_score + probability_score + ev_score - caution_penalty).round(1)
     out["edge_score"] = np.clip(out["edge_score"], 0, 100)
@@ -447,11 +527,13 @@ def render_top_play_card(row, rank_num):
     )
 
 
-st.sidebar.header("DEV MODE")
-st.sidebar.success("Running with sample odds and props. No API credits needed.")
+st.sidebar.header("DEV MODE V2")
+st.sidebar.success("AUTO PROJECTIONS V1 enabled.")
 sport_name = st.sidebar.selectbox("Sport", SPORTS, index=0)
 best_shop_only = st.sidebar.checkbox("Best line shop only", value=True)
-projection_file = st.sidebar.file_uploader("Upload full props projections (CSV/XLSX)", type=["csv", "xlsx"])
+projection_mode = st.sidebar.selectbox("Projection source", ["Auto Projections V1", "Upload CSV Override"], index=0)
+dev_strength = st.sidebar.slider("Auto projection aggressiveness", 0.5, 1.5, 1.0, 0.05)
+projection_file = st.sidebar.file_uploader("Optional projection CSV override", type=["csv", "xlsx"])
 
 if st.sidebar.button("Save current props snapshot"):
     if "latest_props_live" in st.session_state and not st.session_state["latest_props_live"].empty:
@@ -468,8 +550,11 @@ proj_df = prepare_projection_overlay_df(load_csv_or_empty(projection_file))
 props_df = props_df[props_df["sport"] == sport_name].copy()
 odds_df = odds_df[odds_df["sport"] == sport_name].copy()
 
-props_df = apply_projection_overlay(props_df, proj_df)
 props_df = apply_injuries(props_df, injuries_df)
+props_df = apply_auto_projections(props_df, dev_strength)
+if projection_mode == "Upload CSV Override" and not proj_df.empty:
+    props_df = apply_projection_overlay(props_df, proj_df)
+
 props_scored = compute_prop_scores(props_df)
 
 old_snapshot = st.session_state.get("latest_snapshot", pd.DataFrame())
@@ -488,24 +573,25 @@ props_shop = best_line_shop(props_live)
 st.session_state["latest_props_live"] = props_live.copy()
 
 source_status = pd.DataFrame([
-    ["Mode", "DEV MODE", "Active"],
+    ["Mode", "DEV MODE V2", "Active"],
+    ["Projection Source", projection_mode, "Active"],
     ["Odds Rows", len(odds_df), "Sample"],
     ["Props Rows", len(props_live), "Sample"],
     ["Books", props_live["book"].nunique() if not props_live.empty else 0, "Sample"],
-    ["Projection CSV Rows", len(proj_df), "Loaded" if not proj_df.empty else "Not loaded"],
+    ["CSV Rows", len(proj_df), "Loaded" if not proj_df.empty else "Not loaded"],
 ], columns=["Feed", "Value", "Status"])
 
 tab_home, tab_best, tab_sections, tab_arb, tab_inj, tab_template = st.tabs(["Home", "Best Bets", "Prop Sections", "Arbitrage", "Injuries / Starters", "Projection Template"])
 
 with tab_home:
-    st.subheader("DEV MODE Home")
+    st.subheader("DEV MODE V2 Home")
     c1, c2, c3 = st.columns(3)
     c1.metric("Odds Rows", len(odds_df))
     c2.metric("Props Rows", len(props_live))
     c3.metric("Books", props_live["book"].nunique() if not props_live.empty else 0)
     st.markdown("### Feed status")
     st.dataframe(source_status, use_container_width=True)
-    st.info("This version uses built-in sample odds and props so you can keep building without API credits.")
+    st.info("This build uses auto projections to generate real edges without API credits.")
 
 with tab_best:
     st.subheader("Auto Best Bets Board")
@@ -514,6 +600,7 @@ with tab_best:
     segment_opts = ["All"] + sorted(base_df["game_segment"].dropna().astype(str).unique().tolist()) if not base_df.empty else ["All"]
     prop_opts = ["All"] + sorted(base_df["prop_type"].dropna().astype(str).unique().tolist()) if not base_df.empty else ["All"]
     book_opts = ["All"] + sorted(base_df["book"].dropna().astype(str).unique().tolist()) if not base_df.empty else ["All"]
+
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         selected_sport = st.selectbox("Sport", sport_opts)
@@ -523,6 +610,7 @@ with tab_best:
         selected_prop = st.selectbox("Prop Type", prop_opts)
     with c4:
         selected_book = st.selectbox("Book", book_opts)
+
     c5, c6, c7, c8 = st.columns(4)
     with c5:
         starters_only = st.checkbox("Starters Only", value=True)
@@ -531,15 +619,18 @@ with tab_best:
     with c7:
         min_edge = st.slider("Min Edge Score", 0, 100, 60, 5)
     with c8:
-        min_hit = st.slider("Min Hit %", 50, 95, 50, 1)
+        min_hit = st.slider("Min Hit %", 50, 95, 54, 1)
+
     c9, c10, c11 = st.columns(3)
     with c9:
         min_odds = st.slider("Min Odds", -300, 200, -300, 5)
     with c10:
         max_odds = st.slider("Max Odds", -300, 200, 200, 5)
     with c11:
-        min_ev = st.slider("Min EV Edge %", -10, 25, -5, 1)
+        min_ev = st.slider("Min EV Edge %", -10, 25, 0, 1)
+
     filtered = filter_props_base(base_df, selected_sport, selected_segment, starters_only, confirmed_only, min_odds, max_odds, min_edge, min_hit, min_ev, selected_book, selected_prop)
+
     if filtered.empty:
         st.warning("No props match the current filters")
     else:

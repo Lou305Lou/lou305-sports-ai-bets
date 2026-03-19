@@ -663,8 +663,45 @@ def best_line_shop(df):
     return pd.DataFrame(rows).reset_index(drop=True).sort_values(["edge_score","expected_value_edge","hit_probability"], ascending=[False, False, False])
 
 
-def filter_props_base(df, sport="All", segment="All", starters_only=True, confirmed_only=False, min_odds=-300, max_odds=200, min_edge=60, min_hit_prob=50, min_ev=-5, book="All", prop_type="All"):
+
+def ensure_prop_columns(df):
     out = df.copy()
+    defaults = {
+        "edge_score": np.nan,
+        "hit_probability": np.nan,
+        "expected_value_edge": np.nan,
+        "proj_edge_abs": np.nan,
+        "proj_edge": np.nan,
+        "recommended_side": "",
+        "bet_grade": "",
+        "confidence_status": "",
+        "confidence_warning": "",
+        "odds_move": np.nan,
+        "source_time": "",
+    }
+    for col, default in defaults.items():
+        if col not in out.columns:
+            out[col] = default
+    return out
+
+
+def filter_props_base(df, sport="All", segment="All", starters_only=True, confirmed_only=False, min_odds=-300, max_odds=200, min_edge=60, min_hit_prob=50, min_ev=-5, book="All", prop_type="All"):
+    out = ensure_prop_columns(df)
+    if "sport" not in out.columns:
+        out["sport"] = ""
+    if "game_segment" not in out.columns:
+        out["game_segment"] = ""
+    if "prop_type" not in out.columns:
+        out["prop_type"] = ""
+    if "is_starter" not in out.columns:
+        out["is_starter"] = np.nan
+    if "starter_confirmed" not in out.columns:
+        out["starter_confirmed"] = np.nan
+    if "book" not in out.columns:
+        out["book"] = ""
+    if "odds" not in out.columns:
+        out["odds"] = np.nan
+
     if sport != "All":
         out = out[out["sport"] == sport]
     if segment != "All":
@@ -677,18 +714,23 @@ def filter_props_base(df, sport="All", segment="All", starters_only=True, confir
         out = out[out["starter_confirmed"] >= 1]
     if book != "All":
         out = out[out["book"] == book]
+
     out = out[(out["odds"] >= min_odds) & (out["odds"] <= max_odds)]
     out = out[out["edge_score"] >= min_edge]
     out = out[(out["hit_probability"] * 100) >= min_hit_prob]
     out = out[out["expected_value_edge"] >= min_ev]
-    return out.sort_values(["edge_score","expected_value_edge","hit_probability","proj_edge_abs"], ascending=[False, False, False, False])
+    return out.sort_values(["edge_score", "expected_value_edge", "hit_probability", "proj_edge_abs"], ascending=[False, False, False, False])
 
 
 def build_best_bets_dashboard(df):
-    if df.empty:
-        return pd.DataFrame()
+    out = ensure_prop_columns(df)
+    if out.empty:
+        return pd.DataFrame(columns=["player","opponent","book","game_segment","prop_type","recommended_side","line","odds","projection","proj_edge","hit_probability","expected_value_edge","edge_score","bet_grade","confidence_status","odds_move","source_time"])
     cols = ["player","opponent","book","game_segment","prop_type","recommended_side","line","odds","projection","proj_edge","hit_probability","expected_value_edge","edge_score","bet_grade","confidence_status","odds_move","source_time"]
-    return df.sort_values(["edge_score","expected_value_edge","hit_probability"], ascending=[False, False, False])[cols].head(20).copy()
+    for col in cols:
+        if col not in out.columns:
+            out[col] = np.nan if col in ["line","odds","projection","proj_edge","hit_probability","expected_value_edge","edge_score","odds_move"] else ""
+    return out.sort_values(["edge_score","expected_value_edge","hit_probability"], ascending=[False, False, False])[cols].head(20).copy()
 
 
 def format_props_table(df):

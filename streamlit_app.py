@@ -1,10 +1,11 @@
 
 import math
 from datetime import datetime
-from typing import Dict, Tuple
+from typing import Dict, Optional
 
 import numpy as np
 import pandas as pd
+import requests
 import streamlit as st
 
 
@@ -12,13 +13,32 @@ import streamlit as st
 # PAGE SETUP
 # =========================================================
 st.set_page_config(
-    page_title="Sports AI Betting Dashboard V4",
+    page_title="Sports AI Betting Dashboard V5",
     page_icon="🏀",
     layout="wide",
 )
 
-st.title("🏀 Sports AI Betting Dashboard V4")
-st.caption("Live Data Wiring Structure • APIs / CSVs • Line Movement • Starter / Injury Panel • Best Bets Dashboard")
+st.title("🏀 Sports AI Betting Dashboard V5")
+st.caption("API-Ready Structure • Odds API • Injury Feed • Snapshots • Auto Best Bets")
+
+
+# =========================================================
+# CONFIG / CONSTANTS
+# =========================================================
+DEFAULT_TIMEOUT = 20
+
+SUPPORTED_PROP_SECTIONS = [
+    ("Points", "points"),
+    ("Rebounds", "rebounds"),
+    ("Assists", "assists"),
+    ("3PT Made", "3pt_made"),
+]
+
+# Example placeholder endpoints.
+# Replace these in Streamlit secrets or sidebar fields with your real providers.
+DEFAULT_ODDS_API_URL = "https://api.example.com/odds"
+DEFAULT_PROPS_API_URL = "https://api.example.com/props"
+DEFAULT_INJURY_API_URL = "https://api.example.com/injuries"
 
 
 # =========================================================
@@ -101,14 +121,43 @@ def edge_bucket(score):
     return "🔴 Pass"
 
 
-def format_pct(x, digits=1):
-    if pd.isna(x):
-        return np.nan
-    return round(float(x) * 100, digits)
+def current_ts_str():
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-def format_timestamp_now():
-    return datetime.now().strftime("%Y-%m-%d %H:%M")
+def build_headers(api_key: str = ""):
+    headers = {"Accept": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    return headers
+
+
+def fetch_json(url: str, api_key: str = "", params: Optional[dict] = None):
+    if not url:
+        return None, "Missing URL"
+    try:
+        response = requests.get(
+            url,
+            headers=build_headers(api_key),
+            params=params or {},
+            timeout=DEFAULT_TIMEOUT,
+        )
+        response.raise_for_status()
+        return response.json(), None
+    except Exception as e:
+        return None, str(e)
+
+
+def pull_list_from_json(payload):
+    if payload is None:
+        return []
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict):
+        for key in ["data", "results", "items", "rows", "props", "odds", "injuries"]:
+            if key in payload and isinstance(payload[key], list):
+                return payload[key]
+    return []
 
 
 # =========================================================
@@ -122,8 +171,6 @@ def sample_odds_data():
         ["NBA", "Heat", "Celtics", "Caesars", "spreads", +6.5, np.nan, "Heat", -110],
         ["NBA", "Lakers", "Suns", "BookA", "moneyline", np.nan, np.nan, "Lakers", +140],
         ["NBA", "Lakers", "Suns", "BookB", "spreads", -2.5, np.nan, "Suns", -110],
-        ["NHL", "Panthers", "Rangers", "Book1", "moneyline", np.nan, np.nan, "Panthers", +125],
-        ["NHL", "Panthers", "Rangers", "Book2", "moneyline", np.nan, np.nan, "Rangers", +130],
     ]
     return pd.DataFrame(rows, columns=[
         "sport", "team_a", "team_b", "book", "market", "point", "total", "selection", "odds"
@@ -132,15 +179,11 @@ def sample_odds_data():
 
 def sample_props_data():
     rows = [
-        ["NBA", "Jalen Brunson", "Knicks", "Celtics", 1, "confirmed", 1, "points", 27.5, 31.2, 36, 32.1, 5, 1.07, 1.03, -115, "full_game", "DraftKings", "2026-03-19 08:00"],
-        ["NBA", "Jalen Brunson", "Knicks", "Celtics", 1, "confirmed", 1, "points", 28.5, 31.2, 36, 32.1, 5, 1.07, 1.03, +100, "full_game", "FanDuel", "2026-03-19 08:02"],
-        ["NBA", "Jayson Tatum", "Celtics", "Knicks", 1, "confirmed", 1, "rebounds", 8.5, 9.7, 37, 10.2, 5, 1.04, 1.02, -105, "full_game", "BetMGM", "2026-03-19 08:03"],
-        ["NBA", "Jayson Tatum", "Celtics", "Knicks", 1, "confirmed", 1, "rebounds", 9.5, 9.7, 37, 10.2, 5, 1.04, 1.02, +120, "full_game", "Caesars", "2026-03-19 08:04"],
-        ["NBA", "Bam Adebayo", "Heat", "Bucks", 1, "expected", 1, "rebounds", 9.5, 11.1, 35, 11.0, 5, 1.06, 1.04, +110, "full_game", "DraftKings", "2026-03-19 08:05"],
-        ["NBA", "Tyrese Haliburton", "Pacers", "Cavs", 1, "expected", 1, "assists", 10.5, 11.8, 35, 12.1, 5, 1.05, 1.03, +125, "full_game", "FanDuel", "2026-03-19 08:06"],
-        ["NBA", "Stephen Curry", "Warriors", "Lakers", 1, "confirmed", 1, "3pt_made", 1.5, 2.2, 10, 2.4, 5, 1.03, 1.01, -120, "1q", "DraftKings", "2026-03-19 08:07"],
-        ["NBA", "LeBron James", "Lakers", "Warriors", 1, "confirmed", 1, "points", 6.5, 7.8, 10, 8.4, 5, 1.04, 1.02, -110, "1q", "BetMGM", "2026-03-19 08:08"],
-        ["NBA", "Questionable Starter", "TeamQ", "TeamZ", 1, "unknown", 0, "assists", 7.5, 8.1, 27, 8.2, 5, 1.01, 1.00, +110, "full_game", "BookY", "2026-03-19 08:09"],
+        ["NBA", "Jalen Brunson", "Knicks", "Celtics", 1, "confirmed", 1, "points", 27.5, 31.2, 36, 32.1, 5, 1.07, 1.03, -115, "full_game", "DraftKings", "2026-03-19 08:00:00"],
+        ["NBA", "Jalen Brunson", "Knicks", "Celtics", 1, "confirmed", 1, "points", 28.5, 31.2, 36, 32.1, 5, 1.07, 1.03, +100, "full_game", "FanDuel", "2026-03-19 08:00:00"],
+        ["NBA", "Jayson Tatum", "Celtics", "Knicks", 1, "confirmed", 1, "rebounds", 8.5, 9.7, 37, 10.2, 5, 1.04, 1.02, -105, "full_game", "BetMGM", "2026-03-19 08:00:00"],
+        ["NBA", "Tyrese Haliburton", "Pacers", "Cavs", 1, "expected", 1, "assists", 10.5, 11.8, 35, 12.1, 5, 1.05, 1.03, +125, "full_game", "FanDuel", "2026-03-19 08:00:00"],
+        ["NBA", "Stephen Curry", "Warriors", "Lakers", 1, "confirmed", 1, "3pt_made", 1.5, 2.2, 10, 2.4, 5, 1.03, 1.01, -120, "1q", "DraftKings", "2026-03-19 08:00:00"],
     ]
     return pd.DataFrame(rows, columns=[
         "sport", "player", "team", "opponent", "is_starter", "starter_status", "starter_confirmed",
@@ -151,69 +194,81 @@ def sample_props_data():
 
 def sample_injuries_data():
     rows = [
-        ["NBA", "Knicks", "Jalen Brunson", "available", "confirmed", "", "2026-03-19 08:00"],
-        ["NBA", "Celtics", "Jayson Tatum", "available", "confirmed", "", "2026-03-19 08:00"],
-        ["NBA", "Heat", "Bam Adebayo", "available", "expected", "", "2026-03-19 08:00"],
-        ["NBA", "Pacers", "Tyrese Haliburton", "questionable", "expected", "ankle", "2026-03-19 08:00"],
-        ["NBA", "Lakers", "LeBron James", "available", "confirmed", "", "2026-03-19 08:00"],
-        ["NBA", "Warriors", "Stephen Curry", "available", "confirmed", "", "2026-03-19 08:00"],
+        ["NBA", "Knicks", "Jalen Brunson", "available", "confirmed", "", "2026-03-19 08:00:00"],
+        ["NBA", "Pacers", "Tyrese Haliburton", "questionable", "expected", "ankle", "2026-03-19 08:00:00"],
+        ["NBA", "Warriors", "Stephen Curry", "available", "confirmed", "", "2026-03-19 08:00:00"],
     ]
     return pd.DataFrame(rows, columns=[
         "sport", "team", "player", "injury_status", "starter_status", "injury_note", "source_time"
     ])
 
 
-def sample_line_history_data():
-    rows = [
-        ["Jalen Brunson", "points", "full_game", "DraftKings", 27.5, -115, "2026-03-19 06:00"],
-        ["Jalen Brunson", "points", "full_game", "DraftKings", 28.5, -120, "2026-03-19 08:00"],
-        ["Jalen Brunson", "points", "full_game", "FanDuel", 28.5, +100, "2026-03-19 06:00"],
-        ["Jalen Brunson", "points", "full_game", "FanDuel", 28.5, -105, "2026-03-19 08:00"],
-        ["Stephen Curry", "3pt_made", "1q", "DraftKings", 1.5, -110, "2026-03-19 06:00"],
-        ["Stephen Curry", "3pt_made", "1q", "DraftKings", 1.5, -120, "2026-03-19 08:00"],
-        ["LeBron James", "points", "1q", "BetMGM", 5.5, -105, "2026-03-19 06:00"],
-        ["LeBron James", "points", "1q", "BetMGM", 6.5, -110, "2026-03-19 08:00"],
-    ]
-    return pd.DataFrame(rows, columns=[
-        "player", "prop_type", "game_segment", "book", "line", "odds", "timestamp"
-    ])
+# =========================================================
+# API PARSERS
+# Replace these with your provider-specific field mappings later
+# =========================================================
+def parse_odds_api_payload(payload, fallback_sport="NBA"):
+    rows = []
+    for item in pull_list_from_json(payload):
+        rows.append({
+            "sport": item.get("sport", fallback_sport),
+            "team_a": item.get("team_a", item.get("home_team", "")),
+            "team_b": item.get("team_b", item.get("away_team", "")),
+            "book": item.get("book", item.get("sportsbook", "API")),
+            "market": item.get("market", "moneyline"),
+            "point": item.get("point", np.nan),
+            "total": item.get("total", np.nan),
+            "selection": item.get("selection", item.get("side", "")),
+            "odds": item.get("odds", np.nan),
+        })
+    return pd.DataFrame(rows)
+
+
+def parse_props_api_payload(payload, fallback_sport="NBA"):
+    rows = []
+    for item in pull_list_from_json(payload):
+        rows.append({
+            "sport": item.get("sport", fallback_sport),
+            "player": item.get("player", ""),
+            "team": item.get("team", ""),
+            "opponent": item.get("opponent", ""),
+            "is_starter": item.get("is_starter", 1),
+            "starter_status": item.get("starter_status", "unknown"),
+            "starter_confirmed": item.get("starter_confirmed", 0),
+            "prop_type": item.get("prop_type", item.get("market", "points")),
+            "line": item.get("line", np.nan),
+            "projection": item.get("projection", np.nan),
+            "minutes_projection": item.get("minutes_projection", np.nan),
+            "recent_avg": item.get("recent_avg", np.nan),
+            "last_5_games": item.get("last_5_games", 5),
+            "pace_factor": item.get("pace_factor", 1.0),
+            "matchup_factor": item.get("matchup_factor", 1.0),
+            "odds": item.get("odds", np.nan),
+            "game_segment": item.get("game_segment", "full_game"),
+            "book": item.get("book", item.get("sportsbook", "API")),
+            "source_time": item.get("source_time", current_ts_str()),
+        })
+    return pd.DataFrame(rows)
+
+
+def parse_injury_api_payload(payload, fallback_sport="NBA"):
+    rows = []
+    for item in pull_list_from_json(payload):
+        rows.append({
+            "sport": item.get("sport", fallback_sport),
+            "team": item.get("team", ""),
+            "player": item.get("player", ""),
+            "injury_status": item.get("injury_status", item.get("status", "unknown")),
+            "starter_status": item.get("starter_status", "unknown"),
+            "injury_note": item.get("injury_note", item.get("note", "")),
+            "source_time": item.get("source_time", current_ts_str()),
+        })
+    return pd.DataFrame(rows)
 
 
 # =========================================================
-# LIVE DATA WIRING LAYER
+# DATA PREP
 # =========================================================
-def load_csv_or_sample(uploaded_file, sample_func):
-    if uploaded_file is None:
-        return sample_func()
-    try:
-        if str(uploaded_file.name).lower().endswith(".csv"):
-            return pd.read_csv(uploaded_file)
-        return pd.read_excel(uploaded_file)
-    except Exception:
-        return sample_func()
-
-
-@st.cache_data(ttl=90, show_spinner=False)
-def ingest_data_sources(
-    odds_file,
-    props_file,
-    injuries_file,
-    history_file,
-    use_sample_when_missing=True,
-):
-    odds_raw = load_csv_or_sample(odds_file, sample_odds_data) if use_sample_when_missing else load_csv_or_sample(odds_file, lambda: pd.DataFrame())
-    props_raw = load_csv_or_sample(props_file, sample_props_data) if use_sample_when_missing else load_csv_or_sample(props_file, lambda: pd.DataFrame())
-    injuries_raw = load_csv_or_sample(injuries_file, sample_injuries_data) if use_sample_when_missing else load_csv_or_sample(injuries_file, lambda: pd.DataFrame())
-    history_raw = load_csv_or_sample(history_file, sample_line_history_data) if use_sample_when_missing else load_csv_or_sample(history_file, lambda: pd.DataFrame())
-
-    return {
-        "odds": odds_raw.copy(),
-        "props": props_raw.copy(),
-        "injuries": injuries_raw.copy(),
-        "history": history_raw.copy(),
-    }
-
-
 def prepare_odds_df(df):
     if df is None or df.empty:
         return pd.DataFrame(columns=["sport", "team_a", "team_b", "book", "market", "point", "total", "selection", "odds"])
@@ -232,10 +287,10 @@ def prepare_odds_df(df):
         "odds": np.nan,
     })
     df["market"] = df["market"].apply(clean_market_name)
+    df["selection"] = df["selection"].fillna("").astype(str)
     df["odds"] = pd.to_numeric(df["odds"], errors="coerce")
     df["point"] = pd.to_numeric(df["point"], errors="coerce")
     df["total"] = pd.to_numeric(df["total"], errors="coerce")
-    df["selection"] = df["selection"].fillna("").astype(str)
     df["dec_odds"] = df["odds"].apply(american_to_decimal)
     df["imp_prob"] = df["odds"].apply(implied_prob_american)
     return df
@@ -308,31 +363,6 @@ def prepare_injuries_df(df):
     return df
 
 
-def prepare_history_df(df):
-    if df is None or df.empty:
-        return pd.DataFrame(columns=["player", "prop_type", "game_segment", "book", "line", "odds", "timestamp"])
-
-    df = df.copy()
-    df.columns = [c.strip().lower() for c in df.columns]
-    df = add_missing_cols(df, {
-        "player": "",
-        "prop_type": "points",
-        "game_segment": "full_game",
-        "book": "Unknown",
-        "line": np.nan,
-        "odds": np.nan,
-        "timestamp": "",
-    })
-    for col in ["player", "prop_type", "game_segment", "book", "timestamp"]:
-        df[col] = df[col].fillna("").astype(str)
-    for col in ["line", "odds"]:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-    df["prop_type"] = df["prop_type"].apply(normalize_text)
-    df["game_segment"] = df["game_segment"].apply(normalize_text)
-    df["ts"] = pd.to_datetime(df["timestamp"], errors="coerce")
-    return df
-
-
 def merge_props_with_injuries(props_df, injuries_df):
     if props_df.empty:
         return props_df.copy()
@@ -356,6 +386,59 @@ def merge_props_with_injuries(props_df, injuries_df):
     )
     merged = merged.drop(columns=[c for c in ["starter_status_inj"] if c in merged.columns])
     return merged
+
+
+# =========================================================
+# SNAPSHOTS
+# =========================================================
+def append_snapshot(df, label):
+    if df.empty:
+        return df.copy()
+    snap = df.copy()
+    snap["snapshot_label"] = label
+    snap["snapshot_time"] = current_ts_str()
+    return snap
+
+
+def save_snapshot_to_session(name, df):
+    if "snapshots" not in st.session_state:
+        st.session_state["snapshots"] = {}
+    st.session_state["snapshots"][name] = df.copy()
+
+
+def get_snapshot_from_session(name):
+    if "snapshots" not in st.session_state:
+        return pd.DataFrame()
+    return st.session_state["snapshots"].get(name, pd.DataFrame())
+
+
+def build_line_movement_from_snapshots(old_df, new_df):
+    if old_df.empty or new_df.empty:
+        return pd.DataFrame()
+
+    keys = ["player", "prop_type", "game_segment", "book"]
+    old_small = old_df[keys + ["line", "odds"]].copy().rename(columns={"line": "old_line", "odds": "old_odds"})
+    new_small = new_df[keys + ["line", "odds"]].copy().rename(columns={"line": "new_line", "odds": "new_odds"})
+
+    merged = new_small.merge(old_small, on=keys, how="left")
+    merged["line_move"] = merged["new_line"] - merged["old_line"]
+    merged["odds_move"] = merged["new_odds"] - merged["old_odds"]
+    return merged
+
+
+def apply_movement_to_props(props_df, movement_df):
+    if props_df.empty:
+        return props_df.copy()
+    if movement_df.empty:
+        props_df = props_df.copy()
+        props_df["line_move"] = np.nan
+        props_df["odds_move"] = np.nan
+        return props_df
+
+    keys = ["player", "prop_type", "game_segment", "book"]
+    small = movement_df[keys + ["line_move", "odds_move"]].copy()
+    out = props_df.merge(small, on=keys, how="left")
+    return out
 
 
 # =========================================================
@@ -398,47 +481,7 @@ def find_moneyline_arbs(df):
                 "arb_profit_pct": round((1 - inv_sum) * 100, 2),
             })
 
-    if not results:
-        return pd.DataFrame()
-    return pd.DataFrame(results).sort_values("arb_profit_pct", ascending=False)
-
-
-def find_spread_middles(df):
-    spreads = df[df["market"] == "spreads"].copy()
-    results = []
-
-    if spreads.empty:
-        return pd.DataFrame()
-
-    for keys, group in spreads.groupby(["sport", "team_a", "team_b"], dropna=False):
-        rows = group.dropna(subset=["point"]).copy()
-        if len(rows) < 2:
-            continue
-
-        for i in range(len(rows)):
-            for j in range(i + 1, len(rows)):
-                r1 = rows.iloc[i]
-                r2 = rows.iloc[j]
-                p1 = safe_float(r1["point"])
-                p2 = safe_float(r2["point"])
-
-                if pd.isna(p1) or pd.isna(p2):
-                    continue
-
-                if p1 < 0 and p2 > 0 and abs(p1) < abs(p2):
-                    width = p2 - abs(p1)
-                    if width > 0:
-                        results.append({
-                            "sport": keys[0],
-                            "matchup": f"{keys[1]} vs {keys[2]}",
-                            "bet_1": f"{r1['selection']} {p1} ({r1['book']} {int(r1['odds'])})",
-                            "bet_2": f"{r2['selection']} +{p2} ({r2['book']} {int(r2['odds'])})",
-                            "middle_window_points": round(width, 2),
-                        })
-
-    if not results:
-        return pd.DataFrame()
-    return pd.DataFrame(results).sort_values("middle_window_points", ascending=False).drop_duplicates()
+    return pd.DataFrame(results).sort_values("arb_profit_pct", ascending=False) if results else pd.DataFrame()
 
 
 # =========================================================
@@ -456,30 +499,12 @@ def hit_probability_from_edge(row):
         return np.nan
 
     sigma_map_full = {
-        "points": 6.5,
-        "rebounds": 3.0,
-        "assists": 3.2,
-        "3pt_made": 1.6,
-        "threes": 1.6,
-        "pra": 8.4,
-        "pa": 7.0,
-        "pr": 6.8,
-        "ra": 5.2,
-        "steals": 1.2,
-        "blocks": 1.2,
+        "points": 6.5, "rebounds": 3.0, "assists": 3.2, "3pt_made": 1.6, "threes": 1.6,
+        "pra": 8.4, "pa": 7.0, "pr": 6.8, "ra": 5.2, "steals": 1.2, "blocks": 1.2,
     }
     sigma_map_1q = {
-        "points": 2.6,
-        "rebounds": 1.4,
-        "assists": 1.5,
-        "3pt_made": 0.9,
-        "threes": 0.9,
-        "pra": 3.0,
-        "pa": 2.7,
-        "pr": 2.5,
-        "ra": 2.1,
-        "steals": 0.6,
-        "blocks": 0.5,
+        "points": 2.6, "rebounds": 1.4, "assists": 1.5, "3pt_made": 0.9, "threes": 0.9,
+        "pra": 3.0, "pa": 2.7, "pr": 2.5, "ra": 2.1, "steals": 0.6, "blocks": 0.5,
     }
     sigma = (sigma_map_1q if segment == "1q" else sigma_map_full).get(prop_type, 5.5 if segment != "1q" else 2.3)
 
@@ -523,23 +548,18 @@ def confidence_warning_label(row):
 
     if injury_status in ["questionable", "doubtful", "out"]:
         warnings.append(f"Injury: {injury_status}")
-
     if not pd.isna(minutes):
         if segment == "1q" and minutes < 8:
             warnings.append("Low 1Q minutes")
         elif segment != "1q" and minutes < 26:
             warnings.append("Low minutes")
-
     if not pd.isna(is_starter) and is_starter < 1:
         warnings.append("Bench player")
-
     if starter_status not in ["confirmed", "expected", "probable", "starting"]:
         if pd.isna(starter_confirmed) or starter_confirmed < 1:
             warnings.append("Starter not confirmed")
-
     if not pd.isna(recent_avg) and not pd.isna(line) and abs(recent_avg - line) < 0.5:
         warnings.append("Thin recent edge")
-
     if not pd.isna(projection) and not pd.isna(line) and abs(projection - line) < 0.4:
         warnings.append("Thin model edge")
 
@@ -606,17 +626,8 @@ def compute_prop_scores(df):
     )
 
     df["edge_score"] = (
-        minutes_score
-        + edge_score_component
-        + recent_score
-        + starter_score
-        + confirmed_bonus
-        + pace_score
-        + matchup_score
-        + price_score
-        + probability_score
-        + ev_score
-        - caution_penalty
+        minutes_score + edge_score_component + recent_score + starter_score + confirmed_bonus +
+        pace_score + matchup_score + price_score + probability_score + ev_score - caution_penalty
     ).round(1)
 
     df["edge_score"] = np.clip(df["edge_score"], 0, 100)
@@ -636,15 +647,9 @@ def best_line_shop(df):
         group = group.copy()
         side = group["recommended_side"].iloc[0]
         if side == "Over":
-            group = group.sort_values(
-                ["line", "odds", "edge_score", "expected_value_edge"],
-                ascending=[True, False, False, False]
-            )
+            group = group.sort_values(["line", "odds", "edge_score", "expected_value_edge"], ascending=[True, False, False, False])
         else:
-            group = group.sort_values(
-                ["line", "odds", "edge_score", "expected_value_edge"],
-                ascending=[False, False, False, False]
-            )
+            group = group.sort_values(["line", "odds", "edge_score", "expected_value_edge"], ascending=[False, False, False, False])
         rows.append(group.iloc[0])
 
     return pd.DataFrame(rows).reset_index(drop=True).sort_values(
@@ -653,63 +658,6 @@ def best_line_shop(df):
     )
 
 
-# =========================================================
-# LINE MOVEMENT
-# =========================================================
-def build_line_movement_summary(history_df):
-    if history_df.empty:
-        return pd.DataFrame()
-
-    history_df = history_df.sort_values(["player", "prop_type", "game_segment", "book", "ts"])
-    rows = []
-
-    for keys, group in history_df.groupby(["player", "prop_type", "game_segment", "book"], dropna=False):
-        group = group.dropna(subset=["ts"]).copy()
-        if group.empty:
-            continue
-
-        first = group.iloc[0]
-        last = group.iloc[-1]
-
-        rows.append({
-            "player": keys[0],
-            "prop_type": keys[1],
-            "game_segment": keys[2],
-            "book": keys[3],
-            "open_line": first["line"],
-            "current_line": last["line"],
-            "line_move": round(last["line"] - first["line"], 2) if not pd.isna(first["line"]) and not pd.isna(last["line"]) else np.nan,
-            "open_odds": first["odds"],
-            "current_odds": last["odds"],
-            "odds_move": round(last["odds"] - first["odds"], 2) if not pd.isna(first["odds"]) and not pd.isna(last["odds"]) else np.nan,
-            "last_update": last["timestamp"],
-        })
-
-    if not rows:
-        return pd.DataFrame()
-    return pd.DataFrame(rows).sort_values(["player", "prop_type", "book"])
-
-
-def latest_compare_table(scored_props, movement_summary):
-    if scored_props.empty:
-        return scored_props.copy()
-
-    out = scored_props.copy()
-    if movement_summary.empty:
-        out["line_move"] = np.nan
-        out["odds_move"] = np.nan
-        out["last_update"] = ""
-        return out
-
-    merge_cols = ["player", "prop_type", "game_segment", "book"]
-    small = movement_summary[merge_cols + ["line_move", "odds_move", "last_update"]].copy()
-    out = out.merge(small, on=merge_cols, how="left")
-    return out
-
-
-# =========================================================
-# FILTERS / CARDS
-# =========================================================
 def filter_props_base(df, sport="All", segment="All", starters_only=True, confirmed_only=False,
                       min_odds=-300, max_odds=200, min_edge=60, min_hit_prob=54,
                       min_ev=0, book="All", prop_type="All"):
@@ -739,6 +687,33 @@ def filter_props_base(df, sport="All", segment="All", starters_only=True, confir
     )
 
 
+def build_best_bets_dashboard(df):
+    if df.empty:
+        return pd.DataFrame()
+
+    cols = [
+        "player", "team", "opponent", "book", "game_segment", "prop_type", "recommended_side",
+        "line", "odds", "projection", "proj_edge", "hit_probability", "expected_value_edge",
+        "edge_score", "bet_grade", "confidence_status", "line_move", "odds_move", "source_time"
+    ]
+    use_cols = [c for c in cols if c in df.columns]
+    return df.sort_values(
+        ["edge_score", "expected_value_edge", "hit_probability"],
+        ascending=[False, False, False]
+    )[use_cols].head(20).copy()
+
+
+def format_props_table(df):
+    out = df.copy()
+    if out.empty:
+        return out
+    if "hit_probability" in out.columns:
+        out["hit_probability"] = (out["hit_probability"] * 100).round(1)
+    if "book_implied_prob" in out.columns:
+        out["book_implied_prob"] = (out["book_implied_prob"] * 100).round(1)
+    return out
+
+
 def render_top_play_card(row, rank_num):
     st.markdown(
         f"""
@@ -760,7 +735,7 @@ def render_top_play_card(row, rank_num):
   <div style="margin-top:8px;">
     <b>Line Move:</b> {row.get('line_move', np.nan)} |
     <b>Odds Move:</b> {row.get('odds_move', np.nan)} |
-    <b>Updated:</b> {row.get('last_update', '')}
+    <b>Source:</b> {row.get('source_time', '')}
   </div>
 </div>
 """,
@@ -768,92 +743,179 @@ def render_top_play_card(row, rank_num):
     )
 
 
-def format_props_table(df):
-    out = df.copy()
-    if out.empty:
-        return out
-    if "hit_probability" in out.columns:
-        out["hit_probability"] = (out["hit_probability"] * 100).round(1)
-    if "book_implied_prob" in out.columns:
-        out["book_implied_prob"] = (out["book_implied_prob"] * 100).round(1)
-    return out
+# =========================================================
+# API/CSV INGESTION
+# =========================================================
+@st.cache_data(ttl=90, show_spinner=False)
+def load_all_data(
+    use_api: bool,
+    use_sample_fallback: bool,
+    odds_url: str,
+    props_url: str,
+    injury_url: str,
+    api_key: str,
+    odds_file,
+    props_file,
+    injury_file,
+    sport_for_api: str,
+):
+    source_notes = []
 
+    # Odds
+    if use_api:
+        odds_payload, odds_err = fetch_json(odds_url, api_key=api_key, params={"sport": sport_for_api})
+        if odds_payload is not None:
+            odds_df = parse_odds_api_payload(odds_payload, fallback_sport=sport_for_api)
+            source_notes.append("Odds: API")
+        else:
+            odds_df = pd.read_csv(odds_file) if odds_file is not None and str(odds_file.name).lower().endswith(".csv") else (
+                pd.read_excel(odds_file) if odds_file is not None else (sample_odds_data() if use_sample_fallback else pd.DataFrame())
+            )
+            source_notes.append(f"Odds fallback: {'upload' if odds_file is not None else ('sample' if use_sample_fallback else 'missing')} | {odds_err}")
+    else:
+        odds_df = pd.read_csv(odds_file) if odds_file is not None and str(odds_file.name).lower().endswith(".csv") else (
+            pd.read_excel(odds_file) if odds_file is not None else (sample_odds_data() if use_sample_fallback else pd.DataFrame())
+        )
+        source_notes.append(f"Odds: {'upload' if odds_file is not None else ('sample' if use_sample_fallback else 'missing')}")
 
-def build_best_bets_dashboard(df):
-    if df.empty:
-        return pd.DataFrame()
+    # Props
+    if use_api:
+        props_payload, props_err = fetch_json(props_url, api_key=api_key, params={"sport": sport_for_api})
+        if props_payload is not None:
+            props_df = parse_props_api_payload(props_payload, fallback_sport=sport_for_api)
+            source_notes.append("Props: API")
+        else:
+            props_df = pd.read_csv(props_file) if props_file is not None and str(props_file.name).lower().endswith(".csv") else (
+                pd.read_excel(props_file) if props_file is not None else (sample_props_data() if use_sample_fallback else pd.DataFrame())
+            )
+            source_notes.append(f"Props fallback: {'upload' if props_file is not None else ('sample' if use_sample_fallback else 'missing')} | {props_err}")
+    else:
+        props_df = pd.read_csv(props_file) if props_file is not None and str(props_file.name).lower().endswith(".csv") else (
+            pd.read_excel(props_file) if props_file is not None else (sample_props_data() if use_sample_fallback else pd.DataFrame())
+        )
+        source_notes.append(f"Props: {'upload' if props_file is not None else ('sample' if use_sample_fallback else 'missing')}")
 
-    best = df.copy().sort_values(
-        ["edge_score", "expected_value_edge", "hit_probability"],
-        ascending=[False, False, False]
-    ).head(15)
+    # Injuries
+    if use_api:
+        injury_payload, injury_err = fetch_json(injury_url, api_key=api_key, params={"sport": sport_for_api})
+        if injury_payload is not None:
+            injuries_df = parse_injury_api_payload(injury_payload, fallback_sport=sport_for_api)
+            source_notes.append("Injuries: API")
+        else:
+            injuries_df = pd.read_csv(injury_file) if injury_file is not None and str(injury_file.name).lower().endswith(".csv") else (
+                pd.read_excel(injury_file) if injury_file is not None else (sample_injuries_data() if use_sample_fallback else pd.DataFrame())
+            )
+            source_notes.append(f"Injuries fallback: {'upload' if injury_file is not None else ('sample' if use_sample_fallback else 'missing')} | {injury_err}")
+    else:
+        injuries_df = pd.read_csv(injury_file) if injury_file is not None and str(injury_file.name).lower().endswith(".csv") else (
+            pd.read_excel(injury_file) if injury_file is not None else (sample_injuries_data() if use_sample_fallback else pd.DataFrame())
+        )
+        source_notes.append(f"Injuries: {'upload' if injury_file is not None else ('sample' if use_sample_fallback else 'missing')}")
 
-    cols = [
-        "player", "team", "opponent", "book", "game_segment", "prop_type", "recommended_side",
-        "line", "odds", "projection", "proj_edge", "hit_probability",
-        "expected_value_edge", "edge_score", "bet_grade", "confidence_status",
-        "line_move", "odds_move", "last_update"
-    ]
-    return best[cols].copy()
+    return {
+        "odds": odds_df,
+        "props": props_df,
+        "injuries": injuries_df,
+        "notes": source_notes,
+    }
 
 
 # =========================================================
-# SIDEBAR: LIVE DATA WIRING
+# SIDEBAR
 # =========================================================
-st.sidebar.header("Live Data Wiring")
+st.sidebar.header("V5 Data Control")
 
-data_mode = st.sidebar.radio(
-    "Data source mode",
-    ["Sample fallback", "Uploaded files only"],
-    index=0,
-)
+use_api_mode = st.sidebar.checkbox("Use API mode", value=False)
+use_sample_fallback = st.sidebar.checkbox("Use sample fallback when missing", value=True)
+sport_for_api = st.sidebar.selectbox("Primary sport", ["NBA", "NHL", "MLB", "NFL"], index=0)
 
-odds_file = st.sidebar.file_uploader("Upload odds file", type=["csv", "xlsx"], key="odds")
-props_file = st.sidebar.file_uploader("Upload props file", type=["csv", "xlsx"], key="props")
-injuries_file = st.sidebar.file_uploader("Upload injury / starter file", type=["csv", "xlsx"], key="inj")
-history_file = st.sidebar.file_uploader("Upload line history file", type=["csv", "xlsx"], key="hist")
+default_api_key = ""
+try:
+    default_api_key = st.secrets.get("API_KEY", "")
+except Exception:
+    default_api_key = ""
 
-refresh_button = st.sidebar.button("Refresh cached data")
-if refresh_button:
+default_odds_url = ""
+default_props_url = ""
+default_injury_url = ""
+try:
+    default_odds_url = st.secrets.get("ODDS_API_URL", DEFAULT_ODDS_API_URL)
+    default_props_url = st.secrets.get("PROPS_API_URL", DEFAULT_PROPS_API_URL)
+    default_injury_url = st.secrets.get("INJURY_API_URL", DEFAULT_INJURY_API_URL)
+except Exception:
+    default_odds_url = DEFAULT_ODDS_API_URL
+    default_props_url = DEFAULT_PROPS_API_URL
+    default_injury_url = DEFAULT_INJURY_API_URL
+
+api_key = st.sidebar.text_input("API key", value=default_api_key, type="password")
+odds_url = st.sidebar.text_input("Odds API URL", value=default_odds_url)
+props_url = st.sidebar.text_input("Props API URL", value=default_props_url)
+injury_url = st.sidebar.text_input("Injury API URL", value=default_injury_url)
+
+st.sidebar.markdown("### CSV fallback uploads")
+odds_file = st.sidebar.file_uploader("Upload odds file", type=["csv", "xlsx"], key="v5_odds")
+props_file = st.sidebar.file_uploader("Upload props file", type=["csv", "xlsx"], key="v5_props")
+injury_file = st.sidebar.file_uploader("Upload injury file", type=["csv", "xlsx"], key="v5_injury")
+
+if st.sidebar.button("Refresh cached data"):
     st.cache_data.clear()
 
-sources = ingest_data_sources(
+if st.sidebar.button("Save current props snapshot"):
+    snapshot_label = f"manual_snapshot_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    if "latest_props_live" in st.session_state and not st.session_state["latest_props_live"].empty:
+        save_snapshot_to_session(snapshot_label, append_snapshot(st.session_state["latest_props_live"], snapshot_label))
+        st.sidebar.success(f"Saved {snapshot_label}")
+    else:
+        st.sidebar.warning("No live props available yet to snapshot.")
+
+
+# =========================================================
+# LOAD PIPELINE
+# =========================================================
+loaded = load_all_data(
+    use_api=use_api_mode,
+    use_sample_fallback=use_sample_fallback,
+    odds_url=odds_url,
+    props_url=props_url,
+    injury_url=injury_url,
+    api_key=api_key,
     odds_file=odds_file,
     props_file=props_file,
-    injuries_file=injuries_file,
-    history_file=history_file,
-    use_sample_when_missing=(data_mode == "Sample fallback"),
+    injury_file=injury_file,
+    sport_for_api=sport_for_api,
 )
 
-odds_df = prepare_odds_df(sources["odds"])
-props_df = prepare_props_df(sources["props"])
-injuries_df = prepare_injuries_df(sources["injuries"])
-history_df = prepare_history_df(sources["history"])
+odds_df = prepare_odds_df(loaded["odds"])
+props_df = prepare_props_df(loaded["props"])
+injuries_df = prepare_injuries_df(loaded["injuries"])
 
 props_merged = merge_props_with_injuries(props_df, injuries_df)
 props_scored = compute_prop_scores(props_merged)
-movement_summary = build_line_movement_summary(history_df)
-props_live = latest_compare_table(props_scored, movement_summary)
+
+prev_snapshot = get_snapshot_from_session("latest_props_live")
+movement_df = build_line_movement_from_snapshots(prev_snapshot, props_scored)
+props_live = apply_movement_to_props(props_scored, movement_df)
 props_shop = best_line_shop(props_live)
 
+st.session_state["latest_props_live"] = append_snapshot(props_scored, "latest_props_live")
+
 source_status = pd.DataFrame([
-    ["Odds", len(odds_df), "Uploaded" if odds_file is not None else ("Sample" if data_mode == "Sample fallback" else "Missing")],
-    ["Props", len(props_df), "Uploaded" if props_file is not None else ("Sample" if data_mode == "Sample fallback" else "Missing")],
-    ["Injuries", len(injuries_df), "Uploaded" if injuries_file is not None else ("Sample" if data_mode == "Sample fallback" else "Missing")],
-    ["Line history", len(history_df), "Uploaded" if history_file is not None else ("Sample" if data_mode == "Sample fallback" else "Missing")],
-], columns=["Feed", "Rows", "Status"])
+    ["Odds", len(odds_df), "API" if use_api_mode else ("Upload" if odds_file is not None else ("Sample" if use_sample_fallback else "Missing"))],
+    ["Props", len(props_df), "API" if use_api_mode else ("Upload" if props_file is not None else ("Sample" if use_sample_fallback else "Missing"))],
+    ["Injuries", len(injuries_df), "API" if use_api_mode else ("Upload" if injury_file is not None else ("Sample" if use_sample_fallback else "Missing"))],
+], columns=["Feed", "Rows", "Source"])
 
 
 # =========================================================
 # TABS
 # =========================================================
-tab_home, tab_arb, tab_mid, tab_live, tab_inj, tab_lines = st.tabs([
+tab_home, tab_best, tab_sections, tab_injuries, tab_arb, tab_api = st.tabs([
     "Home",
-    "Arbitrage",
-    "Middles",
     "Best Bets",
-    "Injuries / Starters",
-    "Line Movement",
+    "Prop Sections",
+    "Injuries",
+    "Arbitrage",
+    "API Wiring",
 ])
 
 
@@ -861,75 +923,39 @@ tab_home, tab_arb, tab_mid, tab_live, tab_inj, tab_lines = st.tabs([
 # HOME
 # =========================================================
 with tab_home:
-    st.subheader("V4 Live Data Structure")
+    st.subheader("V5 API-Ready Dashboard")
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Odds Rows", len(odds_df))
     c2.metric("Props Rows", len(props_live))
     c3.metric("Books", max(odds_df["book"].nunique() if not odds_df.empty else 0, props_live["book"].nunique() if not props_live.empty else 0))
-    c4.metric("Updated", format_timestamp_now())
+    c4.metric("Updated", current_ts_str())
 
     st.markdown("### Feed status")
     st.dataframe(source_status, use_container_width=True)
 
-    st.markdown("### What V4 adds")
-    st.write("• separate ingestion layer for odds, props, injuries, and line history")
-    st.write("• cache refresh button")
-    st.write("• injury / starter panel")
-    st.write("• line movement summary")
-    st.write("• best bets dashboard at the top")
-    st.write("• merge structure for future CSV/API swaps")
+    st.markdown("### Load notes")
+    st.dataframe(pd.DataFrame({"status": loaded["notes"]}), use_container_width=True)
 
-    with st.expander("Expected file ideas"):
-        st.write("Odds file: sport, team_a, team_b, book, market, point, total, selection, odds")
-        st.write("Props file: player, team, opponent, prop_type, line, projection, minutes_projection, recent_avg, odds, book, game_segment")
-        st.write("Injury file: player, team, injury_status, starter_status, injury_note")
-        st.write("History file: player, prop_type, game_segment, book, line, odds, timestamp")
+    st.markdown("### What V5 adds")
+    st.write("• API mode toggle")
+    st.write("• secrets-ready API fields")
+    st.write("• CSV fallback mode")
+    st.write("• current-session prop snapshots")
+    st.write("• line movement from snapshots")
+    st.write("• auto best bets board by market and sport")
+    st.write("• provider-specific parser placeholders")
 
-
-# =========================================================
-# ARBITRAGE
-# =========================================================
-with tab_arb:
-    st.subheader("Moneyline Arbitrage Scanner")
-    sports = ["All"] + sorted(odds_df["sport"].dropna().astype(str).unique().tolist()) if not odds_df.empty else ["All"]
-    selected_sport = st.selectbox("Sport", sports, key="arb_sport")
-
-    arb_base = odds_df.copy()
-    if selected_sport != "All":
-        arb_base = arb_base[arb_base["sport"] == selected_sport]
-
-    arb_results = find_moneyline_arbs(arb_base)
-    if arb_results.empty:
-        st.warning("No moneyline arbitrage opportunities detected.")
-    else:
-        st.success(f"Found {len(arb_results)} arbitrage opportunity(s).")
-        st.dataframe(arb_results, use_container_width=True)
-
-
-# =========================================================
-# MIDDLES
-# =========================================================
-with tab_mid:
-    st.subheader("Spread Middle Detection")
-    selected_mid_sport = st.selectbox("Sport ", sports, key="mid_sport")
-
-    mid_base = odds_df.copy()
-    if selected_mid_sport != "All":
-        mid_base = mid_base[mid_base["sport"] == selected_mid_sport]
-
-    spread_mids = find_spread_middles(mid_base)
-    if spread_mids.empty:
-        st.info("No spread middles found.")
-    else:
-        st.dataframe(spread_mids, use_container_width=True)
+    with st.expander("Expected next custom step"):
+        st.write("Replace the three parse_*_api_payload() functions with your real provider field mappings.")
+        st.write("Then set API_KEY, ODDS_API_URL, PROPS_API_URL, and INJURY_API_URL in Streamlit secrets.")
 
 
 # =========================================================
 # BEST BETS
 # =========================================================
-with tab_live:
-    st.subheader("Best Bets Dashboard")
+with tab_best:
+    st.subheader("Auto Best Bets Board")
 
     sport_opts = ["All"] + sorted(props_shop["sport"].dropna().astype(str).unique().tolist()) if not props_shop.empty else ["All"]
     segment_opts = ["All"] + sorted(props_shop["game_segment"].dropna().astype(str).unique().tolist()) if not props_shop.empty else ["All"]
@@ -938,13 +964,13 @@ with tab_live:
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        selected_prop_sport = st.selectbox("Sport", sport_opts, key="bb_sport")
+        selected_sport = st.selectbox("Sport", sport_opts, key="v5_sport")
     with c2:
-        selected_segment = st.selectbox("Segment", segment_opts, key="bb_segment")
+        selected_segment = st.selectbox("Segment", segment_opts, key="v5_segment")
     with c3:
-        selected_prop_type = st.selectbox("Prop Type", prop_opts, key="bb_type")
+        selected_prop = st.selectbox("Prop Type", prop_opts, key="v5_prop")
     with c4:
-        selected_book = st.selectbox("Book", book_opts, key="bb_book")
+        selected_book = st.selectbox("Book", book_opts, key="v5_book")
 
     c5, c6, c7, c8 = st.columns(4)
     with c5:
@@ -952,9 +978,9 @@ with tab_live:
     with c6:
         confirmed_only = st.checkbox("Confirmed Only", value=False)
     with c7:
-        min_edge = st.slider("Min Edge Score", 0, 100, 60, 5)
-    with c8:
         best_shop_only = st.checkbox("Best Line Shop Only", value=True)
+    with c8:
+        min_edge = st.slider("Min Edge Score", 0, 100, 60, 5)
 
     c9, c10, c11 = st.columns(3)
     with c9:
@@ -966,10 +992,10 @@ with tab_live:
 
     min_ev = st.slider("Min EV Edge %", -10, 25, 0, 1)
 
-    base_source = props_shop.copy() if best_shop_only else props_live.copy()
+    base_df = props_shop.copy() if best_shop_only else props_live.copy()
     filtered = filter_props_base(
-        base_source,
-        sport=selected_prop_sport,
+        base_df,
+        sport=selected_sport,
         segment=selected_segment,
         starters_only=starters_only,
         confirmed_only=confirmed_only,
@@ -979,35 +1005,56 @@ with tab_live:
         min_hit_prob=min_hit,
         min_ev=min_ev,
         book=selected_book,
-        prop_type=selected_prop_type,
+        prop_type=selected_prop,
     )
 
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Props Found", len(filtered))
     m2.metric("A-Grade", int((filtered["edge_score"] >= 86).sum()) if not filtered.empty else 0)
     m3.metric("Avg Edge", round(filtered["edge_score"].mean(), 1) if not filtered.empty else 0)
-    m4.metric("Avg Hit %", f"{round(filtered['hit_probability'].mean()*100, 1) if not filtered.empty else 0}%")
+    m4.metric("Avg Hit %", f"{round(filtered['hit_probability'].mean() * 100, 1) if not filtered.empty else 0}%")
 
     if filtered.empty:
         st.warning("No props match the current filters.")
     else:
-        st.markdown("### Top plays cards")
+        st.markdown("### Top play cards")
         for idx, (_, row) in enumerate(filtered.head(10).iterrows(), start=1):
             render_top_play_card(row, idx)
 
-        st.markdown("### Best bets table")
-        dashboard_df = build_best_bets_dashboard(filtered)
-        st.dataframe(format_props_table(dashboard_df), use_container_width=True)
+        st.markdown("### Auto best bets table")
+        st.dataframe(format_props_table(build_best_bets_dashboard(filtered)), use_container_width=True)
 
 
 # =========================================================
-# INJURIES / STARTERS
+# PROP SECTIONS
 # =========================================================
-with tab_inj:
-    st.subheader("Injuries / Starter Status Panel")
+with tab_sections:
+    st.subheader("Prop Sections by Market")
+    if props_live.empty:
+        st.info("No props available.")
+    else:
+        table_cols = [
+            "player", "team", "opponent", "book", "game_segment", "recommended_side",
+            "line", "projection", "proj_edge", "odds", "hit_probability",
+            "expected_value_edge", "edge_score", "bet_grade", "confidence_status",
+            "line_move", "odds_move"
+        ]
+        for title, prop_key in SUPPORTED_PROP_SECTIONS:
+            st.markdown(f"### {title}")
+            section = props_live[props_live["prop_type"] == prop_key].copy()
+            if section.empty:
+                st.info(f"No {title.lower()} props loaded.")
+            else:
+                st.dataframe(format_props_table(section[table_cols]), use_container_width=True)
 
+
+# =========================================================
+# INJURIES
+# =========================================================
+with tab_injuries:
+    st.subheader("Injury / Starter Feed")
     if injuries_df.empty:
-        st.info("No injury/starter feed loaded.")
+        st.info("No injury feed loaded.")
     else:
         st.dataframe(injuries_df, use_container_width=True)
 
@@ -1025,27 +1072,61 @@ with tab_inj:
 
 
 # =========================================================
-# LINE MOVEMENT
+# ARBITRAGE
 # =========================================================
-with tab_lines:
-    st.subheader("Line Movement Tracker")
+with tab_arb:
+    st.subheader("Moneyline Arbitrage")
+    sports = ["All"] + sorted(odds_df["sport"].dropna().astype(str).unique().tolist()) if not odds_df.empty else ["All"]
+    selected_arb_sport = st.selectbox("Sport", sports, key="v5_arb_sport")
 
-    if movement_summary.empty:
-        st.info("No line history feed loaded.")
-    else:
-        st.dataframe(movement_summary, use_container_width=True)
+    arb_base = odds_df.copy()
+    if selected_arb_sport != "All":
+        arb_base = arb_base[arb_base["sport"] == selected_arb_sport]
 
-    st.markdown("### Compare latest props with movement")
-    if props_live.empty:
-        st.info("No props available.")
+    arb_results = find_moneyline_arbs(arb_base)
+    if arb_results.empty:
+        st.warning("No moneyline arbitrage opportunities detected.")
     else:
-        cols = [
-            "player", "team", "opponent", "book", "prop_type", "game_segment",
-            "line", "odds", "line_move", "odds_move", "last_update",
-            "projection", "recommended_side", "edge_score", "expected_value_edge"
-        ]
-        st.dataframe(format_props_table(props_live[cols]), use_container_width=True)
+        st.dataframe(arb_results, use_container_width=True)
+
+
+# =========================================================
+# API WIRING
+# =========================================================
+with tab_api:
+    st.subheader("API Wiring Guide")
+    st.markdown("### Current mode")
+    st.write(f"API mode: {'ON' if use_api_mode else 'OFF'}")
+    st.write(f"Odds URL: {odds_url}")
+    st.write(f"Props URL: {props_url}")
+    st.write(f"Injury URL: {injury_url}")
+
+    st.markdown("### Streamlit secrets example")
+    st.code(
+        """API_KEY="your_real_key"
+ODDS_API_URL="https://your-provider.com/odds"
+PROPS_API_URL="https://your-provider.com/props"
+INJURY_API_URL="https://your-provider.com/injuries" """,
+        language="toml"
+    )
+
+    st.markdown("### What you change next")
+    st.write("1. Put your real API URLs into Streamlit secrets or sidebar fields.")
+    st.write("2. Put your real API key into Streamlit secrets.")
+    st.write("3. Edit parse_odds_api_payload().")
+    st.write("4. Edit parse_props_api_payload().")
+    st.write("5. Edit parse_injury_api_payload().")
+    st.write("6. If your provider needs custom headers, update build_headers().")
+
+    st.markdown("### Snapshot status")
+    snapshot_names = []
+    if "snapshots" in st.session_state:
+        snapshot_names = sorted(list(st.session_state["snapshots"].keys()))
+    if not snapshot_names:
+        st.info("No manual snapshots saved yet.")
+    else:
+        st.dataframe(pd.DataFrame({"snapshot_name": snapshot_names}), use_container_width=True)
 
 
 st.markdown("---")
-st.caption("V4 full clean build — live-data wiring structure for future CSV/API upgrades.")
+st.caption("V5 full clean build — API-ready structure with CSV fallbacks and session-based snapshots.")

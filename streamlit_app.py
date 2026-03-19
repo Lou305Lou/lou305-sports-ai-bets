@@ -570,8 +570,7 @@ def prepare_lineups_df(df):
         out[col] = out[col].fillna("").astype(str)
     out["starter_status"] = out["starter_status"].apply(normalize_text)
     return out
-
-def prepare_projection_overlay_df(df):
+    def prepare_projection_overlay_df(df):
     if df is None or df.empty:
         return pd.DataFrame(columns=["sport", "player", "prop_type", "game_segment", "projection", "minutes_projection", "recent_avg", "pace_factor", "matchup_factor", "team"])
     out = df.copy()
@@ -1002,8 +1001,7 @@ def render_top_play_card(row, rank_num):
 """,
         unsafe_allow_html=True,
     )
-
-st.sidebar.header("Provider 1: The Odds API")
+    st.sidebar.header("Provider 1: The Odds API")
 
 the_odds_api_key = ""
 try:
@@ -1247,6 +1245,3 @@ with tab_template:
         file_name="full_props_projection_template.csv",
         mime="text/csv",
     )
-
-
-    

@@ -1,15 +1,16 @@
 
 # ============================================================
-# SPORTS AI BETTING DASHBOARD — DEV MODE V17
-# EV CURVE V1
+# SPORTS AI BETTING DASHBOARD — DEV MODE V18
+# MATCHUP ENGINE V1
 # ============================================================
 # Real working file
 #
 # What changed:
-# - Replaces flat EV cap behavior with a curved EV model
-# - Better separates strong plays from merely good plays
-# - Makes 0.75u plays more meaningful
-# - Keeps Model Variance V1, Tier System V2, Correlation Filter V3
+# - Adds opponent-style matchup modifiers by prop type
+# - Adds pace sensitivity by matchup
+# - Adds player-vs-matchup fit adjustments
+# - Improves separation between similar-looking plays
+# - Keeps EV Curve V1, Model Variance V1, Tier System V2, Correlation Filter V3
 # ============================================================
 
 import math
@@ -20,9 +21,9 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Sports AI Betting Dashboard DEV MODE V17", page_icon="🏀", layout="wide")
-st.title("🏀 Sports AI Betting Dashboard — DEV MODE V17")
-st.caption("EV CURVE V1")
+st.set_page_config(page_title="Sports AI Betting Dashboard DEV MODE V18", page_icon="🏀", layout="wide")
+st.title("🏀 Sports AI Betting Dashboard — DEV MODE V18")
+st.caption("MATCHUP ENGINE V1")
 
 SPORTS = ["NBA", "WNBA", "NHL", "MLB", "NFL"]
 BOOKS = ["DraftKings", "FanDuel", "BetMGM"]
@@ -34,6 +35,14 @@ NBA_PLAYERS = [
     ("Jayson Tatum", "Celtics"),
     ("Stephen Curry", "Warriors"),
 ]
+
+TEAM_OPPONENT = {
+    "Bucks": "Heat",
+    "Pacers": "Cavaliers",
+    "Lakers": "Warriors",
+    "Celtics": "Knicks",
+    "Warriors": "Lakers",
+}
 
 PROP_TYPES_BY_SPORT = {
     "NBA": ["points", "rebounds", "assists", "3pt_made", "turnovers", "pra", "pr", "pa", "ra"]
@@ -94,6 +103,33 @@ TEAM_DISPERSION = {
     "Lakers": 1.03,
     "Celtics": 0.98,
     "Warriors": 1.08,
+}
+
+# MATCHUP ENGINE V1
+# values > 1.0 = softer opponent for that prop type, < 1.0 = tougher
+OPPONENT_PROP_DEFENSE = {
+    "Heat":      {"points": 0.95, "rebounds": 1.02, "assists": 0.97, "3pt_made": 0.96, "turnovers": 1.04, "pra": 0.97, "pr": 0.98, "pa": 0.96, "ra": 1.01},
+    "Cavaliers": {"points": 0.96, "rebounds": 0.99, "assists": 0.95, "3pt_made": 0.97, "turnovers": 1.03, "pra": 0.96, "pr": 0.97, "pa": 0.95, "ra": 0.99},
+    "Warriors":  {"points": 1.03, "rebounds": 1.00, "assists": 1.04, "3pt_made": 1.03, "turnovers": 0.98, "pra": 1.03, "pr": 1.02, "pa": 1.04, "ra": 0.99},
+    "Knicks":    {"points": 0.97, "rebounds": 1.01, "assists": 0.96, "3pt_made": 0.95, "turnovers": 1.02, "pra": 0.97, "pr": 0.97, "pa": 0.96, "ra": 1.00},
+    "Lakers":    {"points": 1.04, "rebounds": 1.02, "assists": 1.03, "3pt_made": 1.01, "turnovers": 0.97, "pra": 1.03, "pr": 1.03, "pa": 1.03, "ra": 1.02},
+}
+
+# how a player benefits/suffers by prop style in certain environments
+PLAYER_MATCHUP_FIT = {
+    "Giannis Antetokounmpo": {"points": 1.02, "rebounds": 1.01, "assists": 0.99, "pra": 1.02, "ra": 1.01},
+    "Tyrese Haliburton": {"points": 1.00, "assists": 1.04, "pra": 1.03, "pa": 1.04},
+    "LeBron James": {"points": 1.01, "rebounds": 1.00, "assists": 1.03, "pra": 1.02, "pa": 1.03},
+    "Jayson Tatum": {"points": 1.02, "rebounds": 1.01, "3pt_made": 1.02, "pr": 1.02},
+    "Stephen Curry": {"points": 1.03, "3pt_made": 1.06, "assists": 0.99, "pr": 1.02},
+}
+
+GAME_ENVIRONMENT = {
+    ("Bucks", "Heat"): 0.98,
+    ("Pacers", "Cavaliers"): 1.05,
+    ("Lakers", "Warriors"): 1.06,
+    ("Celtics", "Knicks"): 0.99,
+    ("Warriors", "Lakers"): 1.06,
 }
 
 def normalize_text(x):
@@ -212,10 +248,21 @@ def sample_bet_log_import_template():
         ["2026-03-19 09:00:00", "NBA", "LeBron James", "Warriors vs Lakers", "DraftKings", "full_game", "pa", "Over", 30.5, -115, 35.5, 5.0, 0.63, 9.1, 77.5, "Tier 2", "➖ Stable", "Okay now", 0.5, "0.5u Standard", "Win", 0.43, 34, "Import", "Imported historical bet"],
     ], columns=["added_at", "sport", "player", "opponent", "book", "game_segment", "prop_type", "side", "line", "odds", "projection", "edge", "hit_probability", "ev_edge", "edge_score", "play_tier", "steam_flag", "bet_timing", "bet_size_units", "bet_size_label", "result", "profit_units", "actual_stat", "grade_source", "notes"])
 
+def matchup_modifier(team, prop_type):
+    opp = TEAM_OPPONENT.get(team, "")
+    defense = OPPONENT_PROP_DEFENSE.get(opp, {})
+    base = defense.get(prop_type, 1.0)
+    env = GAME_ENVIRONMENT.get((team, opp), 1.0)
+    return base * env
+
+def fit_modifier(player, prop_type):
+    return PLAYER_MATCHUP_FIT.get(player, {}).get(prop_type, 1.0)
+
 def apply_auto_projections(df, dev_strength):
     out = df.copy()
     projections = []
     variance_tags = []
+    matchup_notes = []
     for _, row in out.iterrows():
         line = safe_float(row["line"])
         player = row["player"]
@@ -230,14 +277,17 @@ def apply_auto_projections(df, dev_strength):
         prop_var = PROP_VARIANCE.get(prop_type, 1.0)
         team_var = TEAM_DISPERSION.get(team, 1.0)
 
+        mm = matchup_modifier(team, prop_type)
+        fm = fit_modifier(player, prop_type)
+
         deterministic_seed = ((sum(ord(c) for c in player + prop_type + team) % 17) - 8) / 100.0
         shaped_variance = deterministic_seed * player_var * prop_var * team_var * dev_strength
 
-        projection = line * base_multiplier * pace * matchup * (1 + shaped_variance)
+        projection = line * base_multiplier * pace * matchup * mm * fm * (1 + shaped_variance)
 
         cap = {
-            "points": 5.0, "pra": 5.5, "assists": 4.0, "rebounds": 4.2,
-            "3pt_made": 1.9, "pr": 4.8, "pa": 4.8, "ra": 3.8
+            "points": 5.2, "pra": 5.8, "assists": 4.2, "rebounds": 4.3,
+            "3pt_made": 2.0, "pr": 5.0, "pa": 5.0, "ra": 3.9
         }.get(prop_type, 4.0)
         projection = min(max(projection, line - cap), line + cap)
         projections.append(projection)
@@ -248,8 +298,18 @@ def apply_auto_projections(df, dev_strength):
             variance_tags.append("Lower-volatility profile")
         else:
             variance_tags.append("Neutral variance")
+
+        matchup_score = mm * fm
+        if matchup_score >= 1.05:
+            matchup_notes.append("Strong matchup")
+        elif matchup_score <= 0.97:
+            matchup_notes.append("Tough matchup")
+        else:
+            matchup_notes.append("Neutral matchup")
+
     out["projection"] = projections
     out["variance_note"] = variance_tags
+    out["matchup_note"] = matchup_notes
     return out
 
 def calibrated_hit_probability(row):
@@ -260,21 +320,21 @@ def calibrated_hit_probability(row):
     player_var = PLAYER_VARIANCE.get(row["player"], 1.0)
     prop_var = PROP_VARIANCE.get(row["prop_type"], 1.0)
     team_var = TEAM_DISPERSION.get(row["team"], 1.0)
+    mm = matchup_modifier(row["team"], row["prop_type"])
 
-    sigma_adj = sigma / max(0.85, min(1.18, (player_var * 0.45 + prop_var * 0.35 + team_var * 0.20)))
+    sigma_adj = sigma / max(0.82, min(1.22, (player_var * 0.40 + prop_var * 0.30 + team_var * 0.15 + mm * 0.15)))
     z = (proj - line) / sigma_adj if sigma_adj > 0 else 0
 
     raw = 0.5 * (1 + math.erf(z / math.sqrt(2)))
 
-    compress = 0.52 + ((player_var - 1.0) * 0.10) + ((prop_var - 1.0) * 0.08) + ((team_var - 1.0) * 0.06)
-    compress = max(0.46, min(0.62, compress))
+    compress = 0.51 + ((player_var - 1.0) * 0.09) + ((prop_var - 1.0) * 0.07) + ((team_var - 1.0) * 0.05) + ((mm - 1.0) * 0.10)
+    compress = max(0.45, min(0.63, compress))
 
     calibrated = 0.50 + (raw - 0.50) * compress
-    calibrated = max(0.36, min(0.69, calibrated))
+    calibrated = max(0.35, min(0.70, calibrated))
     return calibrated if proj > line else 1 - calibrated
 
-# EV CURVE V1
-def curved_ev_edge(prob, implied_prob, edge_abs, prop_type, variance_note):
+def curved_ev_edge(prob, implied_prob, edge_abs, prop_type, variance_note, matchup_note):
     prob = safe_float(prob)
     implied_prob = safe_float(implied_prob)
     edge_abs = safe_float(edge_abs)
@@ -282,31 +342,28 @@ def curved_ev_edge(prob, implied_prob, edge_abs, prop_type, variance_note):
         return np.nan
 
     raw_gap = (prob - implied_prob) * 100.0
-
     edge_factor = 1.0 + min(0.30, max(0.0, edge_abs) / 20.0)
     prop_factor = {
-        "points": 1.04,
-        "rebounds": 0.96,
-        "assists": 0.99,
-        "3pt_made": 1.08,
-        "turnovers": 0.94,
-        "pra": 1.03,
-        "pr": 1.01,
-        "pa": 1.00,
-        "ra": 0.97,
+        "points": 1.04, "rebounds": 0.96, "assists": 0.99, "3pt_made": 1.08,
+        "turnovers": 0.94, "pra": 1.03, "pr": 1.01, "pa": 1.00, "ra": 0.97,
     }.get(prop_type, 1.0)
     variance_factor = {
         "High-upside profile": 1.05,
         "Neutral variance": 1.00,
         "Lower-volatility profile": 0.95,
     }.get(str(variance_note), 1.0)
+    matchup_factor = {
+        "Strong matchup": 1.06,
+        "Neutral matchup": 1.00,
+        "Tough matchup": 0.94,
+    }.get(str(matchup_note), 1.0)
 
-    shaped_gap = raw_gap * edge_factor * prop_factor * variance_factor
+    shaped_gap = raw_gap * edge_factor * prop_factor * variance_factor * matchup_factor
 
     if shaped_gap >= 0:
-        curved = 13.5 * math.tanh(shaped_gap / 11.5)
+        curved = 13.8 * math.tanh(shaped_gap / 11.2)
     else:
-        curved = -8.0 * math.tanh(abs(shaped_gap) / 8.5)
+        curved = -8.2 * math.tanh(abs(shaped_gap) / 8.5)
 
     return round(curved, 2)
 
@@ -334,20 +391,23 @@ def compute_prop_scores(df):
             r["book_implied_prob"],
             abs(safe_float(r["proj_edge"])),
             r["prop_type"],
-            r.get("variance_note", "Neutral variance")
+            r.get("variance_note", "Neutral variance"),
+            r.get("matchup_note", "Neutral matchup"),
         ),
         axis=1
     )
 
     player_var_component = out["player"].map(lambda p: PLAYER_VARIANCE.get(p, 1.0))
     prop_var_component = out["prop_type"].map(lambda p: PROP_VARIANCE.get(p, 1.0))
+    matchup_component = out.apply(lambda r: matchup_modifier(r["team"], r["prop_type"]) * fit_modifier(r["player"], r["prop_type"]), axis=1)
 
     score = (
-        np.clip(out["proj_edge"].abs() * 7.4, 0, 31) +
-        np.clip((out["hit_probability"] - 0.50) * 126, 0, 24) +
-        np.clip(out["expected_value_edge"] * 1.55, -6, 20) +
-        np.clip((player_var_component - 1.0) * 18, -2, 3) +
-        np.clip((prop_var_component - 1.0) * 14, -2, 3)
+        np.clip(out["proj_edge"].abs() * 7.3, 0, 31) +
+        np.clip((out["hit_probability"] - 0.50) * 125, 0, 24) +
+        np.clip(out["expected_value_edge"] * 1.50, -6, 20) +
+        np.clip((player_var_component - 1.0) * 16, -2, 3) +
+        np.clip((prop_var_component - 1.0) * 12, -2, 3) +
+        np.clip((matchup_component - 1.0) * 28, -3, 4)
     )
     out["edge_score"] = np.clip(score, 0, 100).round(1)
     out["bet_grade"] = out["edge_score"].apply(edge_bucket)
@@ -565,11 +625,11 @@ def render_top_play_card(row, rank_num):
   </div>
   <div style="margin-top:8px;">
     <b>Variance:</b> {row['variance_note']} |
-    <b>Correlation:</b> {row['correlation_flag'] if row['correlation_flag'] else 'None'}
+    <b>Matchup:</b> {row['matchup_note']}
   </div>
   <div style="margin-top:8px;">
-    <b>Note:</b> {row['correlation_rank_note'] if row['correlation_rank_note'] else 'Top play or no issue'} |
-    <b>Exposure:</b> {row['exposure_flag'] if row['exposure_flag'] else 'OK'}
+    <b>Correlation:</b> {row['correlation_flag'] if row['correlation_flag'] else 'None'} |
+    <b>Note:</b> {row['correlation_rank_note'] if row['correlation_rank_note'] else 'Top play or no issue'}
   </div>
 </div>
 """,
@@ -606,7 +666,7 @@ def tracker_add_bet(row):
         "profit_units": np.nan,
         "actual_stat": np.nan,
         "grade_source": "",
-        "notes": row.get("exposure_flag", ""),
+        "notes": row.get("matchup_note", ""),
     }
     st.session_state["bet_tracker_df"] = pd.concat([pd.DataFrame([new_row]), tracker], ignore_index=True)
 
@@ -730,7 +790,7 @@ def tracker_summary(df):
 # Build live data
 init_tracker_state()
 
-st.sidebar.header("DEV MODE V17")
+st.sidebar.header("DEV MODE V18")
 sport_name = st.sidebar.selectbox("Sport", SPORTS, index=0)
 dev_strength = st.sidebar.slider("Auto projection aggressiveness", 0.50, 1.50, 1.00, 0.05)
 projection_file = st.sidebar.file_uploader("Optional projection CSV override", type=["csv", "xlsx"])
@@ -773,19 +833,19 @@ tab_home, tab_best, tab_tracker, tab_import, tab_templates = st.tabs([
 ])
 
 with tab_home:
-    st.subheader("EV Curve V1 audit")
+    st.subheader("Matchup Engine V1 audit")
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Props Rows", len(props_live))
     c2.metric("Tier 1", int((props_live["play_tier"] == "Tier 1").sum()))
     c3.metric("Tier 2", int((props_live["play_tier"] == "Tier 2").sum()))
-    c4.metric("0.75u", int((props_live["bet_size_units"] >= 0.75).sum()))
+    c4.metric("Strong Matchups", int((props_live["matchup_note"] == "Strong matchup").sum()))
     audit = props_shop[[
         "player", "prop_type", "line", "projection", "hit_probability", "expected_value_edge",
-        "edge_score", "play_tier", "bet_size_units", "variance_note"
+        "edge_score", "play_tier", "bet_size_units", "variance_note", "matchup_note"
     ]].head(12).copy()
     audit["hit_probability"] = (audit["hit_probability"] * 100).round(1)
     st.dataframe(audit, use_container_width=True)
-    st.info("EV Curve V1 uses a nonlinear curve instead of a flat ceiling so top plays separate more cleanly and repeated EV plateaus show up less often.")
+    st.info("Matchup Engine V1 adds opponent and game-environment modifiers so similar players in different environments separate more naturally.")
 
 with tab_best:
     st.subheader("Best Bets")
@@ -800,7 +860,7 @@ with tab_best:
             "player", "prop_type", "recommended_side", "line", "odds", "projection",
             "proj_edge", "hit_probability", "expected_value_edge", "edge_score",
             "play_tier", "steam_flag", "bet_size_units", "bet_size_label",
-            "variance_note", "correlation_flag", "correlation_rank_note", "bet_size_reason"
+            "variance_note", "matchup_note", "correlation_flag", "bet_size_reason"
         ]].copy()
         show["hit_probability"] = (show["hit_probability"] * 100).round(1)
         st.dataframe(show, use_container_width=True)
@@ -842,7 +902,7 @@ with tab_tracker:
                     "result": st.column_config.SelectboxColumn("result", options=["Open", "Win", "Loss", "Push"]),
                     "notes": st.column_config.TextColumn("notes")
                 },
-                key="grade_editor_v17"
+                key="grade_editor_v18"
             )
             if st.button("Save manual grading"):
                 tracker_update_results(edited[["bet_id", "actual_stat", "result", "notes"]])
@@ -851,7 +911,7 @@ with tab_tracker:
         auto_template = sample_auto_grade_template()
         st.dataframe(auto_template, use_container_width=True)
         st.download_button("Download auto-grade template CSV", auto_template.to_csv(index=False).encode("utf-8"), "auto_grade_template.csv", "text/csv")
-        auto_file = st.file_uploader("Upload stats file for auto-grading", type=["csv", "xlsx"], key="auto_grade_v17")
+        auto_file = st.file_uploader("Upload stats file for auto-grading", type=["csv", "xlsx"], key="auto_grade_v18")
         if auto_file is not None:
             auto_df = load_csv_or_empty(auto_file)
             if not auto_df.empty:
@@ -863,11 +923,11 @@ with tab_tracker:
                     else:
                         st.success(f"Auto-graded {updated} bet(s).")
 
-        st.download_button("Download bet tracker CSV", tracker_df.to_csv(index=False).encode("utf-8"), "bet_tracker_v17.csv", "text/csv")
+        st.download_button("Download bet tracker CSV", tracker_df.to_csv(index=False).encode("utf-8"), "bet_tracker_v18.csv", "text/csv")
         xlsx_buffer = BytesIO()
         with pd.ExcelWriter(xlsx_buffer, engine="openpyxl") as writer:
             tracker_df.to_excel(writer, sheet_name="Bets", index=False)
-        st.download_button("Download bet tracker Excel", xlsx_buffer.getvalue(), "bet_tracker_v17.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.download_button("Download bet tracker Excel", xlsx_buffer.getvalue(), "bet_tracker_v18.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 with tab_import:
     st.subheader("CSV Bet Log Import")
@@ -875,7 +935,7 @@ with tab_import:
     st.dataframe(template_df, use_container_width=True)
     st.download_button("Download bet log import template CSV", template_df.to_csv(index=False).encode("utf-8"), "bet_log_import_template.csv", "text/csv")
 
-    import_file = st.file_uploader("Upload historical bet log CSV or Excel", type=["csv", "xlsx"], key="bet_log_import_v17")
+    import_file = st.file_uploader("Upload historical bet log CSV or Excel", type=["csv", "xlsx"], key="bet_log_import_v18")
     replace_existing = st.checkbox("Replace existing tracker with imported file", value=False)
     if import_file is not None:
         import_df = load_csv_or_empty(import_file)

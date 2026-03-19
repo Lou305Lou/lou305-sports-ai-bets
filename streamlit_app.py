@@ -1,3 +1,6 @@
+# =========================
+# SECTION 1 START
+# =========================
 import math
 from datetime import datetime
 from typing import Optional
@@ -223,6 +226,9 @@ def market_to_prop_type(market_key: str) -> str:
 
 def market_to_segment(market_key: str) -> str:
     return "1q" if market_key.endswith("_q1") else "full_game"
+# =========================
+# SECTION 2 START
+# =========================
 def get_json(url: str, headers: Optional[dict] = None, params: Optional[dict] = None):
     if not url:
         return None, "Missing URL"
@@ -247,13 +253,7 @@ def the_odds_get(path: str, api_key: str, params: Optional[dict] = None):
 
 
 @st.cache_data(ttl=60, show_spinner=False)
-def fetch_featured_odds_from_the_odds_api(
-    api_key: str,
-    sport_key: str,
-    regions: str,
-    bookmakers: str,
-    odds_format: str,
-):
+def fetch_featured_odds_from_the_odds_api(api_key: str, sport_key: str, regions: str, bookmakers: str, odds_format: str):
     params = {
         "regions": regions,
         "markets": "h2h,spreads,totals",
@@ -265,15 +265,7 @@ def fetch_featured_odds_from_the_odds_api(
 
 
 @st.cache_data(ttl=60, show_spinner=False)
-def fetch_event_props_from_the_odds_api(
-    api_key: str,
-    sport_key: str,
-    event_id: str,
-    markets_csv: str,
-    regions: str,
-    bookmakers: str,
-    odds_format: str,
-):
+def fetch_event_props_from_the_odds_api(api_key: str, sport_key: str, event_id: str, markets_csv: str, regions: str, bookmakers: str, odds_format: str):
     params = {
         "regions": regions,
         "markets": markets_csv,
@@ -281,31 +273,23 @@ def fetch_event_props_from_the_odds_api(
     }
     if bookmakers:
         params["bookmakers"] = bookmakers
-    return the_odds_get(
-        f"/v4/sports/{sport_key}/events/{event_id}/odds",
-        api_key=api_key,
-        params=params,
-    )
+    return the_odds_get(f"/v4/sports/{sport_key}/events/{event_id}/odds", api_key=api_key, params=params)
 
 
 def parse_featured_odds_payload(payload, sport_title_fallback: str):
     rows = []
     events = payload if isinstance(payload, list) else []
-
     for event in events:
         sport_title = event.get("sport_title", sport_title_fallback)
         event_id = event.get("id", "")
         home_team = event.get("home_team", "")
         away_team = event.get("away_team", "")
         commence_time = event.get("commence_time", "")
-
         for book in event.get("bookmakers", []) or []:
             book_title = book.get("title", book.get("key", "Unknown"))
             last_update = book.get("last_update", "")
-
             for market in book.get("markets", []) or []:
                 market_key = market.get("key", "")
-
                 for outcome in market.get("outcomes", []) or []:
                     rows.append({
                         "sport": sport_title,
@@ -321,13 +305,11 @@ def parse_featured_odds_payload(payload, sport_title_fallback: str):
                         "commence_time": commence_time,
                         "book_last_update": last_update,
                     })
-
     return pd.DataFrame(rows)
 
 
 def parse_event_props_payload(payload, sport_title_fallback: str):
     rows = []
-
     if not isinstance(payload, dict):
         return pd.DataFrame()
 
@@ -378,20 +360,11 @@ def parse_event_props_payload(payload, sport_title_fallback: str):
                     "recommended_side_from_book": name,
                     "source_time": book_last_update or commence_time,
                 })
-
     return pd.DataFrame(rows)
 
 
-def fetch_live_the_odds_bundle(
-    api_key: str,
-    sport_name: str,
-    regions: str,
-    bookmakers: str,
-    odds_format: str,
-    include_props: bool,
-):
+def fetch_live_the_odds_bundle(api_key: str, sport_name: str, regions: str, bookmakers: str, odds_format: str, include_props: bool):
     sport_key = SPORT_KEY_MAP[sport_name]
-
     featured_payload, featured_err = fetch_featured_odds_from_the_odds_api(
         api_key=api_key,
         sport_key=sport_key,
@@ -431,7 +404,10 @@ def fetch_live_the_odds_bundle(
             props_df = pd.concat(parts, ignore_index=True).drop_duplicates()
 
     return odds_df, props_df, None
-    def pull_first_list(payload):
+# =========================
+# SECTION 3 START
+# =========================
+def pull_first_list(payload):
     if payload is None:
         return []
     if isinstance(payload, list):
@@ -603,7 +579,10 @@ def prepare_lineups_df(df):
         out[col] = out[col].fillna("").astype(str)
     out["starter_status"] = out["starter_status"].apply(normalize_text)
     return out
-    def prepare_projection_overlay_df(df):
+# =========================
+# SECTION 4 START
+# =========================
+def prepare_projection_overlay_df(df):
     if df is None or df.empty:
         return pd.DataFrame(columns=["sport", "player", "prop_type", "game_segment", "projection", "minutes_projection", "recent_avg", "pace_factor", "matchup_factor", "team"])
     out = df.copy()
@@ -781,7 +760,10 @@ def find_moneyline_arbs(df):
             })
 
     return pd.DataFrame(results).sort_values("arb_profit_pct", ascending=False) if results else pd.DataFrame()
-    def hit_probability_from_edge(row):
+# =========================
+# SECTION 5 START
+# =========================
+def hit_probability_from_edge(row):
     prop_type = normalize_text(row.get("prop_type", "points"))
     line = safe_float(row.get("line"))
     proj = safe_float(row.get("projection"))
@@ -1034,7 +1016,10 @@ def render_top_play_card(row, rank_num):
 """,
         unsafe_allow_html=True,
     )
-    st.sidebar.header("Provider 1: The Odds API")
+# =========================
+# SECTION 6 START
+# =========================
+st.sidebar.header("Provider 1: The Odds API")
 
 the_odds_api_key = ""
 try:

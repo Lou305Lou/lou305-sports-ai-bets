@@ -1150,6 +1150,155 @@ def highlight_rows(row):
         return ["background-color: #FEF9C3"] * len(row)
     return [""] * len(row)
 
+
+# -----------------------------
+# NBA PLAYER PROPS V1 HELPERS
+# -----------------------------
+PROP_MARKET_MAP = {
+    "Points": "player_points",
+    "Rebounds": "player_rebounds",
+    "Assists": "player_assists",
+    "Threes": "player_threes",
+    "PRA": "player_points_rebounds_assists",
+    "Alt Points": "player_points_alternate",
+    "Alt Rebounds": "player_rebounds_alternate",
+    "Alt Assists": "player_assists_alternate",
+    "Alt Threes": "player_threes_alternate",
+}
+
+
+def fetch_event_prop_odds(event_id, markets, bookmakers=None, regions="us"):
+    if not API_KEY:
+        raise Exception("Missing ODDS_API_KEY in Streamlit secrets.")
+    url = f"https://api.the-odds-api.com/v4/sports/basketball_nba/events/{event_id}/odds"
+    params = {
+        "apiKey": API_KEY,
+        "markets": markets,
+        "oddsFormat": "american",
+    }
+    if bookmakers:
+        params["bookmakers"] = ",".join(bookmakers)
+    else:
+        params["regions"] = regions
+    response = requests.get(url, params=params, timeout=30)
+    if response.status_code != 200:
+        raise Exception(f"API error {response.status_code}: {response.text}")
+    return response.json()
+
+
+def parse_nba_props_from_events(events, market_keys, bookmakers=None, odds_min=-300, odds_max=200, player_search=""):
+    rows = []
+    for event in events:
+        event_id = event.get("id")
+        if not event_id:
+            continue
+        try:
+            event_odds = fetch_event_prop_odds(event_id, ",".join(market_keys), bookmakers=bookmakers)
+        except Exception:
+            continue
+        game = f"{event.get('away_team')} @ {event.get('home_team')}"
+        commence_time = event.get("commence_time")
+        for bookmaker in event_odds.get("bookmakers", []):
+            book_title = bookmaker.get("title", "Unknown")
+            for market in bookmaker.get("markets", []):
+                market_key = market.get("key")
+                for outcome in market.get("outcomes", []):
+                    price = outcome.get("price")
+                    player = outcome.get("description") or outcome.get("participant") or ""
+                    side = outcome.get("name")
+                    line = outcome.get("point")
+                    if price is None or side is None:
+                        continue
+                    try:
+                        odds_val = int(price)
+                    except Exception:
+                        continue
+                    if odds_val < odds_min or odds_val > odds_max:
+                        continue
+                    if player_search and player_search.lower() not in player.lower():
+                        continue
+                    rows.append({
+                        "event_id": event_id,
+                        "game": game,
+                        "commence_time": commence_time,
+                        "player": player,
+                        "market_key": market_key,
+                        "market_label": next((k for k, v in PROP_MARKET_MAP.items() if v == market_key), market_key),
+                        "side": side,
+                        "line": line,
+                        "book": book_title,
+                        "odds": odds_val,
+                        "implied_prob": implied_prob_from_american(odds_val),
+                    })
+    return pd.DataFrame(rows)
+
+
+def score_nba_props(prop_df):
+    if prop_df.empty:
+        return prop_df
+    working = prop_df.copy()
+    grouped_rows = []
+    group_cols = ["event_id", "game", "commence_time", "player", "market_key", "market_label", "side", "line"]
+    for keys, grp in working.groupby(group_cols, dropna=False):
+        event_id, game, commence_time, player, market_key, market_label, side, line = keys
+        books = grp["book"].nunique()
+        best_idx = grp["odds"].astype(float).idxmax()
+        best_row = grp.loc[best_idx]
+        avg_prob = pd.to_numeric(grp["implied_prob"], errors="coerce").fillna(0).mean()
+        best_prob = implied_prob_from_american(best_row["odds"])
+        edge = (avg_prob - (best_prob or 0)) * 100
+        support_boost = min(books, 8) * 1.5
+        confidence = clamp(round((avg_prob * 100) + support_boost + max(edge, 0) * 3.0, 1), 50, 95)
+        score = round(confidence + max(edge, 0) * 4.0, 1)
+        grouped_rows.append({
+            "event_id": event_id,
+            "game": game,
+            "commence_time": commence_time,
+            "player": player,
+            "market": market_label,
+            "side": side,
+            "line": line,
+            "best_book": best_row["book"],
+            "best_odds": int(best_row["odds"]),
+            "books": int(books),
+            "avg_implied_prob": round(avg_prob * 100, 1),
+            "edge_vs_consensus": round(edge, 2),
+            "confidence": confidence,
+            "score": score,
+            "tier": confidence_tier(confidence),
+        })
+    out = pd.DataFrame(grouped_rows)
+    if not out.empty:
+        out = out.sort_values(["score", "confidence", "books"], ascending=[False, False, False]).reset_index(drop=True)
+    return out
+
+
+def create_prop_tracker_row(row):
+    return {
+        "date_added": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "sport": "NBA",
+        "game": row.get("game", ""),
+        "bet_type": f"Prop - {row.get('market', '')}",
+        "pick": f"{row.get('player', '')} {row.get('side', '')} {row.get('line', '')}",
+        "confidence": row.get("confidence", 0),
+        "grade": grade_play(row.get("confidence", 0)),
+        "engine_score": row.get("score", 0),
+        "supporters": f"Books:{row.get('books', 0)}",
+        "support_count": row.get("books", 0),
+        "stats_pick": "",
+        "stats_conf": "",
+        "matchup_pick": "",
+        "matchup_conf": "",
+        "market_pick": row.get("best_book", ""),
+        "market_conf": row.get("avg_implied_prob", 0),
+        "momentum_pick": "",
+        "momentum_conf": "",
+        "status": "Pending",
+        "stake": 100.0,
+        "actual_profit": 0.0,
+        "notes": "NBA player prop",
+    }
+
 # -----------------------------
 # SESSION STATE
 # -----------------------------
@@ -1200,6 +1349,9 @@ if "auto_saved_ai_count" not in st.session_state:
     st.session_state.auto_saved_ai_count = 0
 if "duplicate_ai_skipped_count" not in st.session_state:
     st.session_state.duplicate_ai_skipped_count = 0
+if "props_df" not in st.session_state:
+    st.session_state.props_df = pd.DataFrame()
+
 
 # -----------------------------
 # CONTROLS
@@ -1390,12 +1542,13 @@ if scan_button:
 # -----------------------------
 # TABS
 # -----------------------------
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "Dashboard",
     "Middle Plays",
     "Arbitrage Plays",
     "Bet Tracker",
     "Unified AI + V8",
+    "NBA Player Props V1",
 ])
 
 with tab1:
@@ -1546,3 +1699,107 @@ with tab5:
             p3.metric("Losses", perf_summary["losses"])
             p4.metric("Pending", perf_summary["pending"])
             st.dataframe(st.session_state.ai_perf_df, use_container_width=True)
+
+
+with tab6:
+    st.subheader("NBA Player Props V1")
+    st.caption("Ranks props by market-implied probability, consensus edge, and book support. This is not a player projection model.")
+
+    p1, p2, p3 = st.columns(3)
+    with p1:
+        prop_market_labels = st.multiselect(
+            "Prop markets",
+            list(PROP_MARKET_MAP.keys()),
+            default=["Points", "Rebounds", "Assists", "Threes", "PRA"]
+        )
+    with p2:
+        prop_odds_min, prop_odds_max = st.slider("Odds filter (American)", -300, 200, (-300, 200), step=5)
+    with p3:
+        high_probability_only = st.checkbox("High probability only (confidence 70+)", value=True)
+
+    p4, p5 = st.columns(2)
+    with p4:
+        player_search = st.text_input("Player search", value="")
+    with p5:
+        auto_save_props = st.checkbox("Auto-save shown props to V8", value=False)
+
+    prop_scan = st.button("Scan NBA Player Props", type="secondary")
+
+    if prop_scan:
+        with st.spinner("Scanning NBA player props..."):
+            try:
+                base_events = fetch_odds("basketball_nba", markets="h2h")
+                filtered_base_events = filter_events_by_books(base_events, selected_books) if selected_books else base_events
+                market_keys = [PROP_MARKET_MAP[label] for label in prop_market_labels] if prop_market_labels else list(PROP_MARKET_MAP.values())
+                props_raw_df = parse_nba_props_from_events(
+                    filtered_base_events,
+                    market_keys=market_keys,
+                    bookmakers=selected_books if selected_books else None,
+                    odds_min=prop_odds_min,
+                    odds_max=prop_odds_max,
+                    player_search=player_search,
+                )
+                props_df = score_nba_props(props_raw_df)
+                if high_probability_only and not props_df.empty:
+                    props_df = props_df[props_df["confidence"] >= 70].copy()
+                st.session_state.props_df = props_df.reset_index(drop=True)
+
+                if auto_save_props and not st.session_state.props_df.empty:
+                    existing = st.session_state.ai_perf_df.copy()
+                    today = datetime.now().strftime("%Y-%m-%d")
+                    add_rows = []
+                    for _, row in st.session_state.props_df.iterrows():
+                        pick = f"{row.get('player', '')} {row.get('side', '')} {row.get('line', '')}"
+                        dup = False
+                        if not existing.empty:
+                            dup = (((existing["sport"].astype(str) == "NBA") &
+                                    (existing["game"].astype(str) == str(row.get("game", ""))) &
+                                    (existing["bet_type"].astype(str) == f"Prop - {row.get('market', '')}") &
+                                    (existing["pick"].astype(str) == pick) &
+                                    (existing["date_added"].astype(str).str[:10] == today)).any())
+                        if not dup:
+                            add_rows.append(create_prop_tracker_row(row))
+                    if add_rows:
+                        st.session_state.ai_perf_df = pd.concat([st.session_state.ai_perf_df, pd.DataFrame(add_rows)], ignore_index=True)
+                st.success(f"Player props loaded: {len(st.session_state.props_df)} rows")
+            except Exception as e:
+                st.error(f"Error loading NBA player props: {e}")
+
+    props_df = st.session_state.props_df.copy()
+    if props_df.empty:
+        st.info("Run NBA Player Props scan to view ranked props.")
+    else:
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Props Shown", len(props_df))
+        m2.metric("Best Confidence", round(float(props_df["confidence"].max()), 1))
+        m3.metric("Avg Confidence", round(float(props_df["confidence"].mean()), 1))
+        m4.metric("Players", int(props_df["player"].nunique()))
+
+        st.dataframe(props_df, use_container_width=True)
+
+        prop_options = [f"{i+1}. {row['player']} | {row['market']} | {row['side']} {row['line']} | {row['best_odds']} | {row['game']}" for i, row in props_df.iterrows()]
+        selected_prop_label = st.selectbox("Select prop to save to V8", prop_options)
+        selected_prop_index = prop_options.index(selected_prop_label)
+        selected_prop_row = props_df.iloc[selected_prop_index]
+
+        st.markdown(
+            f"""
+            <div class="best-bet-card">
+                <b>Top Prop View:</b> {selected_prop_row['player']}<br>
+                <b>Market:</b> {selected_prop_row['market']}<br>
+                <b>Pick:</b> {selected_prop_row['side']} {selected_prop_row['line']} @ {selected_prop_row['best_odds']}<br>
+                <b>Best Book:</b> {selected_prop_row['best_book']}<br>
+                <b>Books:</b> {selected_prop_row['books']}<br>
+                <b>Avg Implied Probability:</b> {selected_prop_row['avg_implied_prob']}%<br>
+                <b>Confidence:</b> {selected_prop_row['confidence']} ({selected_prop_row['tier']})
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        if st.button("Save Selected Prop to Performance Learning V8"):
+            st.session_state.ai_perf_df = pd.concat(
+                [st.session_state.ai_perf_df, pd.DataFrame([create_prop_tracker_row(selected_prop_row)])],
+                ignore_index=True,
+            )
+            st.success("Selected prop saved to Performance Learning V8.")

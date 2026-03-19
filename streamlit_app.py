@@ -1,16 +1,16 @@
 
 # ============================================================
-# SPORTS AI BETTING DASHBOARD — DEV MODE V19
-# PORTFOLIO ENGINE V1
+# SPORTS AI BETTING DASHBOARD — DEV MODE V20
+# PORTFOLIO ENGINE V2
 # ============================================================
 # Real working file
 #
 # What changed:
-# - Adds portfolio construction rules
-# - Caps same-player exposure
-# - Caps same-game exposure
-# - Selects strongest props first
-# - Rebalances units across the slate
+# - Upgrades portfolio selection from simple caps to smart allocation
+# - Scores plays by adjusted portfolio value, not only raw edge
+# - Allows one controlled exception for an elite same-player play
+# - Uses unused unit capacity more intelligently
+# - Rebalances selected plays to form a fuller card
 # - Keeps Matchup Engine V1, EV Curve V1, Model Variance V1,
 #   Tier System V2, Correlation Filter V3
 # ============================================================
@@ -23,9 +23,9 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Sports AI Betting Dashboard DEV MODE V19", page_icon="🏀", layout="wide")
-st.title("🏀 Sports AI Betting Dashboard — DEV MODE V19")
-st.caption("PORTFOLIO ENGINE V1")
+st.set_page_config(page_title="Sports AI Betting Dashboard DEV MODE V20", page_icon="🏀", layout="wide")
+st.title("🏀 Sports AI Betting Dashboard — DEV MODE V20")
+st.caption("PORTFOLIO ENGINE V2")
 
 SPORTS = ["NBA", "WNBA", "NHL", "MLB", "NFL"]
 BOOKS = ["DraftKings", "FanDuel", "BetMGM"]
@@ -267,37 +267,29 @@ def apply_auto_projections(df, dev_strength):
         player = row["player"]
         prop_type = row["prop_type"]
         team = row["team"]
-
         base_multiplier = PLAYER_PROFILE.get(player, {}).get(prop_type, 1.0)
         pace = TEAM_MATCHUP.get(team, {}).get("pace", 1.0)
         matchup = TEAM_MATCHUP.get(team, {}).get("matchup", 1.0)
-
         player_var = PLAYER_VARIANCE.get(player, 1.0)
         prop_var = PROP_VARIANCE.get(prop_type, 1.0)
         team_var = TEAM_DISPERSION.get(team, 1.0)
-
         mm = matchup_modifier(team, prop_type)
         fm = fit_modifier(player, prop_type)
-
         deterministic_seed = ((sum(ord(c) for c in player + prop_type + team) % 17) - 8) / 100.0
         shaped_variance = deterministic_seed * player_var * prop_var * team_var * dev_strength
-
         projection = line * base_multiplier * pace * matchup * mm * fm * (1 + shaped_variance)
-
         cap = {
             "points": 5.2, "pra": 5.8, "assists": 4.2, "rebounds": 4.3,
             "3pt_made": 2.0, "pr": 5.0, "pa": 5.0, "ra": 3.9
         }.get(prop_type, 4.0)
         projection = min(max(projection, line - cap), line + cap)
         projections.append(projection)
-
         if shaped_variance >= 0.05:
             variance_tags.append("High-upside profile")
         elif shaped_variance <= -0.04:
             variance_tags.append("Lower-volatility profile")
         else:
             variance_tags.append("Neutral variance")
-
         matchup_score = mm * fm
         if matchup_score >= 1.05:
             matchup_notes.append("Strong matchup")
@@ -305,7 +297,6 @@ def apply_auto_projections(df, dev_strength):
             matchup_notes.append("Tough matchup")
         else:
             matchup_notes.append("Neutral matchup")
-
     out["projection"] = projections
     out["variance_note"] = variance_tags
     out["matchup_note"] = matchup_notes
@@ -315,19 +306,15 @@ def calibrated_hit_probability(row):
     line = safe_float(row["line"])
     proj = safe_float(row["projection"])
     sigma = SIGMA_MAP.get(row["prop_type"], 5.5)
-
     player_var = PLAYER_VARIANCE.get(row["player"], 1.0)
     prop_var = PROP_VARIANCE.get(row["prop_type"], 1.0)
     team_var = TEAM_DISPERSION.get(row["team"], 1.0)
     mm = matchup_modifier(row["team"], row["prop_type"])
-
     sigma_adj = sigma / max(0.82, min(1.22, (player_var * 0.40 + prop_var * 0.30 + team_var * 0.15 + mm * 0.15)))
     z = (proj - line) / sigma_adj if sigma_adj > 0 else 0
-
     raw = 0.5 * (1 + math.erf(z / math.sqrt(2)))
     compress = 0.51 + ((player_var - 1.0) * 0.09) + ((prop_var - 1.0) * 0.07) + ((team_var - 1.0) * 0.05) + ((mm - 1.0) * 0.10)
     compress = max(0.45, min(0.63, compress))
-
     calibrated = 0.50 + (raw - 0.50) * compress
     calibrated = max(0.35, min(0.70, calibrated))
     return calibrated if proj > line else 1 - calibrated
@@ -338,20 +325,14 @@ def curved_ev_edge(prob, implied_prob, edge_abs, prop_type, variance_note, match
     edge_abs = safe_float(edge_abs)
     if pd.isna(prob) or pd.isna(implied_prob):
         return np.nan
-
     raw_gap = (prob - implied_prob) * 100.0
     edge_factor = 1.0 + min(0.30, max(0.0, edge_abs) / 20.0)
     prop_factor = {
         "points": 1.04, "rebounds": 0.96, "assists": 0.99, "3pt_made": 1.08,
         "turnovers": 0.94, "pra": 1.03, "pr": 1.01, "pa": 1.00, "ra": 0.97,
     }.get(prop_type, 1.0)
-    variance_factor = {
-        "High-upside profile": 1.05, "Neutral variance": 1.00, "Lower-volatility profile": 0.95,
-    }.get(str(variance_note), 1.0)
-    matchup_factor = {
-        "Strong matchup": 1.06, "Neutral matchup": 1.00, "Tough matchup": 0.94,
-    }.get(str(matchup_note), 1.0)
-
+    variance_factor = {"High-upside profile": 1.05, "Neutral variance": 1.00, "Lower-volatility profile": 0.95}.get(str(variance_note), 1.0)
+    matchup_factor = {"Strong matchup": 1.06, "Neutral matchup": 1.00, "Tough matchup": 0.94}.get(str(matchup_note), 1.0)
     shaped_gap = raw_gap * edge_factor * prop_factor * variance_factor * matchup_factor
     if shaped_gap >= 0:
         curved = 13.8 * math.tanh(shaped_gap / 11.2)
@@ -363,7 +344,6 @@ def classify_play_tier(row):
     score = safe_float(row["edge_score"])
     hitp = safe_float(row["hit_probability"]) * 100
     ev = safe_float(row["expected_value_edge"])
-
     if score >= 81 and hitp >= 61 and ev >= 6.2:
         return "Tier 1", "Core play profile"
     if score >= 68 and hitp >= 57 and ev >= 2.5:
@@ -376,7 +356,6 @@ def compute_prop_scores(df):
     out["recommended_side"] = np.where(out["projection"] > out["line"], "Over", "Under")
     out["hit_probability"] = out.apply(calibrated_hit_probability, axis=1)
     out["book_implied_prob"] = out["odds"].apply(implied_prob_american)
-
     out["expected_value_edge"] = out.apply(
         lambda r: curved_ev_edge(
             r["hit_probability"], r["book_implied_prob"], abs(safe_float(r["proj_edge"])),
@@ -384,11 +363,9 @@ def compute_prop_scores(df):
         ),
         axis=1
     )
-
     player_var_component = out["player"].map(lambda p: PLAYER_VARIANCE.get(p, 1.0))
     prop_var_component = out["prop_type"].map(lambda p: PROP_VARIANCE.get(p, 1.0))
     matchup_component = out.apply(lambda r: matchup_modifier(r["team"], r["prop_type"]) * fit_modifier(r["player"], r["prop_type"]), axis=1)
-
     score = (
         np.clip(out["proj_edge"].abs() * 7.3, 0, 31) +
         np.clip((out["hit_probability"] - 0.50) * 125, 0, 24) +
@@ -399,7 +376,6 @@ def compute_prop_scores(df):
     )
     out["edge_score"] = np.clip(score, 0, 100).round(1)
     out["bet_grade"] = out["edge_score"].apply(edge_bucket)
-
     tiers = out.apply(classify_play_tier, axis=1, result_type="expand")
     out["play_tier"] = tiers[0]
     out["tier_reason"] = tiers[1]
@@ -417,14 +393,6 @@ def apply_line_shopping(df):
         group["best_odds"] = best["odds"]
         parts.append(group)
     return pd.concat(parts, ignore_index=True)
-
-def best_line_shop(df):
-    rows = []
-    for _, group in df.groupby(["player", "prop_type", "game_segment", "recommended_side"], dropna=False):
-        side = group["recommended_side"].iloc[0]
-        ordered = group.sort_values(["line", "odds", "edge_score"], ascending=[side == "Over", False, False])
-        rows.append(ordered.iloc[0])
-    return pd.DataFrame(rows).reset_index(drop=True).sort_values(["portfolio_units", "edge_score"], ascending=[False, False])
 
 def create_live_snapshot_variant(df):
     out = df.copy()
@@ -476,18 +444,15 @@ def apply_correlation_filter_v3(df):
     out["correlation_rank_note"] = ""
     out["exposure_flag"] = ""
     out["correlation_penalty"] = 0.0
-
     parts = []
     for (player, game_segment), group in out.groupby(["player", "game_segment"], dropna=False):
         group = group.sort_values(["edge_score", "expected_value_edge", "hit_probability"], ascending=[False, False, False]).copy()
         if len(group) == 1:
             parts.append(group)
             continue
-
         anchor_idx = group.index[0]
         anchor_prop = group.loc[anchor_idx, "prop_type"]
         group.loc[anchor_idx, "correlation_rank_note"] = "Top same-player prop kept at full size"
-
         for idx in group.index[1:]:
             strength = overlap_strength(anchor_prop, group.loc[idx, "prop_type"])
             if strength == "strong":
@@ -503,7 +468,6 @@ def apply_correlation_filter_v3(df):
             else:
                 group.loc[idx, "correlation_rank_note"] = "No meaningful overlap"
         parts.append(group)
-
     return pd.concat(parts, ignore_index=True)
 
 def kelly_fraction_from_row(row):
@@ -520,7 +484,6 @@ def base_bet_size(row):
     steam = row["steam_flag"]
     units = 0.25
     reasons = []
-
     if tier == "Tier 1":
         units = 0.75
         reasons.append("Tier 1 base")
@@ -530,38 +493,31 @@ def base_bet_size(row):
     else:
         units = 0.25
         reasons.append("Tier 3 base")
-
     if steam == "📈 Steam" and tier in ["Tier 1", "Tier 2"]:
         units += 0.25
         reasons.append("Steam boost")
-
     if safe_float(row["expected_value_edge"]) >= 7.5 and safe_float(row["edge_score"]) >= 77:
         units += 0.25
         reasons.append("High-quality boost")
-
     return units, reasons
 
 def apply_bet_sizing(df):
     out = df.copy()
     out["kelly_fraction"] = out.apply(kelly_fraction_from_row, axis=1)
-
     final_units = []
     labels = []
     reasons_out = []
-
     for _, row in out.iterrows():
         units, reasons = base_bet_size(row)
         penalty = safe_float(row.get("correlation_penalty", 0.0))
         if penalty > 0:
             units -= penalty
             reasons.append(f"Correlation reduction ({penalty:.2f}u)")
-
         kelly = safe_float(row["kelly_fraction"])
         if kelly > 0:
             kelly_cap = min(1.0, max(0.25, round((kelly * 0.35) / 0.01) * 0.25))
             units = min(units, kelly_cap)
             reasons.append("Kelly cap")
-
         units = max(0.0, min(1.0, round(units * 20) / 20))
         if units >= 0.75:
             label = "0.75u Strong"
@@ -573,62 +529,113 @@ def apply_bet_sizing(df):
             label = "0.25u Small"
         else:
             label = "Pass"
-
         final_units.append(units)
         labels.append(label)
         reasons_out.append(" | ".join(reasons))
-
     out["bet_size_units"] = final_units
     out["bet_size_label"] = labels
     out["bet_size_reason"] = reasons_out
     return out
 
-# PORTFOLIO ENGINE V1
-def build_portfolio(df, max_same_player=1, max_same_game=2, total_unit_cap=3.0):
+def build_portfolio_v2(df, max_same_player=1, max_same_game=2, total_unit_cap=3.0, allow_exception=True):
     out = df.copy()
     out["portfolio_selected"] = False
     out["portfolio_units"] = 0.0
     out["portfolio_note"] = "Not selected"
+    out["portfolio_value"] = 0.0
+
+    # Adjusted value rewards edge/EV/hit but penalizes overlap and concentration
+    overlap_penalty = out["correlation_penalty"].fillna(0) * 20
+    matchup_bonus = out["matchup_note"].map({"Strong matchup": 2.2, "Neutral matchup": 0.6, "Tough matchup": -1.5}).fillna(0)
+    tier_bonus = out["play_tier"].map({"Tier 1": 4.0, "Tier 2": 1.8, "Tier 3": -1.0}).fillna(0)
+    out["portfolio_value"] = (
+        out["edge_score"].fillna(0) * 0.58
+        + out["expected_value_edge"].fillna(0) * 1.35
+        + (out["hit_probability"].fillna(0) * 100 - 50) * 0.55
+        + matchup_bonus
+        + tier_bonus
+        - overlap_penalty
+    ).round(2)
 
     ordered = out.sort_values(
-        ["edge_score", "expected_value_edge", "hit_probability", "bet_size_units"],
+        ["portfolio_value", "edge_score", "expected_value_edge", "hit_probability"],
         ascending=[False, False, False, False]
     ).copy()
 
     player_counts = {}
     game_counts = {}
     running_units = 0.0
+    exception_used = False
 
     for idx, row in ordered.iterrows():
         player = str(row["player"])
         game = str(row["opponent"])
         units = safe_float(row["bet_size_units"])
 
-        if player_counts.get(player, 0) >= max_same_player:
+        player_ok = player_counts.get(player, 0) < max_same_player
+        game_ok = game_counts.get(game, 0) < max_same_game
+        units_ok = (running_units + units) <= total_unit_cap
+
+        if player_ok and game_ok and units_ok:
+            ordered.loc[idx, "portfolio_selected"] = True
+            ordered.loc[idx, "portfolio_units"] = units
+            ordered.loc[idx, "portfolio_note"] = "Selected"
+            player_counts[player] = player_counts.get(player, 0) + 1
+            game_counts[game] = game_counts.get(game, 0) + 1
+            running_units += units
+            continue
+
+        # controlled exception: one elite same-player or same-game add if very high value
+        if allow_exception and not exception_used and units_ok:
+            elite = (
+                safe_float(row["edge_score"]) >= 76
+                and safe_float(row["expected_value_edge"]) >= 11
+                and str(row["correlation_flag"]) != "⚠️ Strong overlap"
+            )
+            if elite and (player_counts.get(player, 0) == max_same_player or game_counts.get(game, 0) == max_same_game):
+                exc_units = max(0.25, round((units - 0.15) * 20) / 20)
+                if running_units + exc_units <= total_unit_cap:
+                    ordered.loc[idx, "portfolio_selected"] = True
+                    ordered.loc[idx, "portfolio_units"] = exc_units
+                    ordered.loc[idx, "portfolio_note"] = "Selected | controlled exception"
+                    player_counts[player] = player_counts.get(player, 0) + 1
+                    game_counts[game] = game_counts.get(game, 0) + 1
+                    running_units += exc_units
+                    exception_used = True
+                    continue
+
+        if not player_ok:
             ordered.loc[idx, "portfolio_note"] = "Blocked: player cap"
-            continue
-        if game_counts.get(game, 0) >= max_same_game:
+        elif not game_ok:
             ordered.loc[idx, "portfolio_note"] = "Blocked: game cap"
-            continue
-        if running_units + units > total_unit_cap:
+        else:
             ordered.loc[idx, "portfolio_note"] = "Blocked: total unit cap"
-            continue
 
-        ordered.loc[idx, "portfolio_selected"] = True
-        ordered.loc[idx, "portfolio_units"] = units
-        ordered.loc[idx, "portfolio_note"] = "Selected"
-        player_counts[player] = player_counts.get(player, 0) + 1
-        game_counts[game] = game_counts.get(game, 0) + 1
-        running_units += units
+    # Fill unused capacity with one best remaining reduced play if enough room
+    remaining = total_unit_cap - running_units
+    if remaining >= 0.25:
+        candidates = ordered[~ordered["portfolio_selected"]].copy()
+        if not candidates.empty:
+            candidates = candidates.sort_values(["portfolio_value", "edge_score"], ascending=[False, False])
+            for idx, row in candidates.iterrows():
+                mini_units = min(max(0.25, round((safe_float(row["bet_size_units"]) - 0.20) * 20) / 20), remaining)
+                if mini_units >= 0.25:
+                    ordered.loc[idx, "portfolio_selected"] = True
+                    ordered.loc[idx, "portfolio_units"] = mini_units
+                    ordered.loc[idx, "portfolio_note"] = "Selected | fill play"
+                    running_units += mini_units
+                    break
 
-    # slight rebalance: if 3 or more picks selected, trim lowest selected play by 0.10u
     selected = ordered[ordered["portfolio_selected"]].copy()
     if len(selected) >= 3:
-        lowest_idx = selected.sort_values(["edge_score", "expected_value_edge"], ascending=[True, True]).index[0]
-        old_units = safe_float(ordered.loc[lowest_idx, "portfolio_units"])
-        new_units = max(0.25, round((old_units - 0.10) * 20) / 20)
-        ordered.loc[lowest_idx, "portfolio_units"] = new_units
-        ordered.loc[lowest_idx, "portfolio_note"] = "Selected | portfolio rebalance"
+        # rebalance strongest play slightly up if room exists
+        total_now = selected["portfolio_units"].sum()
+        room = total_unit_cap - total_now
+        if room >= 0.10:
+            top_idx = selected.sort_values(["portfolio_value", "edge_score"], ascending=[False, False]).index[0]
+            old_units = safe_float(ordered.loc[top_idx, "portfolio_units"])
+            ordered.loc[top_idx, "portfolio_units"] = min(1.0, round((old_units + min(0.10, room)) * 20) / 20)
+            ordered.loc[top_idx, "portfolio_note"] = str(ordered.loc[top_idx, "portfolio_note"]) + " | top-up"
 
     ordered["portfolio_label"] = np.where(
         ordered["portfolio_selected"],
@@ -636,6 +643,9 @@ def build_portfolio(df, max_same_player=1, max_same_game=2, total_unit_cap=3.0):
         "—"
     )
     return ordered
+
+def sort_for_display(df):
+    return df.sort_values(["portfolio_selected", "portfolio_value", "edge_score"], ascending=[False, False, False]).reset_index(drop=True)
 
 def render_top_play_card(row, rank_num):
     st.markdown(
@@ -664,14 +674,14 @@ def render_top_play_card(row, rank_num):
   <div style="margin-top:8px;">
     <b>Model Bet Size:</b> {row['bet_size_label']} ({row['bet_size_units']:.2f}u) |
     <b>Portfolio Size:</b> {row['portfolio_label']} |
-    <b>Kelly:</b> {row['kelly_fraction']*100:.2f}%
+    <b>Portfolio Value:</b> {row['portfolio_value']:.1f}
   </div>
   <div style="margin-top:8px;">
     <b>Variance:</b> {row['variance_note']} |
-    <b>Matchup:</b> {row['matchup_note']}
+    <b>Matchup:</b> {row['matchup_note']} |
+    <b>Correlation:</b> {row['correlation_flag'] if row['correlation_flag'] else 'None'}
   </div>
   <div style="margin-top:8px;">
-    <b>Correlation:</b> {row['correlation_flag'] if row['correlation_flag'] else 'None'} |
     <b>Portfolio:</b> {row['portfolio_note']}
   </div>
 </div>
@@ -776,22 +786,18 @@ def normalize_import_log(df):
     for old, new in rename_map.items():
         if old in out.columns and new not in out.columns:
             out = out.rename(columns={old: new})
-
     defaults = {c: np.nan for c in TRACKER_COLUMNS}
     defaults.update({"bet_id": "", "added_at": current_ts_str(), "result": "Open", "grade_source": "Import", "notes": ""})
     for col, val in defaults.items():
         if col not in out.columns:
             out[col] = val
-
     for col in ["line", "odds", "projection", "edge", "hit_probability", "ev_edge", "edge_score", "bet_size_units", "profit_units", "actual_stat"]:
         out[col] = pd.to_numeric(out[col], errors="coerce")
     for col in ["bet_id", "added_at", "sport", "player", "opponent", "book", "game_segment", "prop_type", "side", "play_tier", "steam_flag", "bet_timing", "bet_size_label", "result", "grade_source", "notes"]:
         out[col] = out[col].fillna("").astype(str)
-
     out["prop_type"] = out["prop_type"].apply(normalize_text)
     out["game_segment"] = out["game_segment"].apply(normalize_text)
     out["bet_id"] = np.where(out["bet_id"].str.len() > 0, out["bet_id"], [f"IMPORT-{i+1:04d}" for i in range(len(out))])
-
     missing_profit = out["profit_units"].isna() & out["result"].isin(["Win", "Loss", "Push"])
     out.loc[missing_profit, "profit_units"] = out.loc[missing_profit].apply(
         lambda r: profit_units_from_result(r["result"], r["odds"], r["bet_size_units"]), axis=1
@@ -834,8 +840,7 @@ def tracker_summary(df):
 
 # Build live data
 init_tracker_state()
-
-st.sidebar.header("DEV MODE V19")
+st.sidebar.header("DEV MODE V20")
 sport_name = st.sidebar.selectbox("Sport", SPORTS, index=0)
 dev_strength = st.sidebar.slider("Auto projection aggressiveness", 0.50, 1.50, 1.00, 0.05)
 projection_file = st.sidebar.file_uploader("Optional projection CSV override", type=["csv", "xlsx"])
@@ -844,6 +849,7 @@ st.sidebar.markdown("### Portfolio Rules")
 max_same_player = st.sidebar.slider("Max plays per player", 1, 3, 1, 1)
 max_same_game = st.sidebar.slider("Max plays per game", 1, 4, 2, 1)
 total_unit_cap = st.sidebar.slider("Total unit cap", 1.0, 5.0, 3.0, 0.25)
+allow_exception = st.sidebar.checkbox("Allow controlled exception", value=True)
 
 props_df = make_sample_props_df()
 props_df = props_df[props_df["sport"] == sport_name].copy()
@@ -874,10 +880,16 @@ live_market = apply_line_shopping(live_market)
 live_market = apply_steam_signals(live_market, prev_snapshot)
 live_market = apply_correlation_filter_v3(live_market)
 live_market = apply_bet_sizing(live_market)
-live_market = build_portfolio(live_market, max_same_player=max_same_player, max_same_game=max_same_game, total_unit_cap=total_unit_cap)
+live_market = build_portfolio_v2(
+    live_market,
+    max_same_player=max_same_player,
+    max_same_game=max_same_game,
+    total_unit_cap=total_unit_cap,
+    allow_exception=allow_exception
+)
 
-props_live = live_market.copy()
-props_shop = best_line_shop(props_live)
+props_live = sort_for_display(live_market.copy())
+props_shop = props_live.copy()
 st.session_state["latest_props_live"] = props_live.copy()
 
 tab_home, tab_best, tab_portfolio, tab_tracker, tab_import, tab_templates = st.tabs([
@@ -885,43 +897,40 @@ tab_home, tab_best, tab_portfolio, tab_tracker, tab_import, tab_templates = st.t
 ])
 
 with tab_home:
-    st.subheader("Portfolio Engine V1 audit")
+    st.subheader("Portfolio Engine V2 audit")
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Props Rows", len(props_live))
     c2.metric("Selected", int((props_live["portfolio_selected"] == True).sum()))
     c3.metric("Total Portfolio Units", f"{props_live.loc[props_live['portfolio_selected'] == True, 'portfolio_units'].sum():.2f}")
-    c4.metric("Blocked", int((props_live["portfolio_selected"] == False).sum()))
-    audit = props_shop[[
-        "player", "prop_type", "line", "projection", "hit_probability", "expected_value_edge",
-        "edge_score", "play_tier", "bet_size_units", "portfolio_units", "portfolio_note", "matchup_note"
+    c4.metric("Controlled Exceptions", int(props_live["portfolio_note"].astype(str).str.contains("controlled exception").sum()))
+    audit = props_live[[
+        "player", "prop_type", "portfolio_value", "edge_score", "play_tier",
+        "bet_size_units", "portfolio_units", "portfolio_note", "matchup_note"
     ]].head(12).copy()
-    audit["hit_probability"] = (audit["hit_probability"] * 100).round(1)
     st.dataframe(audit, use_container_width=True)
-    st.info("Portfolio Engine V1 selects the strongest bets first, then enforces player, game, and total-unit caps across the slate.")
+    st.info("Portfolio Engine V2 ranks by portfolio value, allows one controlled exception, and uses leftover capacity more intelligently.")
 
 with tab_best:
     st.subheader("Best Bets")
-    filtered = props_shop.head(15)
+    filtered = props_live.head(15)
     if filtered.empty:
         st.warning("No props available.")
     else:
         for idx, (_, row) in enumerate(filtered.iterrows(), start=1):
             render_top_play_card(row, idx)
-
         show = filtered[[
             "player", "prop_type", "recommended_side", "line", "odds", "projection",
             "proj_edge", "hit_probability", "expected_value_edge", "edge_score",
-            "play_tier", "steam_flag", "bet_size_units", "bet_size_label",
-            "portfolio_units", "portfolio_note", "variance_note", "matchup_note",
-            "correlation_flag", "bet_size_reason"
+            "play_tier", "bet_size_units", "portfolio_units", "portfolio_value",
+            "portfolio_note", "variance_note", "matchup_note", "correlation_flag"
         ]].copy()
         show["hit_probability"] = (show["hit_probability"] * 100).round(1)
         st.dataframe(show, use_container_width=True)
 
 with tab_portfolio:
     st.subheader("Portfolio Card")
-    selected = props_shop[props_shop["portfolio_selected"] == True].copy()
-    blocked = props_shop[props_shop["portfolio_selected"] == False].copy()
+    selected = props_live[props_live["portfolio_selected"] == True].copy()
+    blocked = props_live[props_live["portfolio_selected"] == False].copy()
 
     if selected.empty:
         st.warning("No plays selected under current portfolio rules.")
@@ -930,7 +939,7 @@ with tab_portfolio:
         show = selected[[
             "player", "prop_type", "recommended_side", "line", "odds", "projection",
             "edge_score", "play_tier", "bet_size_units", "portfolio_units",
-            "matchup_note", "portfolio_note"
+            "portfolio_value", "matchup_note", "portfolio_note"
         ]].copy()
         st.dataframe(show, use_container_width=True)
 
@@ -945,7 +954,7 @@ with tab_portfolio:
         st.markdown("### Blocked plays")
         blocked_show = blocked[[
             "player", "prop_type", "recommended_side", "line", "play_tier",
-            "bet_size_units", "portfolio_note"
+            "bet_size_units", "portfolio_value", "portfolio_note"
         ]].copy()
         st.dataframe(blocked_show, use_container_width=True)
 
@@ -979,7 +988,7 @@ with tab_tracker:
                     "result": st.column_config.SelectboxColumn("result", options=["Open", "Win", "Loss", "Push"]),
                     "notes": st.column_config.TextColumn("notes")
                 },
-                key="grade_editor_v19"
+                key="grade_editor_v20"
             )
             if st.button("Save manual grading"):
                 tracker_update_results(edited[["bet_id", "actual_stat", "result", "notes"]])
@@ -988,7 +997,7 @@ with tab_tracker:
         auto_template = sample_auto_grade_template()
         st.dataframe(auto_template, use_container_width=True)
         st.download_button("Download auto-grade template CSV", auto_template.to_csv(index=False).encode("utf-8"), "auto_grade_template.csv", "text/csv")
-        auto_file = st.file_uploader("Upload stats file for auto-grading", type=["csv", "xlsx"], key="auto_grade_v19")
+        auto_file = st.file_uploader("Upload stats file for auto-grading", type=["csv", "xlsx"], key="auto_grade_v20")
         if auto_file is not None:
             auto_df = load_csv_or_empty(auto_file)
             if not auto_df.empty:
@@ -1000,11 +1009,11 @@ with tab_tracker:
                     else:
                         st.success(f"Auto-graded {updated} bet(s).")
 
-        st.download_button("Download bet tracker CSV", tracker_df.to_csv(index=False).encode("utf-8"), "bet_tracker_v19.csv", "text/csv")
+        st.download_button("Download bet tracker CSV", tracker_df.to_csv(index=False).encode("utf-8"), "bet_tracker_v20.csv", "text/csv")
         xlsx_buffer = BytesIO()
         with pd.ExcelWriter(xlsx_buffer, engine="openpyxl") as writer:
             tracker_df.to_excel(writer, sheet_name="Bets", index=False)
-        st.download_button("Download bet tracker Excel", xlsx_buffer.getvalue(), "bet_tracker_v19.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.download_button("Download bet tracker Excel", xlsx_buffer.getvalue(), "bet_tracker_v20.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 with tab_import:
     st.subheader("CSV Bet Log Import")
@@ -1012,7 +1021,7 @@ with tab_import:
     st.dataframe(template_df, use_container_width=True)
     st.download_button("Download bet log import template CSV", template_df.to_csv(index=False).encode("utf-8"), "bet_log_import_template.csv", "text/csv")
 
-    import_file = st.file_uploader("Upload historical bet log CSV or Excel", type=["csv", "xlsx"], key="bet_log_import_v19")
+    import_file = st.file_uploader("Upload historical bet log CSV or Excel", type=["csv", "xlsx"], key="bet_log_import_v20")
     replace_existing = st.checkbox("Replace existing tracker with imported file", value=False)
     if import_file is not None:
         import_df = load_csv_or_empty(import_file)

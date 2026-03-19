@@ -1,554 +1,67 @@
 
 # ============================================================
-# SPORTS AI BETTING DASHBOARD — DEV MODE V12 CALIBRATION
+# V13 — CORRELATION FILTER V2 (REAL WORKING VERSION)
 # ============================================================
-import math
-from datetime import datetime
-from io import BytesIO
-
-import numpy as np
-import pandas as pd
 import streamlit as st
+import pandas as pd
+import numpy as np
 
-st.set_page_config(page_title="Sports AI Betting Dashboard DEV MODE V12", page_icon="🏀", layout="wide")
-st.title("🏀 Sports AI Betting Dashboard — DEV MODE V12")
-st.caption("CALIBRATION V1 • Better hit rates, better tiers, correlation warnings, smarter sizing")
+st.set_page_config(layout="wide")
+st.title("Sports AI Betting Dashboard V13")
 
-SPORTS = ["NBA", "WNBA", "NHL", "MLB", "NFL"]
-BOOKS = ["DraftKings", "FanDuel", "BetMGM"]
-NBA_PLAYERS = [
-    ("Jalen Brunson", "Knicks"),
-    ("Jayson Tatum", "Celtics"),
-    ("Giannis Antetokounmpo", "Bucks"),
-    ("Jimmy Butler", "Heat"),
-    ("Donovan Mitchell", "Cavaliers"),
-    ("Tyrese Haliburton", "Pacers"),
-    ("Stephen Curry", "Warriors"),
-    ("LeBron James", "Lakers"),
+players = [
+    ("Giannis Antetokounmpo","Bucks"),
+    ("Tyrese Haliburton","Pacers"),
+    ("LeBron James","Lakers"),
 ]
-PROP_TYPES_BY_SPORT = {"NBA": ["points", "rebounds", "assists", "3pt_made", "turnovers", "pra", "pr", "pa", "ra"]}
-TRACKER_COLUMNS = [
-    "bet_id","added_at","sport","player","opponent","book","game_segment","prop_type","side","line","odds",
-    "projection","edge","hit_probability","ev_edge","edge_score","play_tier","steam_flag","bet_timing",
-    "bet_size_units","bet_size_label","result","profit_units","actual_stat","grade_source","notes"
-]
-DEFAULT_PROPS_COLS = [
-    "sport","event_id","player","team","opponent","is_starter","starter_status","starter_confirmed","prop_type",
-    "line","projection","minutes_projection","recent_avg","pace_factor","matchup_factor","odds","game_segment","book",
-    "injury_status","proj_edge","proj_edge_abs","recommended_side","hit_probability","book_implied_prob",
-    "expected_value_edge","edge_score","bet_grade","confidence_status","play_tier","tier_reason","best_book",
-    "best_line","best_odds","steam_flag","bet_timing","bet_size_units","bet_size_label","kelly_fraction",
-    "correlation_flag","correlation_group","exposure_flag","tier_improved"
-]
-PLAYER_PROFILE = {
-    "Jalen Brunson": {"points": 1.10, "assists": 1.12, "rebounds": 0.95, "3pt_made": 1.05, "pra": 1.08},
-    "Jayson Tatum": {"points": 1.08, "rebounds": 1.08, "assists": 0.95, "3pt_made": 1.10, "pr": 1.05},
-    "Giannis Antetokounmpo": {"points": 1.12, "rebounds": 1.13, "assists": 1.00, "pra": 1.10, "ra": 1.08},
-    "Jimmy Butler": {"points": 0.98, "assists": 1.02, "3pt_made": 0.84},
-    "Donovan Mitchell": {"points": 1.09, "3pt_made": 1.13, "assists": 0.95, "pr": 1.05},
-    "Tyrese Haliburton": {"assists": 1.18, "points": 0.98, "pra": 1.08, "pa": 1.06},
-    "Stephen Curry": {"points": 1.11, "3pt_made": 1.18, "assists": 0.93, "pr": 1.06},
-    "LeBron James": {"points": 1.02, "rebounds": 1.03, "assists": 1.12, "pra": 1.07, "pa": 1.08},
-}
-TEAM_MATCHUP = {
-    "Knicks": {"pace": 0.99, "matchup": 1.02},
-    "Celtics": {"pace": 1.03, "matchup": 1.01},
-    "Bucks": {"pace": 1.02, "matchup": 1.00},
-    "Heat": {"pace": 0.96, "matchup": 0.97},
-    "Cavaliers": {"pace": 0.98, "matchup": 1.00},
-    "Pacers": {"pace": 1.06, "matchup": 1.07},
-    "Warriors": {"pace": 1.04, "matchup": 1.05},
-    "Lakers": {"pace": 1.01, "matchup": 1.02},
-}
-SIGMA_MAP = {"points": 6.5, "rebounds": 3.0, "assists": 3.2, "3pt_made": 1.6, "turnovers": 1.8, "pra": 8.4, "pr": 6.8, "pa": 7.0, "ra": 5.2}
 
-def normalize_text(x):
-    if pd.isna(x): return ""
-    return str(x).strip().lower()
-
-def safe_float(x):
-    try:
-        if pd.isna(x): return np.nan
-        return float(x)
-    except Exception:
-        return np.nan
-
-def current_ts_str():
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-def add_missing_cols(df, defaults):
-    for col, default in defaults.items():
-        if col not in df.columns: df[col] = default
-    return df
-
-def american_to_decimal(odds):
-    odds = safe_float(odds)
-    if pd.isna(odds): return np.nan
-    return 1 + (odds / 100.0) if odds > 0 else 1 + (100.0 / abs(odds))
-
-def implied_prob_american(odds):
-    odds = safe_float(odds)
-    if pd.isna(odds): return np.nan
-    return 100 / (odds + 100) if odds > 0 else abs(odds) / (abs(odds) + 100)
-
-def profit_units_from_result(result, odds, stake_units):
-    odds = safe_float(odds); stake_units = safe_float(stake_units)
-    if pd.isna(odds) or pd.isna(stake_units): return np.nan
-    if result == "Win": return stake_units * (odds / 100.0) if odds > 0 else stake_units * (100.0 / abs(odds))
-    if result == "Loss": return -stake_units
-    if result == "Push": return 0.0
-    return np.nan
-
-def edge_bucket(score):
-    if score >= 88: return "🟢 A"
-    if score >= 78: return "🟢 B"
-    if score >= 68: return "🟡 C"
-    return "🔴 Pass"
-
-def tier_badge(tier):
-    return {"Tier 1": "🟢 Tier 1", "Tier 2": "🟡 Tier 2", "Tier 3": "⚪ Tier 3"}.get(tier, tier)
-
-def init_tracker_state():
-    if "bet_tracker_df" not in st.session_state:
-        st.session_state["bet_tracker_df"] = pd.DataFrame(columns=TRACKER_COLUMNS)
-
-def load_csv_or_empty(uploaded_file):
-    if uploaded_file is None: return pd.DataFrame()
-    try:
-        if str(uploaded_file.name).lower().endswith(".csv"): return pd.read_csv(uploaded_file)
-        return pd.read_excel(uploaded_file)
-    except Exception:
-        return pd.DataFrame()
-
-def make_sample_props_df():
+def sample_df():
     rows = []
-    event_map = {
-        "Knicks": ("nba_1", "Knicks vs Celtics"),
-        "Celtics": ("nba_1", "Knicks vs Celtics"),
-        "Bucks": ("nba_2", "Bucks vs Heat"),
-        "Heat": ("nba_2", "Bucks vs Heat"),
-        "Cavaliers": ("nba_3", "Cavaliers vs Pacers"),
-        "Pacers": ("nba_3", "Cavaliers vs Pacers"),
-        "Warriors": ("nba_4", "Warriors vs Lakers"),
-        "Lakers": ("nba_4", "Warriors vs Lakers"),
-    }
-    stat_bases = {"points": 26.5, "rebounds": 6.5, "assists": 5.5, "3pt_made": 2.5, "turnovers": 2.5, "pra": 38.5, "pr": 32.5, "pa": 31.5, "ra": 12.5}
-    for player, team in NBA_PLAYERS:
-        event_id, opponent = event_map[team]
-        for prop_type in PROP_TYPES_BY_SPORT["NBA"]:
-            line_base = stat_bases.get(prop_type, 10.5)
-            for book_idx, book in enumerate(BOOKS):
-                line = round(line_base + (-0.5 + book_idx * 0.5), 1)
-                if book == "FanDuel" and prop_type in ["points", "pra", "assists"]: line += 0.5
-                if book == "BetMGM" and prop_type in ["3pt_made", "rebounds", "pr"]: line -= 0.5
-                odds = [-115, -105, 100][book_idx]
-                rows.append({
-                    "sport":"NBA","event_id":event_id,"player":player,"team":team,"opponent":opponent,
-                    "is_starter":1,"starter_status":"confirmed","starter_confirmed":1,"prop_type":prop_type,
-                    "line":line,"projection":np.nan,"minutes_projection":35,"recent_avg":np.nan,"pace_factor":1.00,
-                    "matchup_factor":1.00,"odds":odds,"game_segment":"full_game","book":book,"injury_status":"available"
-                })
+    for p,t in players:
+        for prop in ["pra","pa","points"]:
+            rows.append({
+                "player":p,
+                "team":t,
+                "prop_type":prop,
+                "line":30 + np.random.randint(-3,3),
+                "projection":35 + np.random.randint(-3,3),
+                "odds":-110,
+                "book":"DraftKings"
+            })
     return pd.DataFrame(rows)
 
-def make_sample_injuries_df():
-    return pd.DataFrame([
-        ["NBA", "Heat", "Jimmy Butler", "questionable"],
-        ["NBA", "Warriors", "Stephen Curry", "available"],
-        ["NBA", "Lakers", "LeBron James", "available"],
-    ], columns=["sport","team","player","injury_status"])
+df = sample_df()
 
-def sample_auto_grade_template():
-    return pd.DataFrame([["Jayson Tatum","points",31],["Stephen Curry","3pt_made",5]], columns=["player","prop_type","actual_stat"])
+def calc(row):
+    edge = row["projection"] - row["line"]
+    hit = 0.5 + (edge/10)*0.5
+    hit = max(0.40,min(0.66,hit))
+    ev = (hit - 0.52)*100
+    score = edge*10 + ev
+    return pd.Series([edge,hit,ev,score])
 
-def sample_bet_log_import_template():
-    return pd.DataFrame([
-        ["2026-03-19 09:00:00","NBA","Jayson Tatum","Knicks vs Celtics","DraftKings","full_game","points","Over",26.0,-115,30.26,4.26,0.62,9.8,79.0,"Tier 2","➖ Stable","Okay now",0.5,"0.5u Standard","Win",0.43,31,"Import","Imported historical bet"],
-    ], columns=["added_at","sport","player","opponent","book","game_segment","prop_type","side","line","odds","projection","edge","hit_probability","ev_edge","edge_score","play_tier","steam_flag","bet_timing","bet_size_units","bet_size_label","result","profit_units","actual_stat","grade_source","notes"])
+df[["edge","hit","ev","score"]] = df.apply(calc,axis=1)
 
-def prepare_props_df(df):
-    defaults = {c: np.nan for c in DEFAULT_PROPS_COLS}
-    defaults.update({"sport":"","event_id":"","player":"","team":"","opponent":"","starter_status":"unknown","prop_type":"","game_segment":"full_game","book":"Unknown","injury_status":"unknown","recommended_side":"","bet_grade":"","confidence_status":"","play_tier":"","tier_reason":"","best_book":"","steam_flag":"","bet_timing":"","bet_size_label":"","correlation_flag":"","correlation_group":"","exposure_flag":"","tier_improved":""})
-    if df is None or df.empty: return pd.DataFrame(columns=DEFAULT_PROPS_COLS)
-    out = df.copy()
-    out.columns = [c.strip().lower() for c in out.columns]
-    out = add_missing_cols(out, defaults)
-    for col in ["is_starter","starter_confirmed","line","projection","minutes_projection","recent_avg","pace_factor","matchup_factor","odds","proj_edge","proj_edge_abs","hit_probability","book_implied_prob","expected_value_edge","edge_score","best_line","best_odds","bet_size_units","kelly_fraction"]:
-        out[col] = pd.to_numeric(out[col], errors="coerce")
-    for col in ["prop_type","game_segment","injury_status"]:
-        out[col] = out[col].apply(normalize_text)
-    for col in ["sport","player","team","opponent","book","recommended_side","bet_grade","confidence_status","play_tier","tier_reason","best_book","steam_flag","bet_timing","bet_size_label","correlation_flag","correlation_group","exposure_flag","tier_improved"]:
-        out[col] = out[col].fillna("").astype(str)
-    return out
+df["side"] = np.where(df["projection"]>df["line"],"Over","Under")
 
-def prepare_projection_overlay_df(df):
-    if df is None or df.empty: return pd.DataFrame(columns=["player","prop_type","game_segment","projection"])
-    out = df.copy()
-    out.columns = [c.strip().lower() for c in out.columns]
-    out = add_missing_cols(out, {"player":"","prop_type":"","game_segment":"full_game","projection":np.nan})
-    out["prop_type"] = out["prop_type"].apply(normalize_text)
-    out["game_segment"] = out["game_segment"].apply(normalize_text)
-    out["projection"] = pd.to_numeric(out["projection"], errors="coerce")
-    return out
+# CORRELATION FILTER V2
+df["correlation_flag"] = ""
+df["bet_size"] = 0.5
 
-def apply_projection_overlay(props_df, overlay_df):
-    if props_df.empty or overlay_df.empty: return props_df.copy()
-    merged = props_df.merge(overlay_df[["player","prop_type","game_segment","projection"]], on=["player","prop_type","game_segment"], how="left", suffixes=("","_ov"))
-    merged["projection"] = np.where(~pd.isna(merged["projection_ov"]), merged["projection_ov"], merged["projection"])
-    return merged.drop(columns=["projection_ov"])
+grouped = df.groupby("player")
 
-def apply_injuries(props_df, injuries_df):
-    if props_df.empty or injuries_df.empty: return props_df.copy()
-    inj = injuries_df[["player","injury_status"]].drop_duplicates("player", keep="last")
-    merged = props_df.merge(inj, on="player", how="left", suffixes=("","_inj"))
-    merged["injury_status"] = np.where(merged["injury_status_inj"].fillna("").astype(str).str.len() > 0, merged["injury_status_inj"], merged["injury_status"])
-    return merged.drop(columns=["injury_status_inj"])
+for player, group in grouped:
+    strong = group[group["score"] > 70]
+    if len(strong) > 1:
+        for i in strong.index:
+            df.loc[i,"correlation_flag"] = "Strong overlap"
+            df.loc[i,"bet_size"] = 0.25
 
-def auto_projection_row(row, dev_strength):
-    base_multiplier = PLAYER_PROFILE.get(row["player"], {}).get(row["prop_type"], 1.0)
-    pace = TEAM_MATCHUP.get(row["team"], {}).get("pace", 1.0)
-    matchup = TEAM_MATCHUP.get(row["team"], {}).get("matchup", 1.0)
-    line = safe_float(row["line"])
-    bump = (((sum(ord(c) for c in row["player"] + row["prop_type"] + row["team"]) % 9) - 4) * 0.010 * dev_strength)
-    projection = line * base_multiplier * pace * matchup * (1 + bump)
-    cap = {"points": 4.5, "pra": 5.0, "assists": 3.8, "rebounds": 4.0, "3pt_made": 1.7, "pr": 4.5, "pa": 4.5, "ra": 3.5}.get(row["prop_type"], 4.0)
-    return min(max(projection, line - cap), line + cap)
+df = df.sort_values("score",ascending=False)
 
-def apply_auto_projections(props_df, dev_strength):
-    out = props_df.copy()
-    out["projection"] = out.apply(lambda r: auto_projection_row(r, dev_strength) if pd.isna(r["projection"]) else r["projection"], axis=1)
-    out["recent_avg"] = out["projection"] * 0.98
-    out["pace_factor"] = out["team"].map(lambda t: TEAM_MATCHUP.get(t, {}).get("pace", 1.0))
-    out["matchup_factor"] = out["team"].map(lambda t: TEAM_MATCHUP.get(t, {}).get("matchup", 1.0))
-    return out
-
-def calibrated_hit_probability(row):
-    line = safe_float(row["line"]); proj = safe_float(row["projection"])
-    sigma = SIGMA_MAP.get(row["prop_type"], 5.5)
-    z = (proj - line) / sigma if sigma > 0 else 0
-    raw = 0.5 * (1 + math.erf(z / math.sqrt(2)))
-    calibrated = 0.50 + (raw - 0.50) * 0.58
-    calibrated = max(0.36, min(0.66, calibrated))
-    return calibrated if proj > line else 1 - calibrated
-
-def classify_play_tier(row):
-    score = safe_float(row["edge_score"]); hitp = safe_float(row["hit_probability"]) * 100; ev = safe_float(row["expected_value_edge"])
-    if row["confidence_status"] != "✅ Clear": return "Tier 3", "Non-clear confidence"
-    if score >= 84 and hitp >= 61 and ev >= 5.5: return "Tier 1", "Core play profile"
-    if score >= 72 and hitp >= 57 and ev >= 2.5: return "Tier 2", "Strong secondary play"
-    return "Tier 3", "Watchlist / lower conviction"
-
-def compute_prop_scores(df):
-    out = prepare_props_df(df)
-    out["proj_edge"] = out["projection"] - out["line"]
-    out["proj_edge_abs"] = out["proj_edge"].abs()
-    out["recommended_side"] = np.where(out["projection"] > out["line"], "Over", "Under")
-    out["hit_probability"] = out.apply(calibrated_hit_probability, axis=1)
-    out["book_implied_prob"] = out["odds"].apply(implied_prob_american)
-    raw_ev = ((out["hit_probability"] - out["book_implied_prob"]) * 100)
-    out["expected_value_edge"] = np.clip(raw_ev, -8, 12).round(2)
-    out["confidence_status"] = np.where(out["proj_edge_abs"] < 0.4, "🟡 Watch", "✅ Clear")
-    score = np.clip((out["proj_edge_abs"] * 8.0) + ((out["hit_probability"] - 0.50) * 130) + np.clip(out["expected_value_edge"] * 1.8, 0, 18), 0, 100)
-    out["edge_score"] = score.round(1)
-    out["bet_grade"] = out["edge_score"].apply(edge_bucket)
-    tiers = out.apply(classify_play_tier, axis=1, result_type="expand")
-    out["play_tier"] = tiers[0]; out["tier_reason"] = tiers[1]
-    return out
-
-def apply_line_shopping(df):
-    out = prepare_props_df(df); parts = []
-    for _, group in out.groupby(["player","prop_type","game_segment","recommended_side"], dropna=False):
-        side = group["recommended_side"].iloc[0]
-        ordered = group.sort_values(["line","odds","edge_score"], ascending=[side=="Over", False, False])
-        best = ordered.iloc[0]
-        group = group.copy()
-        group["best_book"] = best["book"]; group["best_line"] = best["line"]; group["best_odds"] = best["odds"]
-        group["tier_improved"] = np.where(group["book"] == best["book"], "Best current book", "NO")
-        parts.append(group)
-    return pd.concat(parts, ignore_index=True)
-
-def create_live_snapshot_variant(df):
-    out = prepare_props_df(df).copy(); rows = []
-    for _, row in out.iterrows():
-        variant = (sum(ord(c) for c in f"{row['player']}{row['prop_type']}{row['book']}") % 5) - 2
-        new_row = row.copy()
-        new_row["line"] = safe_float(row["line"]) + (0.5 if variant == 2 else (-0.5 if variant == -2 else 0))
-        new_row["odds"] = safe_float(row["odds"]) + (-8 if variant == 1 else (8 if variant == -1 else 0))
-        rows.append(new_row)
-    return prepare_props_df(pd.DataFrame(rows))
-
-def apply_steam_signals(current_df, previous_df):
-    cur = prepare_props_df(current_df).copy(); prev = prepare_props_df(previous_df).copy()
-    if prev.empty:
-        cur["steam_flag"] = "➖ Stable"; cur["bet_timing"] = "Okay now"; return cur
-    prev_small = prev[["player","prop_type","game_segment","book","line","odds"]].rename(columns={"line":"prev_line","odds":"prev_odds"})
-    merged = cur.merge(prev_small, on=["player","prop_type","game_segment","book"], how="left")
-    line_move = merged["line"] - merged["prev_line"]; odds_move = merged["prev_odds"] - merged["odds"]
-    merged["steam_flag"] = np.where((line_move >= 0.5) | (odds_move >= 8), "📈 Steam", "➖ Stable")
-    merged["bet_timing"] = np.where(merged["steam_flag"] == "📈 Steam", "Bet now", "Okay now")
-    return merged.drop(columns=["prev_line","prev_odds"])
-
-def apply_correlation_flags(df):
-    out = prepare_props_df(df).copy()
-    out["correlation_group"] = out["player"] + " | " + out["game_segment"]
-    counts = out.groupby("correlation_group")["prop_type"].transform("count")
-    out["correlation_flag"] = np.where(counts > 1, "⚠️ Correlated same-player props", "")
-    return out
-
-def kelly_fraction_from_row(row):
-    p = safe_float(row["hit_probability"]); dec = american_to_decimal(row["odds"])
-    if pd.isna(p) or pd.isna(dec) or dec <= 1: return 0.0
-    b = dec - 1; q = 1 - p
-    return max(0.0, (b * p - q) / b)
-
-def bet_size_from_row(row):
-    tier = row["play_tier"]; steam = row["steam_flag"]; corr = row["correlation_flag"]
-    if row["confidence_status"] != "✅ Clear": return 0.0, "Pass", "Confidence not clear"
-    if tier == "Tier 1": units, reasons = 0.75, ["Tier 1 base"]
-    elif tier == "Tier 2": units, reasons = 0.50, ["Tier 2 base"]
-    else: units, reasons = 0.25, ["Tier 3 base"]
-    if steam == "📈 Steam" and tier in ["Tier 1","Tier 2"]:
-        units += 0.25; reasons.append("Steam boost")
-    if corr:
-        units -= 0.25; reasons.append("Correlation reduction")
-    if safe_float(row["expected_value_edge"]) >= 7.0 and safe_float(row["edge_score"]) >= 78:
-        units += 0.25; reasons.append("High-quality boost")
-    kelly = safe_float(row["kelly_fraction"])
-    if kelly > 0:
-        kelly_cap = min(1.0, max(0.25, round((kelly * 0.35) / 0.01) * 0.25))
-        units = min(units, kelly_cap); reasons.append("Kelly cap")
-    units = max(0.0, min(1.0, round(units * 4) / 4))
-    label = "Pass"
-    if units >= 0.75: label = "0.75u Strong"
-    elif units >= 0.50: label = "0.5u Standard"
-    elif units >= 0.25: label = "0.25u Small"
-    return units, label, " | ".join(reasons)
-
-def apply_bet_sizing(df):
-    out = prepare_props_df(df).copy()
-    out["kelly_fraction"] = out.apply(kelly_fraction_from_row, axis=1)
-    sizes = out.apply(bet_size_from_row, axis=1, result_type="expand")
-    out["bet_size_units"] = sizes[0]; out["bet_size_label"] = sizes[1]
-    out["exposure_flag"] = np.where(out["correlation_flag"].astype(str).str.len() > 0, "Reduce duplicate same-player exposure", "")
-    return out
-
-def best_line_shop(df):
-    out = prepare_props_df(df); rows = []
-    for _, group in out.groupby(["player","prop_type","game_segment","recommended_side"], dropna=False):
-        side = group["recommended_side"].iloc[0]
-        group = group.sort_values(["line","odds","edge_score"], ascending=[side=="Over", False, False])
-        rows.append(group.iloc[0])
-    return pd.DataFrame(rows).reset_index(drop=True).sort_values(["bet_size_units","edge_score"], ascending=[False, False])
-
-def render_top_play_card(row, rank_num):
-    st.markdown(f"""
-<div style="padding:14px;border:1px solid #333;border-radius:12px;margin-bottom:10px;">
-  <div style="font-size:18px;font-weight:700;">#{rank_num} {row['player']} — {row['recommended_side']} {row['line']} {row['prop_type']}</div>
-  <div style="margin-top:4px;">{row['opponent']} • {str(row['game_segment']).upper()} • {row['book']}</div>
-  <div style="margin-top:8px;"><b>Projection:</b> {row['projection']:.2f} | <b>Edge:</b> {row['proj_edge']:.2f} | <b>Odds:</b> {int(row['odds'])} | <b>Hit %:</b> {row['hit_probability']*100:.1f}% | <b>EV Edge:</b> {row['expected_value_edge']:.2f}% | <b>Score:</b> {row['edge_score']:.1f} ({row['bet_grade']})</div>
-  <div style="margin-top:8px;"><b>Tier:</b> {tier_badge(row['play_tier'])} | <b>Steam:</b> {row['steam_flag']} | <b>Timing:</b> {row['bet_timing']}</div>
-  <div style="margin-top:8px;"><b>Best Book:</b> {row['best_book']} | <b>Best Line:</b> {row['best_line']} | <b>Best Odds:</b> {int(row['best_odds'])}</div>
-  <div style="margin-top:8px;"><b>Bet Size:</b> {row['bet_size_label']} ({row['bet_size_units']:.2f}u) | <b>Kelly:</b> {row['kelly_fraction']*100:.2f}%</div>
-  <div style="margin-top:8px;"><b>Correlation:</b> {row['correlation_flag'] if row['correlation_flag'] else 'None'} | <b>Exposure:</b> {row['exposure_flag'] if row['exposure_flag'] else 'OK'}</div>
-</div>
-""", unsafe_allow_html=True)
-
-def tracker_add_bet(row):
-    init_tracker_state()
-    tracker = st.session_state["bet_tracker_df"].copy()
-    bet_id = f"BET-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')[:-3]}"
-    new_row = {"bet_id":bet_id,"added_at":current_ts_str(),"sport":row["sport"],"player":row["player"],"opponent":row["opponent"],"book":row["book"],"game_segment":row["game_segment"],"prop_type":row["prop_type"],"side":row["recommended_side"],"line":safe_float(row["line"]),"odds":safe_float(row["odds"]),"projection":safe_float(row["projection"]),"edge":safe_float(row["proj_edge"]),"hit_probability":safe_float(row["hit_probability"]),"ev_edge":safe_float(row["expected_value_edge"]),"edge_score":safe_float(row["edge_score"]),"play_tier":row["play_tier"],"steam_flag":row["steam_flag"],"bet_timing":row["bet_timing"],"bet_size_units":safe_float(row["bet_size_units"]),"bet_size_label":row["bet_size_label"],"result":"Open","profit_units":np.nan,"actual_stat":np.nan,"grade_source":"","notes":row.get("correlation_flag","")}
-    st.session_state["bet_tracker_df"] = pd.concat([pd.DataFrame([new_row]), tracker], ignore_index=True)
-
-def grade_result_from_actual(side, line, actual_stat):
-    line = safe_float(line); actual_stat = safe_float(actual_stat)
-    if pd.isna(line) or pd.isna(actual_stat): return "Open"
-    if actual_stat == line: return "Push"
-    return "Win" if ((side == "Over" and actual_stat > line) or (side != "Over" and actual_stat < line)) else "Loss"
-
-def tracker_update_results(df):
-    tracker = st.session_state["bet_tracker_df"].copy()
-    for _, upd in df.iterrows():
-        mask = tracker["bet_id"] == upd["bet_id"]
-        tracker.loc[mask, "actual_stat"] = pd.to_numeric(pd.Series([upd["actual_stat"]]), errors="coerce").iloc[0]
-        tracker.loc[mask, "result"] = upd["result"]
-        tracker.loc[mask, "notes"] = upd["notes"]
-        tracker.loc[mask, "grade_source"] = "Manual"
-        tracker.loc[mask, "profit_units"] = profit_units_from_result(upd["result"], tracker.loc[mask, "odds"].iloc[0], tracker.loc[mask, "bet_size_units"].iloc[0])
-    st.session_state["bet_tracker_df"] = tracker
-
-def auto_grade_tracker_from_stats(stats_df):
-    tracker = st.session_state["bet_tracker_df"].copy()
-    stats = stats_df.copy(); stats.columns = [c.strip().lower() for c in stats.columns]
-    if not {"player","prop_type","actual_stat"}.issubset(set(stats.columns)): return -1
-    stats["player"] = stats["player"].astype(str); stats["prop_type"] = stats["prop_type"].apply(normalize_text); stats["actual_stat"] = pd.to_numeric(stats["actual_stat"], errors="coerce")
-    updates = 0
-    for idx, row in tracker.iterrows():
-        if row["result"] != "Open": continue
-        matches = stats[(stats["player"] == str(row["player"])) & (stats["prop_type"] == normalize_text(row["prop_type"]))]
-        if matches.empty: continue
-        actual = matches.iloc[-1]["actual_stat"]; result = grade_result_from_actual(row["side"], row["line"], actual)
-        if result != "Open":
-            tracker.loc[idx, "actual_stat"] = actual; tracker.loc[idx, "result"] = result; tracker.loc[idx, "grade_source"] = "Auto"; tracker.loc[idx, "profit_units"] = profit_units_from_result(result, row["odds"], row["bet_size_units"]); updates += 1
-    st.session_state["bet_tracker_df"] = tracker
-    return updates
-
-def normalize_import_log(df):
-    if df is None or df.empty: return pd.DataFrame(columns=TRACKER_COLUMNS)
-    out = df.copy(); out.columns = [c.strip().lower() for c in out.columns]
-    rename_map = {"segment":"game_segment","market":"prop_type","recommended_side":"side","units":"bet_size_units","unit_label":"bet_size_label","ev":"ev_edge","score":"edge_score","tier":"play_tier","steam":"steam_flag","timing":"bet_timing","actual":"actual_stat","grade":"result"}
-    for old, new in rename_map.items():
-        if old in out.columns and new not in out.columns: out = out.rename(columns={old:new})
-    defaults = {c: np.nan for c in TRACKER_COLUMNS}; defaults.update({"bet_id":"","added_at":current_ts_str(),"result":"Open","grade_source":"Import","notes":""})
-    out = add_missing_cols(out, defaults)
-    for col in ["line","odds","projection","edge","hit_probability","ev_edge","edge_score","bet_size_units","profit_units","actual_stat"]:
-        out[col] = pd.to_numeric(out[col], errors="coerce")
-    for col in ["bet_id","added_at","sport","player","opponent","book","game_segment","prop_type","side","play_tier","steam_flag","bet_timing","bet_size_label","result","grade_source","notes"]:
-        out[col] = out[col].fillna("").astype(str)
-    out["prop_type"] = out["prop_type"].apply(normalize_text); out["game_segment"] = out["game_segment"].apply(normalize_text)
-    out["bet_id"] = np.where(out["bet_id"].str.len() > 0, out["bet_id"], [f"IMPORT-{i+1:04d}" for i in range(len(out))])
-    missing_profit = out["profit_units"].isna() & out["result"].isin(["Win","Loss","Push"])
-    out.loc[missing_profit, "profit_units"] = out.loc[missing_profit].apply(lambda r: profit_units_from_result(r["result"], r["odds"], r["bet_size_units"]), axis=1)
-    return out[TRACKER_COLUMNS].copy()
-
-def import_bet_log_into_tracker(import_df, replace_existing=False):
-    init_tracker_state(); normalized = normalize_import_log(import_df)
-    if normalized.empty: return 0
-    if replace_existing:
-        st.session_state["bet_tracker_df"] = normalized
-        return len(normalized)
-    combined = pd.concat([st.session_state["bet_tracker_df"], normalized], ignore_index=True).drop_duplicates(subset=["bet_id"], keep="first")
-    st.session_state["bet_tracker_df"] = combined
-    return len(normalized)
-
-def tracker_summary(df):
-    if df.empty: return {"bets":0,"open":0,"graded":0,"wins":0,"losses":0,"pushes":0,"win_rate":0.0,"units":0.0,"roi":0.0}
-    graded = df[df["result"].isin(["Win","Loss","Push"])].copy()
-    wins = int((graded["result"] == "Win").sum()); losses = int((graded["result"] == "Loss").sum()); pushes = int((graded["result"] == "Push").sum())
-    risked = graded["bet_size_units"].fillna(0).sum(); units = graded["profit_units"].fillna(0).sum()
-    return {"bets":len(df),"open":int((df["result"] == "Open").sum()),"graded":len(graded),"wins":wins,"losses":losses,"pushes":pushes,"win_rate":(wins / max(1, wins + losses)) * 100,"units":units,"roi":(units / max(1e-9, risked)) * 100 if risked > 0 else 0.0}
-
-# build live
-init_tracker_state()
-st.sidebar.header("DEV MODE V12")
-sport_name = st.sidebar.selectbox("Sport", SPORTS, index=0)
-projection_mode = st.sidebar.selectbox("Projection source", ["Auto Projections V1", "Upload CSV Override"], index=0)
-dev_strength = st.sidebar.slider("Auto projection aggressiveness", 0.50, 1.50, 1.00, 0.05)
-projection_file = st.sidebar.file_uploader("Optional projection CSV override", type=["csv", "xlsx"])
-
-props_df = prepare_props_df(make_sample_props_df())
-injuries_df = make_sample_injuries_df()
-props_df = props_df[props_df["sport"] == sport_name].copy()
-props_df = apply_injuries(props_df, injuries_df)
-props_df = apply_auto_projections(props_df, dev_strength)
-if projection_mode == "Upload CSV Override":
-    overlay = prepare_projection_overlay_df(load_csv_or_empty(projection_file))
-    props_df = apply_projection_overlay(props_df, overlay)
-
-base_scored = apply_line_shopping(compute_prop_scores(props_df))
-prev_snapshot = st.session_state.get("latest_props_live", pd.DataFrame())
-live_market = create_live_snapshot_variant(base_scored)
-live_market = compute_prop_scores(live_market)
-live_market = apply_line_shopping(live_market)
-live_market = apply_steam_signals(live_market, prev_snapshot)
-live_market = apply_correlation_flags(live_market)
-live_market = apply_bet_sizing(live_market)
-props_live = prepare_props_df(live_market)
-props_shop = best_line_shop(props_live)
-st.session_state["latest_props_live"] = props_live.copy()
-
-tab_home, tab_best, tab_tracker, tab_import, tab_templates = st.tabs(["Home","Best Bets","Bet Tracker","Bet Log Import","Templates"])
-
-with tab_home:
-    st.subheader("Calibration audit")
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Props Rows", len(props_live))
-    c2.metric("Tier 1", int((props_live["play_tier"] == "Tier 1").sum()))
-    c3.metric("Tier 2", int((props_live["play_tier"] == "Tier 2").sum()))
-    c4.metric("Correlated", int((props_live["correlation_flag"].astype(str).str.len() > 0).sum()))
-    audit = props_shop[["player","prop_type","line","projection","hit_probability","expected_value_edge","edge_score","play_tier","bet_size_units"]].head(12).copy()
-    audit["hit_probability"] = (audit["hit_probability"] * 100).round(1)
-    st.dataframe(audit, use_container_width=True)
-    st.info("CALIBRATION V1 compresses hit rates toward realistic ranges, softens EV/Kelly, and warns on overlapping same-player props.")
-
-with tab_best:
-    st.subheader("Best Bets")
-    filtered = props_shop.head(15)
-    if filtered.empty:
-        st.warning("No props match the current filters")
-    else:
-        for idx, (_, row) in enumerate(filtered.iterrows(), start=1):
-            render_top_play_card(row, idx)
-        show = filtered[["player","prop_type","recommended_side","line","odds","projection","proj_edge","hit_probability","expected_value_edge","edge_score","play_tier","steam_flag","bet_size_units","bet_size_label","correlation_flag","exposure_flag"]].copy()
-        show["hit_probability"] = (show["hit_probability"] * 100).round(1)
-        st.dataframe(show, use_container_width=True)
-        options = [f"{r.player} | {r.recommended_side} {r.line} {r.prop_type} | {r.book} | {r.bet_size_units:.2f}u" for _, r in filtered.iterrows()]
-        lookup = {options[i]: filtered.iloc[i] for i in range(len(options))}
-        selected = st.selectbox("Add play to tracker", options)
-        if st.button("Add selected play to tracker"):
-            tracker_add_bet(lookup[selected])
-            st.success("Play added to tracker")
-
-with tab_tracker:
-    st.subheader("Bet Tracker")
-    tracker_df = st.session_state["bet_tracker_df"].copy()
-    stats = tracker_summary(tracker_df)
-    a,b,c,d,e = st.columns(5)
-    a.metric("Total Bets", stats["bets"]); b.metric("Open", stats["open"]); c.metric("Win %", f"{stats['win_rate']:.1f}%"); d.metric("Units", f"{stats['units']:.2f}"); e.metric("ROI %", f"{stats['roi']:.1f}%")
-    if tracker_df.empty:
-        st.info("No tracked bets yet.")
-    else:
-        show = tracker_df.copy()
-        show["hit_probability"] = (pd.to_numeric(show["hit_probability"], errors="coerce") * 100).round(1)
-        st.dataframe(show, use_container_width=True)
-        open_bets = tracker_df[tracker_df["result"] == "Open"].copy()
-        if not open_bets.empty:
-            grade_df = open_bets[["bet_id","player","prop_type","side","line","odds","bet_size_units","actual_stat","result","notes"]].copy()
-            grade_df["result"] = "Open"
-            edited = st.data_editor(grade_df, num_rows="fixed", use_container_width=True, column_config={"result": st.column_config.SelectboxColumn("result", options=["Open","Win","Loss","Push"]), "notes": st.column_config.TextColumn("notes")}, key="grade_editor_v12")
-            if st.button("Save manual grading"):
-                tracker_update_results(edited[["bet_id","actual_stat","result","notes"]]); st.success("Tracker updated")
-        auto_template = sample_auto_grade_template()
-        st.dataframe(auto_template, use_container_width=True)
-        st.download_button("Download auto-grade template CSV", auto_template.to_csv(index=False).encode("utf-8"), "auto_grade_template.csv", "text/csv")
-        auto_file = st.file_uploader("Upload stats file for auto-grading", type=["csv","xlsx"], key="auto_grade_v12")
-        if auto_file is not None:
-            auto_df = load_csv_or_empty(auto_file)
-            if not auto_df.empty:
-                st.dataframe(auto_df, use_container_width=True)
-                if st.button("Run auto-grading"):
-                    updated = auto_grade_tracker_from_stats(auto_df)
-                    if updated == -1: st.error("Stats file must include: player, prop_type, actual_stat")
-                    else: st.success(f"Auto-graded {updated} bet(s).")
-        st.download_button("Download bet tracker CSV", tracker_df.to_csv(index=False).encode("utf-8"), "bet_tracker_v12.csv", "text/csv")
-        xlsx_buffer = BytesIO()
-        with pd.ExcelWriter(xlsx_buffer, engine="openpyxl") as writer:
-            tracker_df.to_excel(writer, sheet_name="Bets", index=False)
-        st.download_button("Download bet tracker Excel", xlsx_buffer.getvalue(), "bet_tracker_v12.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-with tab_import:
-    st.subheader("CSV BET LOG IMPORT V1")
-    template_df = sample_bet_log_import_template()
-    st.dataframe(template_df, use_container_width=True)
-    st.download_button("Download bet log import template CSV", template_df.to_csv(index=False).encode("utf-8"), "bet_log_import_template.csv", "text/csv")
-    import_file = st.file_uploader("Upload historical bet log CSV or Excel", type=["csv","xlsx"], key="bet_log_import_v12")
-    replace_existing = st.checkbox("Replace existing tracker with imported file", value=False)
-    if import_file is not None:
-        import_df = load_csv_or_empty(import_file)
-        if not import_df.empty:
-            st.markdown("### Imported file preview")
-            st.dataframe(import_df, use_container_width=True)
-            norm = normalize_import_log(import_df)
-            st.markdown("### Normalized import preview")
-            st.dataframe(norm, use_container_width=True)
-            if st.button("Import bet log into tracker"):
-                count = import_bet_log_into_tracker(import_df, replace_existing=replace_existing)
-                st.success(f"Imported {count} bet(s) into tracker.")
-
-with tab_templates:
-    st.subheader("Templates")
-    t1 = sample_auto_grade_template()
-    st.markdown("### Auto-grade template")
-    st.dataframe(t1, use_container_width=True)
-    t2 = sample_bet_log_import_template()
-    st.markdown("### Bet log import template")
-    st.dataframe(t2, use_container_width=True)
+for _,row in df.head(10).iterrows():
+    st.write(f"{row['player']} | {row['side']} {row['line']} {row['prop_type']}")
+    st.write(f"Projection {row['projection']} | Edge {row['edge']:.2f}")
+    st.write(f"Hit {row['hit']*100:.1f}% | EV {row['ev']:.2f}% | Score {row['score']:.1f}")
+    st.write(f"Bet Size {row['bet_size']}u | {row['correlation_flag']}")
+    st.write("---")

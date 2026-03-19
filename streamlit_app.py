@@ -1,17 +1,15 @@
 
 # ============================================================
-# SPORTS AI BETTING DASHBOARD — DEV MODE V14
-# CORRELATION FILTER V3 (SMART RANKING)
+# SPORTS AI BETTING DASHBOARD — DEV MODE V15
+# TIER SYSTEM V2 (RECALIBRATED)
 # ============================================================
 # Real working file
 #
 # What changed:
-# - Smart correlation ranking by player
-# - Keeps best same-player prop at full size
-# - Strong overlap props get heavy reduction
-# - Medium overlap props get light reduction
-# - Weak overlap props keep size
-# - More realistic than blanket same-player cuts
+# - Recalibrated tier thresholds for the calibrated model
+# - Good plays now reach Tier 2 more appropriately
+# - Bet sizing unlocks 0.5u more often for real playable edges
+# - Correlation Filter V3 smart ranking retained
 # ============================================================
 
 import math
@@ -22,9 +20,9 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Sports AI Betting Dashboard DEV MODE V14", page_icon="🏀", layout="wide")
-st.title("🏀 Sports AI Betting Dashboard — DEV MODE V14")
-st.caption("CORRELATION FILTER V3 (SMART RANKING)")
+st.set_page_config(page_title="Sports AI Betting Dashboard DEV MODE V15", page_icon="🏀", layout="wide")
+st.title("🏀 Sports AI Betting Dashboard — DEV MODE V15")
+st.caption("TIER SYSTEM V2 (RECALIBRATED)")
 
 SPORTS = ["NBA", "WNBA", "NHL", "MLB", "NFL"]
 BOOKS = ["DraftKings", "FanDuel", "BetMGM"]
@@ -112,11 +110,11 @@ def profit_units_from_result(result, odds, stake_units):
     return np.nan
 
 def edge_bucket(score):
-    if score >= 88:
+    if score >= 86:
         return "🟢 A"
-    if score >= 78:
+    if score >= 76:
         return "🟢 B"
-    if score >= 68:
+    if score >= 66:
         return "🟡 C"
     return "🔴 Pass"
 
@@ -219,9 +217,13 @@ def classify_play_tier(row):
     score = safe_float(row["edge_score"])
     hitp = safe_float(row["hit_probability"]) * 100
     ev = safe_float(row["expected_value_edge"])
-    if score >= 84 and hitp >= 61 and ev >= 5.5:
+
+    # RECALIBRATED
+    # Tier 1 stays rare
+    if score >= 80 and hitp >= 61 and ev >= 6.5:
         return "Tier 1", "Core play profile"
-    if score >= 72 and hitp >= 57 and ev >= 2.5:
+    # Tier 2 now matches calibrated outputs better
+    if score >= 68 and hitp >= 57 and ev >= 2.5:
         return "Tier 2", "Strong secondary play"
     return "Tier 3", "Watchlist / lower conviction"
 
@@ -233,13 +235,15 @@ def compute_prop_scores(df):
     out["book_implied_prob"] = out["odds"].apply(implied_prob_american)
     raw_ev = ((out["hit_probability"] - out["book_implied_prob"]) * 100)
     out["expected_value_edge"] = np.clip(raw_ev, -8, 12).round(2)
+
     score = (
-        np.clip(out["proj_edge"].abs() * 8.0, 0, 34) +
-        np.clip((out["hit_probability"] - 0.50) * 130, 0, 22) +
-        np.clip(out["expected_value_edge"] * 1.8, 0, 18)
+        np.clip(out["proj_edge"].abs() * 7.5, 0, 32) +
+        np.clip((out["hit_probability"] - 0.50) * 125, 0, 22) +
+        np.clip(out["expected_value_edge"] * 1.7, 0, 20)
     )
     out["edge_score"] = np.clip(score, 0, 100).round(1)
     out["bet_grade"] = out["edge_score"].apply(edge_bucket)
+
     tiers = out.apply(classify_play_tier, axis=1, result_type="expand")
     out["play_tier"] = tiers[0]
     out["tier_reason"] = tiers[1]
@@ -342,8 +346,6 @@ def apply_correlation_filter_v3(df):
                 group.loc[idx, "correlation_rank_note"] = "Light reduction"
             else:
                 group.loc[idx, "correlation_penalty"] = 0.0
-                group.loc[idx, "correlation_flag"] = ""
-                group.loc[idx, "exposure_flag"] = ""
                 group.loc[idx, "correlation_rank_note"] = "No meaningful overlap"
         parts.append(group)
 
@@ -363,6 +365,7 @@ def base_bet_size(row):
     steam = row["steam_flag"]
     units = 0.25
     reasons = []
+
     if tier == "Tier 1":
         units = 0.75
         reasons.append("Tier 1 base")
@@ -377,7 +380,7 @@ def base_bet_size(row):
         units += 0.25
         reasons.append("Steam boost")
 
-    if safe_float(row["expected_value_edge"]) >= 7.0 and safe_float(row["edge_score"]) >= 78:
+    if safe_float(row["expected_value_edge"]) >= 7.0 and safe_float(row["edge_score"]) >= 76:
         units += 0.25
         reasons.append("High-quality boost")
 
@@ -619,7 +622,7 @@ def tracker_summary(df):
 # Build live data
 init_tracker_state()
 
-st.sidebar.header("DEV MODE V14")
+st.sidebar.header("DEV MODE V15")
 sport_name = st.sidebar.selectbox("Sport", SPORTS, index=0)
 dev_strength = st.sidebar.slider("Auto projection aggressiveness", 0.50, 1.50, 1.00, 0.05)
 projection_file = st.sidebar.file_uploader("Optional projection CSV override", type=["csv", "xlsx"])
@@ -634,7 +637,6 @@ if projection_file is not None:
         overlay.columns = [c.strip().lower() for c in overlay.columns]
         if {"player", "prop_type", "projection"}.issubset(set(overlay.columns)):
             overlay["prop_type"] = overlay["prop_type"].apply(normalize_text)
-            overlay["game_segment"] = overlay.get("game_segment", "full_game")
             props_df = props_df.merge(
                 overlay[["player", "prop_type", "projection"]].drop_duplicates(),
                 on=["player", "prop_type"],
@@ -663,19 +665,19 @@ tab_home, tab_best, tab_tracker, tab_import, tab_templates = st.tabs([
 ])
 
 with tab_home:
-    st.subheader("Correlation Filter V3 audit")
+    st.subheader("Tier System V2 audit")
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Props Rows", len(props_live))
     c2.metric("Tier 1", int((props_live["play_tier"] == "Tier 1").sum()))
     c3.metric("Tier 2", int((props_live["play_tier"] == "Tier 2").sum()))
-    c4.metric("Overlap Flags", int((props_live["correlation_flag"].astype(str).str.len() > 0).sum()))
+    c4.metric("0.5u+", int((props_live["bet_size_units"] >= 0.5).sum()))
     audit = props_shop[[
         "player", "prop_type", "line", "projection", "hit_probability", "expected_value_edge",
         "edge_score", "play_tier", "bet_size_units", "correlation_flag", "correlation_rank_note"
     ]].head(12).copy()
     audit["hit_probability"] = (audit["hit_probability"] * 100).round(1)
     st.dataframe(audit, use_container_width=True)
-    st.info("V3 keeps the best same-player prop at full size, then applies strong or medium reductions only to lower-ranked overlaps.")
+    st.info("Tier System V2 lowers the Tier 2 threshold to fit the calibrated model while keeping Tier 1 rare.")
 
 with tab_best:
     st.subheader("Best Bets")
@@ -690,7 +692,7 @@ with tab_best:
             "player", "prop_type", "recommended_side", "line", "odds", "projection",
             "proj_edge", "hit_probability", "expected_value_edge", "edge_score",
             "play_tier", "steam_flag", "bet_size_units", "bet_size_label",
-            "correlation_flag", "correlation_rank_note", "exposure_flag"
+            "correlation_flag", "correlation_rank_note", "exposure_flag", "bet_size_reason"
         ]].copy()
         show["hit_probability"] = (show["hit_probability"] * 100).round(1)
         st.dataframe(show, use_container_width=True)
@@ -732,7 +734,7 @@ with tab_tracker:
                     "result": st.column_config.SelectboxColumn("result", options=["Open", "Win", "Loss", "Push"]),
                     "notes": st.column_config.TextColumn("notes")
                 },
-                key="grade_editor_v14"
+                key="grade_editor_v15"
             )
             if st.button("Save manual grading"):
                 tracker_update_results(edited[["bet_id", "actual_stat", "result", "notes"]])
@@ -741,7 +743,7 @@ with tab_tracker:
         auto_template = sample_auto_grade_template()
         st.dataframe(auto_template, use_container_width=True)
         st.download_button("Download auto-grade template CSV", auto_template.to_csv(index=False).encode("utf-8"), "auto_grade_template.csv", "text/csv")
-        auto_file = st.file_uploader("Upload stats file for auto-grading", type=["csv", "xlsx"], key="auto_grade_v14")
+        auto_file = st.file_uploader("Upload stats file for auto-grading", type=["csv", "xlsx"], key="auto_grade_v15")
         if auto_file is not None:
             auto_df = load_csv_or_empty(auto_file)
             if not auto_df.empty:
@@ -753,11 +755,11 @@ with tab_tracker:
                     else:
                         st.success(f"Auto-graded {updated} bet(s).")
 
-        st.download_button("Download bet tracker CSV", tracker_df.to_csv(index=False).encode("utf-8"), "bet_tracker_v14.csv", "text/csv")
+        st.download_button("Download bet tracker CSV", tracker_df.to_csv(index=False).encode("utf-8"), "bet_tracker_v15.csv", "text/csv")
         xlsx_buffer = BytesIO()
         with pd.ExcelWriter(xlsx_buffer, engine="openpyxl") as writer:
             tracker_df.to_excel(writer, sheet_name="Bets", index=False)
-        st.download_button("Download bet tracker Excel", xlsx_buffer.getvalue(), "bet_tracker_v14.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.download_button("Download bet tracker Excel", xlsx_buffer.getvalue(), "bet_tracker_v15.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 with tab_import:
     st.subheader("CSV Bet Log Import")
@@ -765,7 +767,7 @@ with tab_import:
     st.dataframe(template_df, use_container_width=True)
     st.download_button("Download bet log import template CSV", template_df.to_csv(index=False).encode("utf-8"), "bet_log_import_template.csv", "text/csv")
 
-    import_file = st.file_uploader("Upload historical bet log CSV or Excel", type=["csv", "xlsx"], key="bet_log_import_v14")
+    import_file = st.file_uploader("Upload historical bet log CSV or Excel", type=["csv", "xlsx"], key="bet_log_import_v15")
     replace_existing = st.checkbox("Replace existing tracker with imported file", value=False)
     if import_file is not None:
         import_df = load_csv_or_empty(import_file)

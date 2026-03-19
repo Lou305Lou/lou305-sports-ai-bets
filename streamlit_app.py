@@ -1,8 +1,8 @@
 
 # ============================================================
-# SPORTS AI BETTING DASHBOARD — DEV MODE V5 TIER SYSTEM
+# SPORTS AI BETTING DASHBOARD — DEV MODE V6 LINE SHOPPING
 # ============================================================
-# TIER SYSTEM V1
+# REAL WORKING FILE
 #
 # INCLUDED FEATURES
 # - DEV MODE sample odds and props
@@ -10,6 +10,7 @@
 # - SHARP MODE V1
 # - SUPER SHARP V1
 # - TIER SYSTEM V1
+# - LINE SHOPPING V1
 # - Best Bets board
 # - Prop Sections
 # - Arbitrage tab
@@ -25,9 +26,9 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Sports AI Betting Dashboard DEV MODE V5", page_icon="🏀", layout="wide")
-st.title("🏀 Sports AI Betting Dashboard — DEV MODE V5")
-st.caption("TIER SYSTEM V1 • Auto Projections + Super Sharp + Play Classification")
+st.set_page_config(page_title="Sports AI Betting Dashboard DEV MODE V6", page_icon="🏀", layout="wide")
+st.title("🏀 Sports AI Betting Dashboard — DEV MODE V6")
+st.caption("LINE SHOPPING V1 • Auto Projections + Super Sharp + Tier System + Best Book Detection")
 
 # ============================================================
 # STEP 1 — CORE SETTINGS
@@ -61,7 +62,9 @@ DEFAULT_PROPS_COLS = [
     "injury_status", "injury_note", "proj_edge", "proj_edge_abs", "recommended_side",
     "hit_prob_over", "hit_prob_under", "hit_probability", "book_implied_prob",
     "model_fair_odds", "expected_value_edge", "edge_score", "bet_grade",
-    "confidence_warning", "confidence_status", "odds_move", "play_tier", "tier_reason"
+    "confidence_warning", "confidence_status", "odds_move", "play_tier", "tier_reason",
+    "best_book", "best_line", "best_odds", "line_edge_diff", "tier_improved",
+    "best_play_tier", "best_tier_reason"
 ]
 
 PLAYER_PROFILE = {
@@ -165,6 +168,13 @@ def edge_bucket(score):
         return "🟡 C"
     return "🔴 Pass"
 
+def tier_badge(tier):
+    mapping = {"Tier 1": "🟢 Tier 1", "Tier 2": "🟡 Tier 2", "Tier 3": "⚪ Tier 3"}
+    return mapping.get(tier, tier)
+
+def tier_rank(tier):
+    return {"Tier 1": 3, "Tier 2": 2, "Tier 3": 1}.get(str(tier), 0)
+
 # ============================================================
 # STEP 4 — TIER SYSTEM V1
 # ============================================================
@@ -179,22 +189,11 @@ def classify_play_tier(row):
 
     if conf != "✅ Clear":
         return "Tier 3", "Non-clear confidence"
-
     if score >= 88 and hitp >= 66 and ev >= 8 and edge >= 2.0 and odds >= -150:
         return "Tier 1", "Core play profile"
-
     if score >= 78 and hitp >= 60 and ev >= 4 and edge >= 1.2:
         return "Tier 2", "Strong secondary play"
-
     return "Tier 3", "Watchlist / lower conviction"
-
-def tier_badge(tier):
-    mapping = {
-        "Tier 1": "🟢 Tier 1",
-        "Tier 2": "🟡 Tier 2",
-        "Tier 3": "⚪ Tier 3",
-    }
-    return mapping.get(tier, tier)
 
 # ============================================================
 # STEP 5 — SAMPLE DATA GENERATORS
@@ -335,7 +334,8 @@ def prepare_props_df(df):
         "recommended_side_from_book": "", "source_time": "", "injury_status": "unknown",
         "injury_note": "", "recommended_side": "", "bet_grade": "",
         "confidence_warning": "", "confidence_status": "", "play_tier": "",
-        "tier_reason": "", "last_5_games": 5, "pace_factor": 1.0, "matchup_factor": 1.0,
+        "tier_reason": "", "best_book": "", "best_play_tier": "", "best_tier_reason": "",
+        "tier_improved": "", "last_5_games": 5, "pace_factor": 1.0, "matchup_factor": 1.0,
     })
     if df is None or df.empty:
         return pd.DataFrame(columns=DEFAULT_PROPS_COLS)
@@ -348,14 +348,15 @@ def prepare_props_df(df):
                 "recent_avg", "last_5_games", "pace_factor", "matchup_factor", "odds",
                 "proj_edge", "proj_edge_abs", "hit_prob_over", "hit_prob_under",
                 "hit_probability", "book_implied_prob", "model_fair_odds",
-                "expected_value_edge", "edge_score", "odds_move"]
+                "expected_value_edge", "edge_score", "odds_move", "best_line", "best_odds", "line_edge_diff"]
     for col in num_cols:
         out[col] = pd.to_numeric(out[col], errors="coerce")
 
     text_cols = ["sport", "event_id", "player", "team", "opponent", "starter_status",
                  "prop_type", "game_segment", "book", "recommended_side_from_book",
                  "source_time", "injury_status", "injury_note", "recommended_side",
-                 "bet_grade", "confidence_warning", "confidence_status", "play_tier", "tier_reason"]
+                 "bet_grade", "confidence_warning", "confidence_status", "play_tier",
+                 "tier_reason", "best_book", "tier_improved", "best_play_tier", "best_tier_reason"]
     for col in text_cols:
         out[col] = out[col].fillna("").astype(str)
 
@@ -644,11 +645,66 @@ def compute_prop_scores(df):
     tiers = out.apply(classify_play_tier, axis=1, result_type="expand")
     out["play_tier"] = tiers[0]
     out["tier_reason"] = tiers[1]
-
     return out
 
 # ============================================================
-# STEP 10 — FILTERS / SHOPPING / DISPLAY HELPERS
+# STEP 10 — LINE SHOPPING V1
+# ============================================================
+
+def apply_line_shopping(df):
+    out = prepare_props_df(df)
+    if out.empty:
+        return out
+
+    result_parts = []
+    keys = ["player", "prop_type", "game_segment", "recommended_side"]
+
+    for _, group in out.groupby(keys, dropna=False):
+        group = group.copy()
+        side = str(group["recommended_side"].iloc[0])
+
+        if side == "Over":
+            best_group = group.sort_values(["line", "odds", "edge_score", "expected_value_edge"], ascending=[True, False, False, False])
+        else:
+            best_group = group.sort_values(["line", "odds", "edge_score", "expected_value_edge"], ascending=[False, False, False, False])
+
+        best_row = best_group.iloc[0]
+        best_book = best_row["book"]
+        best_line = best_row["line"]
+        best_odds = best_row["odds"]
+        best_tier = best_row["play_tier"]
+        best_reason = best_row["tier_reason"]
+
+        if side == "Over":
+            line_diff_series = group["line"] - best_line
+        else:
+            line_diff_series = best_line - group["line"]
+
+        group["best_book"] = best_book
+        group["best_line"] = best_line
+        group["best_odds"] = best_odds
+        group["line_edge_diff"] = line_diff_series
+        group["best_play_tier"] = best_tier
+        group["best_tier_reason"] = best_reason
+
+        improvement = []
+        for _, row in group.iterrows():
+            current_rank = tier_rank(row["play_tier"])
+            best_rank = tier_rank(best_tier)
+            if row["book"] == best_book:
+                improvement.append("Best current book")
+            elif best_rank > current_rank:
+                improvement.append("YES")
+            else:
+                improvement.append("NO")
+        group["tier_improved"] = improvement
+
+        result_parts.append(group)
+
+    return pd.concat(result_parts, ignore_index=True) if result_parts else out
+
+# ============================================================
+# STEP 11 — FILTERS / SHOPPING / DISPLAY HELPERS
 # ============================================================
 
 def best_line_shop(df):
@@ -666,7 +722,7 @@ def best_line_shop(df):
         rows.append(group.iloc[0])
     return pd.DataFrame(rows).reset_index(drop=True).sort_values(["edge_score", "expected_value_edge", "hit_probability"], ascending=[False, False, False])
 
-def filter_props_base(df, sport="All", segment="All", starters_only=True, confirmed_only=False, min_odds=-300, max_odds=200, min_edge=60, min_hit_prob=50, min_ev=-5, book="All", prop_type="All", tier="All"):
+def filter_props_base(df, sport="All", segment="All", starters_only=True, confirmed_only=False, min_odds=-300, max_odds=200, min_edge=60, min_hit_prob=50, min_ev=-5, book="All", prop_type="All", tier="All", improved="All"):
     out = prepare_props_df(df)
     if sport != "All":
         out = out[out["sport"] == sport]
@@ -682,6 +738,11 @@ def filter_props_base(df, sport="All", segment="All", starters_only=True, confir
         out = out[out["book"] == book]
     if tier != "All":
         out = out[out["play_tier"] == tier]
+    if improved == "YES":
+        out = out[out["tier_improved"] == "YES"]
+    elif improved == "Best current book":
+        out = out[out["tier_improved"] == "Best current book"]
+
     out = out[(out["odds"] >= min_odds) & (out["odds"] <= max_odds)]
     out = out[out["edge_score"] >= min_edge]
     out = out[(out["hit_probability"] * 100) >= min_hit_prob]
@@ -690,7 +751,7 @@ def filter_props_base(df, sport="All", segment="All", starters_only=True, confir
 
 def build_best_bets_dashboard(df):
     out = prepare_props_df(df)
-    cols = ["player", "opponent", "book", "game_segment", "prop_type", "recommended_side", "line", "odds", "projection", "proj_edge", "hit_probability", "expected_value_edge", "edge_score", "bet_grade", "play_tier", "tier_reason", "confidence_status", "odds_move", "source_time"]
+    cols = ["player", "opponent", "book", "best_book", "game_segment", "prop_type", "recommended_side", "line", "best_line", "line_edge_diff", "odds", "best_odds", "projection", "proj_edge", "hit_probability", "expected_value_edge", "edge_score", "bet_grade", "play_tier", "best_play_tier", "tier_improved", "tier_reason", "confidence_status", "source_time"]
     if out.empty:
         return pd.DataFrame(columns=cols)
     return out.sort_values(["edge_score", "expected_value_edge", "hit_probability"], ascending=[False, False, False])[cols].head(20).copy()
@@ -722,6 +783,12 @@ def render_top_play_card(row, rank_num):
     <b>Reason:</b> {row['tier_reason']}
   </div>
   <div style="margin-top:8px;">
+    <b>Best Book:</b> {row['best_book']} |
+    <b>Best Line:</b> {row['best_line']} |
+    <b>Best Odds:</b> {int(row['best_odds']) if not pd.isna(row['best_odds']) else 'N/A'} |
+    <b>Tier Improved:</b> {row['tier_improved']}
+  </div>
+  <div style="margin-top:8px;">
     <b>Confidence:</b> {row['confidence_status']} |
     <b>Notes:</b> {row['confidence_warning']}
   </div>
@@ -731,11 +798,11 @@ def render_top_play_card(row, rank_num):
     )
 
 # ============================================================
-# STEP 11 — SIDEBAR CONTROLS
+# STEP 12 — SIDEBAR CONTROLS
 # ============================================================
 
-st.sidebar.header("DEV MODE V5")
-st.sidebar.success("TIER SYSTEM V1 enabled.")
+st.sidebar.header("DEV MODE V6")
+st.sidebar.success("LINE SHOPPING V1 enabled.")
 sport_name = st.sidebar.selectbox("Sport", SPORTS, index=0)
 best_shop_only = st.sidebar.checkbox("Best line shop only", value=True)
 projection_mode = st.sidebar.selectbox("Projection source", ["Auto Projections V1", "Upload CSV Override"], index=0)
@@ -750,7 +817,7 @@ if st.sidebar.button("Save current props snapshot"):
         st.sidebar.warning("No props loaded yet.")
 
 # ============================================================
-# STEP 12 — LOAD / BUILD DATA
+# STEP 13 — LOAD / BUILD DATA
 # ============================================================
 
 odds_df = make_sample_odds_df()
@@ -780,16 +847,18 @@ if not old_snapshot.empty and not props_scored.empty:
 else:
     props_scored["odds_move"] = np.nan
 
-props_live = prepare_props_df(props_scored)
+props_live = apply_line_shopping(props_scored)
+props_live = prepare_props_df(props_live)
 props_shop = best_line_shop(props_live)
 st.session_state["latest_props_live"] = props_live.copy()
 
 source_status = pd.DataFrame([
-    ["Mode", "DEV MODE V5", "Active"],
+    ["Mode", "DEV MODE V6", "Active"],
     ["Projection Source", projection_mode, "Active"],
     ["Sharp Mode", "ON" if SHARP_MODE else "OFF", "Active"],
     ["Super Sharp", "ON" if SUPER_SHARP_MODE else "OFF", "Active"],
     ["Tier System", "ON", "Active"],
+    ["Line Shopping", "ON", "Active"],
     ["Odds Rows", len(odds_df), "Sample"],
     ["Props Rows", len(props_live), "Sample"],
     ["Books", props_live["book"].nunique() if not props_live.empty else 0, "Sample"],
@@ -797,7 +866,7 @@ source_status = pd.DataFrame([
 ], columns=["Feed", "Value", "Status"])
 
 # ============================================================
-# STEP 13 — UI TABS
+# STEP 14 — UI TABS
 # ============================================================
 
 tab_home, tab_best, tab_sections, tab_arb, tab_inj, tab_template = st.tabs([
@@ -805,7 +874,7 @@ tab_home, tab_best, tab_sections, tab_arb, tab_inj, tab_template = st.tabs([
 ])
 
 with tab_home:
-    st.subheader("DEV MODE V5 Home")
+    st.subheader("DEV MODE V6 Home")
     c1, c2, c3 = st.columns(3)
     c1.metric("Odds Rows", len(odds_df))
     c2.metric("Props Rows", len(props_live))
@@ -817,7 +886,9 @@ with tab_home:
     a.metric("Tier 1", int(tier_counts.get("Tier 1", 0)))
     b.metric("Tier 2", int(tier_counts.get("Tier 2", 0)))
     c.metric("Tier 3", int(tier_counts.get("Tier 3", 0)))
-    st.info("This build adds play tiers so you can separate core bets from watchlist plays.")
+    improved_count = int((props_live["tier_improved"] == "YES").sum()) if not props_live.empty else 0
+    st.metric("Tier Upgrades Found", improved_count)
+    st.info("This build adds best-book detection and shows when a play improves at another sportsbook.")
 
 with tab_best:
     st.subheader("Auto Best Bets Board")
@@ -828,8 +899,9 @@ with tab_best:
     prop_opts = ["All"] + sorted(base_df["prop_type"].dropna().astype(str).unique().tolist()) if not base_df.empty else ["All"]
     book_opts = ["All"] + sorted(base_df["book"].dropna().astype(str).unique().tolist()) if not base_df.empty else ["All"]
     tier_opts = ["All", "Tier 1", "Tier 2", "Tier 3"]
+    improved_opts = ["All", "YES", "Best current book"]
 
-    c1, c2, c3, c4, c5 = st.columns(5)
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
     with c1:
         selected_sport = st.selectbox("Sport", sport_opts)
     with c2:
@@ -840,23 +912,25 @@ with tab_best:
         selected_book = st.selectbox("Book", book_opts)
     with c5:
         selected_tier = st.selectbox("Tier", tier_opts)
-
-    c6, c7, c8, c9 = st.columns(4)
     with c6:
-        starters_only = st.checkbox("Starters Only", value=True)
+        selected_improved = st.selectbox("Line Shop", improved_opts)
+
+    c7, c8, c9, c10 = st.columns(4)
     with c7:
-        confirmed_only = st.checkbox("Confirmed Only", value=False)
+        starters_only = st.checkbox("Starters Only", value=True)
     with c8:
-        min_edge = st.slider("Min Edge Score", 0, 100, 60, 5)
+        confirmed_only = st.checkbox("Confirmed Only", value=False)
     with c9:
+        min_edge = st.slider("Min Edge Score", 0, 100, 60, 5)
+    with c10:
         min_hit = st.slider("Min Hit %", 50, 95, 54, 1)
 
-    c10, c11, c12 = st.columns(3)
-    with c10:
-        min_odds = st.slider("Min Odds", -300, 200, -300, 5)
+    c11, c12, c13 = st.columns(3)
     with c11:
-        max_odds = st.slider("Max Odds", -300, 200, 200, 5)
+        min_odds = st.slider("Min Odds", -300, 200, -300, 5)
     with c12:
+        max_odds = st.slider("Max Odds", -300, 200, 200, 5)
+    with c13:
         min_ev = st.slider("Min EV Edge %", -10, 25, 0, 1)
 
     filtered = filter_props_base(
@@ -873,6 +947,7 @@ with tab_best:
         selected_book,
         selected_prop,
         selected_tier,
+        selected_improved,
     )
 
     if filtered.empty:
@@ -888,24 +963,16 @@ with tab_sections:
         st.info("No props loaded.")
     else:
         table_cols = [
-            "player", "opponent", "book", "game_segment", "recommended_side",
-            "line", "projection", "proj_edge", "odds", "hit_probability",
-            "expected_value_edge", "edge_score", "bet_grade", "play_tier",
-            "confidence_status", "odds_move", "source_time"
+            "player", "opponent", "book", "best_book", "game_segment", "recommended_side",
+            "line", "best_line", "line_edge_diff", "odds", "best_odds", "projection",
+            "proj_edge", "hit_probability", "expected_value_edge", "edge_score",
+            "bet_grade", "play_tier", "tier_improved", "confidence_status"
         ]
         for title, prop_key, seg in [
-            ("Points", "points", None),
-            ("Rebounds", "rebounds", None),
-            ("Assists", "assists", None),
-            ("3PT Made", "3pt_made", None),
-            ("Blocks", "blocks", None),
-            ("Steals", "steals", None),
-            ("Turnovers", "turnovers", None),
-            ("PRA", "pra", None),
-            ("PR", "pr", None),
-            ("PA", "pa", None),
-            ("RA", "ra", None),
-            ("1Q Only", None, "1q"),
+            ("Points", "points", None), ("Rebounds", "rebounds", None), ("Assists", "assists", None),
+            ("3PT Made", "3pt_made", None), ("Blocks", "blocks", None), ("Steals", "steals", None),
+            ("Turnovers", "turnovers", None), ("PRA", "pra", None), ("PR", "pr", None),
+            ("PA", "pa", None), ("RA", "ra", None), ("1Q Only", None, "1q"),
         ]:
             section = props_live.copy()
             if prop_key is not None:
@@ -966,7 +1033,7 @@ with tab_inj:
         if caution_df.empty:
             st.info("No caution flags.")
         else:
-            cols = ["player", "book", "prop_type", "game_segment", "line", "odds", "injury_status", "starter_status", "starter_confirmed", "play_tier", "confidence_status", "confidence_warning", "edge_score"]
+            cols = ["player", "book", "best_book", "prop_type", "game_segment", "line", "best_line", "odds", "injury_status", "play_tier", "tier_improved", "confidence_status", "confidence_warning", "edge_score"]
             st.dataframe(caution_df[cols], use_container_width=True)
 
 with tab_template:

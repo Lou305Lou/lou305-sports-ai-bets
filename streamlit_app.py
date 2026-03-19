@@ -761,7 +761,7 @@ def render_top_play_card(row, rank_num):
 st.sidebar.header("Provider 1: The Odds API")
 the_odds_api_key = ""
 try:
-    the_odds_api_key = st.secrets.get("THE_ODDS_API_KEY", "")
+    the_odds_api_key = st.secrets.get("ODDS_API_KEY", "")
 except Exception:
     pass
 the_odds_api_key = st.sidebar.text_input("The Odds API key", value=the_odds_api_key, type="password")

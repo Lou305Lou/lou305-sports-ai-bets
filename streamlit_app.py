@@ -1997,14 +1997,14 @@ scan_button = st.button("Scan Live Odds", type="primary")
 st.info("The app only scans when you press the button. No automatic refresh is running.")
 
 # -----------------------------
-# SCAN BUTTON LOGIC (CLEAN)
+# SCAN BUTTON LOGIC (CLEAN RESET)
 # -----------------------------
 if scan_button:
     with st.spinner("Scanning live odds..."):
         try:
             raw_events = fetch_odds(sport_key)
 
-            # Filter sportsbooks
+            # Apply sportsbook filter
             if selected_books:
                 filtered_events = filter_events_by_books(raw_events, selected_books)
             else:
@@ -2017,7 +2017,7 @@ if scan_button:
             mid_df = pd.DataFrame()
             results = []
 
-            # Arbitrage
+            # Arbitrage detection
             if show_arbs:
                 arb_df = detect_arbitrage(
                     filtered_events,
@@ -2029,7 +2029,7 @@ if scan_button:
                 if not arb_df.empty:
                     arb_df = arb_df.sort_values(by="score", ascending=False)
 
-            # Middles
+            # Middle detection
             if show_middles:
                 raw_mid_df = detect_spread_middles(
                     filtered_events,
@@ -2048,7 +2048,12 @@ if scan_button:
                     mid_df = mid_df[mid_df["middle_strength"].isin(["Medium", "Strong"])]
 
                 if not mid_df.empty:
-                    mid_df["rank"] = mid_df["middle_strength"].map({"Strong": 3, "Medium": 2, "Weak": 1})
+                    mid_df["rank"] = mid_df["middle_strength"].map({
+                        "Strong": 3,
+                        "Medium": 2,
+                        "Weak": 1
+                    })
+
                     mid_df = mid_df.sort_values(
                         by=["rank", "middle_gap", "score"],
                         ascending=[False, False, False]
@@ -2056,6 +2061,7 @@ if scan_button:
 
             if not arb_df.empty:
                 results.append(arb_df)
+
             if not mid_df.empty:
                 results.append(mid_df)
 
@@ -2064,7 +2070,7 @@ if scan_button:
             filtered_mid_df = final_df[final_df["type"] == "Middle"] if not final_df.empty else pd.DataFrame()
             filtered_arb_df = final_df[final_df["type"] == "Arbitrage"] if not final_df.empty else pd.DataFrame()
 
-            # Save to session
+            # Save to session state
             st.session_state.scan_complete = True
             st.session_state.final_df = final_df
             st.session_state.arb_df = filtered_arb_df
@@ -2088,6 +2094,7 @@ if scan_button:
 
         except Exception as e:
             st.error(f"Error fetching live odds: {e}")
+            
 # -----------------------------
 # TABS
 # -----------------------------

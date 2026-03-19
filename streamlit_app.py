@@ -2069,12 +2069,8 @@ if scan_button:
                 actual_arb_min_profit_dollars=actual_arb_min_profit_dollars,
             )
 
-            filtered_mid_df = pd.DataFrame()
-            filtered_arb_df = pd.DataFrame()
-
-            if not final_df.empty:
-                filtered_mid_df = final_df[final_df["type"] == "Middle"].copy()
-                filtered_arb_df = final_df[final_df["type"] == "Arbitrage"].copy()
+            filtered_mid_df = final_df[final_df["type"] == "Middle"].copy() if not final_df.empty else pd.DataFrame()
+            filtered_arb_df = final_df[final_df["type"] == "Arbitrage"].copy() if not final_df.empty else pd.DataFrame()
 
             st.session_state.scan_complete = True
             st.session_state.final_df = final_df
@@ -2087,6 +2083,7 @@ if scan_button:
             st.session_state.latest_filtered_events = filtered_events
             st.session_state.latest_sport_key = sport_key
 
+            # AUTO SAVE AI PICKS
             updated_df, auto_saved, duplicates = auto_save_ai_picks_to_v8(
                 filtered_events,
                 sport_key,
@@ -2124,43 +2121,29 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
 with tab1:
     st.subheader("Dashboard Summary")
 
-    if st.session_state.scan_complete:
-        final_df = st.session_state.final_df
-        arb_df = st.session_state.arb_df
-        raw_mid_df = st.session_state.raw_mid_df
-        mid_df = st.session_state.mid_df
-        distribution_df = st.session_state.distribution_df
+    events_pulled = st.session_state.raw_events_count
+    books_returned = st.session_state.raw_books_count
+    arb_rows = len(st.session_state.arb_df)
+    mid_rows = len(st.session_state.mid_df)
 
-        s1, s2, s3, s4 = st.columns(4)
-        s1.metric("Events Pulled", st.session_state.raw_events_count)
-        s2.metric("Books Returned", st.session_state.raw_books_count)
-        s3.metric("Arb Rows Found", len(arb_df))
-        s4.metric("Raw Middle Rows Found", len(raw_mid_df))
+    arb_profit_total = (
+        st.session_state.arb_df["profit_dollars"].sum()
+        if not st.session_state.arb_df.empty else 0
+    )
 
-        s5, s6 = st.columns(2)
-        s5.metric("Filtered Middle Rows", len(mid_df))
-        s6.metric("Actual Plays Only", "ON" if actual_plays_only else "OFF")
+    kelly_mode = "Half Kelly"
 
-        if not final_df.empty:
-            arb_count = int((final_df["type"] == "Arbitrage").sum()) if "type" in final_df.columns else 0
-            middle_count = int((final_df["type"] == "Middle").sum()) if "type" in final_df.columns else 0
-            best_score = round(final_df["score"].max(), 2) if "score" in final_df.columns else 0
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Events Pulled", events_pulled)
+    m2.metric("Books Returned", books_returned)
+    m3.metric("Arb Rows Found", arb_rows)
+    m4.metric("Middle Rows Found", mid_rows)
 
-            arb_profit_total = 0.0
-            if "guaranteed_profit" in final_df.columns:
-                arb_profit_total = pd.to_numeric(final_df["guaranteed_profit"], errors="coerce").fillna(0).sum()
-
-            m1, m2, m3, m4 = st.columns(4)
-            m1.metric("Total Opportunities", len(final_df))
-            m2.metric("Arbitrage Rows", arb_count)
-            m3.metric("Middle Rows Shown", middle_count)
-            m4.metric("Best Score", best_score)
-
-                       m5, m6, m7, m8 = st.columns(4)
-            m5.metric("Total Arb Profit ($)", round(arb_profit_total, 2))
-            m6.metric("Kelly Mode", kelly_mode)
-            m7.metric("AI Picks Auto-Saved", st.session_state.auto_saved_ai_count)
-            m8.metric("Duplicates Skipped", st.session_state.duplicate_ai_skipped_count)
+    m5, m6, m7, m8 = st.columns(4)
+    m5.metric("Total Arb Profit ($)", round(arb_profit_total, 2))
+    m6.metric("Kelly Mode", kelly_mode)
+    m7.metric("AI Picks Auto-Saved", st.session_state.auto_saved_ai_count)
+    m8.metric("Duplicates Skipped", st.session_state.duplicate_ai_skipped_count)
 
             if selected_books:
                 chosen_names = [

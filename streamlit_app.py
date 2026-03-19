@@ -1998,15 +1998,19 @@ st.info("The app only scans when you press the button. No automatic refresh is r
 
 # -----------------------------
 # SCAN
-# -----------------------------
-if scan_button:
+# -----------------------------if scan_button:
     with st.spinner("Scanning live odds..."):
         filtered_events = []
 
         try:
             raw_events = fetch_odds(sport_key)
+
+            if selected_books:
+                filtered_events = filter_events_by_books(raw_events, selected_books)
+            else:
+                filtered_events = raw_events
+
             raw_books_count = len(extract_available_books(raw_events))
-            filtered_events = filter_events_by_books(raw_events, selected_books) if selected_books else raw_events
 
             arb_df = pd.DataFrame()
             raw_mid_df = pd.DataFrame()
@@ -2054,6 +2058,7 @@ if scan_button:
 
             if not arb_df.empty:
                 results.append(arb_df)
+
             if not mid_df.empty:
                 results.append(mid_df)
 
@@ -2096,16 +2101,6 @@ if scan_button:
 
         except Exception as e:
             st.error(f"Error fetching live odds: {e}")
-# AUTO SAVE AI PICKS (OUTSIDE TRY BLOCK)
-updated_df, auto_saved, duplicates = auto_save_ai_picks_to_v8(
-    filtered_events,
-    sport_key,
-    st.session_state.ai_perf_df
-)
-
-st.session_state.ai_perf_df = updated_df
-st.session_state.auto_saved_ai_count = auto_saved
-st.session_state.duplicate_ai_skipped_count = duplicates
 # -----------------------------
 # TABS
 # -----------------------------

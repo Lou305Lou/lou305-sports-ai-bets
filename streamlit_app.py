@@ -1,14 +1,15 @@
 
 # ============================================================
-# SPORTS AI BETTING DASHBOARD — DEV MODE V4 SUPER SHARP
+# SPORTS AI BETTING DASHBOARD — DEV MODE V5 TIER SYSTEM
 # ============================================================
-# SUPER SHARP V1
+# TIER SYSTEM V1
 #
 # INCLUDED FEATURES
 # - DEV MODE sample odds and props
 # - AUTO PROJECTIONS V1
 # - SHARP MODE V1
 # - SUPER SHARP V1
+# - TIER SYSTEM V1
 # - Best Bets board
 # - Prop Sections
 # - Arbitrage tab
@@ -24,9 +25,9 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Sports AI Betting Dashboard DEV MODE V4", page_icon="🏀", layout="wide")
-st.title("🏀 Sports AI Betting Dashboard — DEV MODE V4")
-st.caption("SUPER SHARP V1 • Auto Projections + Sharp Mode + Score Compression")
+st.set_page_config(page_title="Sports AI Betting Dashboard DEV MODE V5", page_icon="🏀", layout="wide")
+st.title("🏀 Sports AI Betting Dashboard — DEV MODE V5")
+st.caption("TIER SYSTEM V1 • Auto Projections + Super Sharp + Play Classification")
 
 # ============================================================
 # STEP 1 — CORE SETTINGS
@@ -60,7 +61,7 @@ DEFAULT_PROPS_COLS = [
     "injury_status", "injury_note", "proj_edge", "proj_edge_abs", "recommended_side",
     "hit_prob_over", "hit_prob_under", "hit_probability", "book_implied_prob",
     "model_fair_odds", "expected_value_edge", "edge_score", "bet_grade",
-    "confidence_warning", "confidence_status", "odds_move"
+    "confidence_warning", "confidence_status", "odds_move", "play_tier", "tier_reason"
 ]
 
 PLAYER_PROFILE = {
@@ -97,37 +98,14 @@ SHARP_MODE = True
 SUPER_SHARP_MODE = True
 
 MAX_EDGE_CAP = {
-    "points": 5.5,
-    "pra": 6.0,
-    "assists": 4.0,
-    "rebounds": 4.5,
-    "3pt_made": 2.0,
-    "turnovers": 2.5,
-    "blocks": 1.8,
-    "steals": 1.8,
-    "pr": 5.0,
-    "pa": 5.0,
-    "ra": 4.0,
+    "points": 5.5, "pra": 6.0, "assists": 4.0, "rebounds": 4.5, "3pt_made": 2.0,
+    "turnovers": 2.5, "blocks": 1.8, "steals": 1.8, "pr": 5.0, "pa": 5.0, "ra": 4.0,
 }
-
 EDGE_SOFT_CAP = {
-    "points": 4.5,
-    "pra": 5.0,
-    "assists": 3.5,
-    "rebounds": 4.0,
-    "3pt_made": 1.8,
-    "turnovers": 2.0,
-    "blocks": 1.4,
-    "steals": 1.4,
-    "pr": 4.5,
-    "pa": 4.5,
-    "ra": 3.5,
+    "points": 4.5, "pra": 5.0, "assists": 3.5, "rebounds": 4.0, "3pt_made": 1.8,
+    "turnovers": 2.0, "blocks": 1.4, "steals": 1.4, "pr": 4.5, "pa": 4.5, "ra": 3.5,
 }
-
-SUPER_SHARP_HIT_CLAMP = {
-    "min": 0.07,
-    "max": 0.74,
-}
+SUPER_SHARP_HIT_CLAMP = {"min": 0.07, "max": 0.74}
 
 # ============================================================
 # STEP 3 — HELPERS
@@ -188,7 +166,38 @@ def edge_bucket(score):
     return "🔴 Pass"
 
 # ============================================================
-# STEP 4 — SAMPLE DATA GENERATORS
+# STEP 4 — TIER SYSTEM V1
+# ============================================================
+
+def classify_play_tier(row):
+    score = safe_float(row.get("edge_score"))
+    hitp = safe_float(row.get("hit_probability")) * 100
+    ev = safe_float(row.get("expected_value_edge"))
+    conf = str(row.get("confidence_status", ""))
+    odds = safe_float(row.get("odds"))
+    edge = safe_float(row.get("proj_edge_abs"))
+
+    if conf != "✅ Clear":
+        return "Tier 3", "Non-clear confidence"
+
+    if score >= 88 and hitp >= 66 and ev >= 8 and edge >= 2.0 and odds >= -150:
+        return "Tier 1", "Core play profile"
+
+    if score >= 78 and hitp >= 60 and ev >= 4 and edge >= 1.2:
+        return "Tier 2", "Strong secondary play"
+
+    return "Tier 3", "Watchlist / lower conviction"
+
+def tier_badge(tier):
+    mapping = {
+        "Tier 1": "🟢 Tier 1",
+        "Tier 2": "🟡 Tier 2",
+        "Tier 3": "⚪ Tier 3",
+    }
+    return mapping.get(tier, tier)
+
+# ============================================================
+# STEP 5 — SAMPLE DATA GENERATORS
 # ============================================================
 
 def make_sample_odds_df():
@@ -314,7 +323,7 @@ def sample_full_props_projection_template():
     return pd.DataFrame(rows, columns=["sport", "player", "prop_type", "game_segment", "projection", "minutes_projection", "recent_avg", "pace_factor", "matchup_factor", "team"])
 
 # ============================================================
-# STEP 5 — PREP FUNCTIONS
+# STEP 6 — PREP FUNCTIONS
 # ============================================================
 
 def prepare_props_df(df):
@@ -325,8 +334,8 @@ def prepare_props_df(df):
         "prop_type": "", "game_segment": "full_game", "book": "Unknown",
         "recommended_side_from_book": "", "source_time": "", "injury_status": "unknown",
         "injury_note": "", "recommended_side": "", "bet_grade": "",
-        "confidence_warning": "", "confidence_status": "", "last_5_games": 5,
-        "pace_factor": 1.0, "matchup_factor": 1.0,
+        "confidence_warning": "", "confidence_status": "", "play_tier": "",
+        "tier_reason": "", "last_5_games": 5, "pace_factor": 1.0, "matchup_factor": 1.0,
     })
     if df is None or df.empty:
         return pd.DataFrame(columns=DEFAULT_PROPS_COLS)
@@ -346,7 +355,7 @@ def prepare_props_df(df):
     text_cols = ["sport", "event_id", "player", "team", "opponent", "starter_status",
                  "prop_type", "game_segment", "book", "recommended_side_from_book",
                  "source_time", "injury_status", "injury_note", "recommended_side",
-                 "bet_grade", "confidence_warning", "confidence_status"]
+                 "bet_grade", "confidence_warning", "confidence_status", "play_tier", "tier_reason"]
     for col in text_cols:
         out[col] = out[col].fillna("").astype(str)
 
@@ -405,7 +414,7 @@ def apply_injuries(props_df, injuries_df):
     return merged.drop(columns=[c for c in merged.columns if c.endswith("_inj")])
 
 # ============================================================
-# STEP 6 — AUTO PROJECTIONS V1 + SHARP EDGE CONTROL
+# STEP 7 — AUTO PROJECTIONS + SHARP CONTROL
 # ============================================================
 
 def auto_projection_row(row, dev_strength: float):
@@ -472,7 +481,7 @@ def apply_auto_projections(props_df, dev_strength: float):
     return out
 
 # ============================================================
-# STEP 7 — HIT PROBABILITY / CONFIDENCE
+# STEP 8 — HIT PROBABILITY / CONFIDENCE
 # ============================================================
 
 def hit_probability_from_edge(row):
@@ -538,7 +547,7 @@ def confidence_status(row):
     return "🟡 Watch"
 
 # ============================================================
-# STEP 8 — SUPER SHARP SCORING
+# STEP 9 — SUPER SHARP SCORING + TIER CLASSIFICATION
 # ============================================================
 
 def compute_prop_scores(df):
@@ -631,10 +640,15 @@ def compute_prop_scores(df):
     out["bet_grade"] = out["edge_score"].apply(edge_bucket)
     out["confidence_warning"] = out.apply(confidence_warning_label, axis=1)
     out["confidence_status"] = out.apply(confidence_status, axis=1)
+
+    tiers = out.apply(classify_play_tier, axis=1, result_type="expand")
+    out["play_tier"] = tiers[0]
+    out["tier_reason"] = tiers[1]
+
     return out
 
 # ============================================================
-# STEP 9 — FILTERS / SHOPPING / DISPLAY HELPERS
+# STEP 10 — FILTERS / SHOPPING / DISPLAY HELPERS
 # ============================================================
 
 def best_line_shop(df):
@@ -652,7 +666,7 @@ def best_line_shop(df):
         rows.append(group.iloc[0])
     return pd.DataFrame(rows).reset_index(drop=True).sort_values(["edge_score", "expected_value_edge", "hit_probability"], ascending=[False, False, False])
 
-def filter_props_base(df, sport="All", segment="All", starters_only=True, confirmed_only=False, min_odds=-300, max_odds=200, min_edge=60, min_hit_prob=50, min_ev=-5, book="All", prop_type="All"):
+def filter_props_base(df, sport="All", segment="All", starters_only=True, confirmed_only=False, min_odds=-300, max_odds=200, min_edge=60, min_hit_prob=50, min_ev=-5, book="All", prop_type="All", tier="All"):
     out = prepare_props_df(df)
     if sport != "All":
         out = out[out["sport"] == sport]
@@ -666,6 +680,8 @@ def filter_props_base(df, sport="All", segment="All", starters_only=True, confir
         out = out[out["starter_confirmed"] >= 1]
     if book != "All":
         out = out[out["book"] == book]
+    if tier != "All":
+        out = out[out["play_tier"] == tier]
     out = out[(out["odds"] >= min_odds) & (out["odds"] <= max_odds)]
     out = out[out["edge_score"] >= min_edge]
     out = out[(out["hit_probability"] * 100) >= min_hit_prob]
@@ -674,7 +690,7 @@ def filter_props_base(df, sport="All", segment="All", starters_only=True, confir
 
 def build_best_bets_dashboard(df):
     out = prepare_props_df(df)
-    cols = ["player", "opponent", "book", "game_segment", "prop_type", "recommended_side", "line", "odds", "projection", "proj_edge", "hit_probability", "expected_value_edge", "edge_score", "bet_grade", "confidence_status", "odds_move", "source_time"]
+    cols = ["player", "opponent", "book", "game_segment", "prop_type", "recommended_side", "line", "odds", "projection", "proj_edge", "hit_probability", "expected_value_edge", "edge_score", "bet_grade", "play_tier", "tier_reason", "confidence_status", "odds_move", "source_time"]
     if out.empty:
         return pd.DataFrame(columns=cols)
     return out.sort_values(["edge_score", "expected_value_edge", "hit_probability"], ascending=[False, False, False])[cols].head(20).copy()
@@ -702,6 +718,10 @@ def render_top_play_card(row, rank_num):
     <b>Score:</b> {row['edge_score']:.1f} ({row['bet_grade']})
   </div>
   <div style="margin-top:8px;">
+    <b>Tier:</b> {tier_badge(row['play_tier'])} |
+    <b>Reason:</b> {row['tier_reason']}
+  </div>
+  <div style="margin-top:8px;">
     <b>Confidence:</b> {row['confidence_status']} |
     <b>Notes:</b> {row['confidence_warning']}
   </div>
@@ -711,11 +731,11 @@ def render_top_play_card(row, rank_num):
     )
 
 # ============================================================
-# STEP 10 — SIDEBAR CONTROLS
+# STEP 11 — SIDEBAR CONTROLS
 # ============================================================
 
-st.sidebar.header("DEV MODE V4")
-st.sidebar.success("SUPER SHARP V1 enabled.")
+st.sidebar.header("DEV MODE V5")
+st.sidebar.success("TIER SYSTEM V1 enabled.")
 sport_name = st.sidebar.selectbox("Sport", SPORTS, index=0)
 best_shop_only = st.sidebar.checkbox("Best line shop only", value=True)
 projection_mode = st.sidebar.selectbox("Projection source", ["Auto Projections V1", "Upload CSV Override"], index=0)
@@ -730,7 +750,7 @@ if st.sidebar.button("Save current props snapshot"):
         st.sidebar.warning("No props loaded yet.")
 
 # ============================================================
-# STEP 11 — LOAD / BUILD DATA
+# STEP 12 — LOAD / BUILD DATA
 # ============================================================
 
 odds_df = make_sample_odds_df()
@@ -765,10 +785,11 @@ props_shop = best_line_shop(props_live)
 st.session_state["latest_props_live"] = props_live.copy()
 
 source_status = pd.DataFrame([
-    ["Mode", "DEV MODE V4", "Active"],
+    ["Mode", "DEV MODE V5", "Active"],
     ["Projection Source", projection_mode, "Active"],
     ["Sharp Mode", "ON" if SHARP_MODE else "OFF", "Active"],
     ["Super Sharp", "ON" if SUPER_SHARP_MODE else "OFF", "Active"],
+    ["Tier System", "ON", "Active"],
     ["Odds Rows", len(odds_df), "Sample"],
     ["Props Rows", len(props_live), "Sample"],
     ["Books", props_live["book"].nunique() if not props_live.empty else 0, "Sample"],
@@ -776,7 +797,7 @@ source_status = pd.DataFrame([
 ], columns=["Feed", "Value", "Status"])
 
 # ============================================================
-# STEP 12 — UI TABS
+# STEP 13 — UI TABS
 # ============================================================
 
 tab_home, tab_best, tab_sections, tab_arb, tab_inj, tab_template = st.tabs([
@@ -784,14 +805,19 @@ tab_home, tab_best, tab_sections, tab_arb, tab_inj, tab_template = st.tabs([
 ])
 
 with tab_home:
-    st.subheader("DEV MODE V4 Home")
+    st.subheader("DEV MODE V5 Home")
     c1, c2, c3 = st.columns(3)
     c1.metric("Odds Rows", len(odds_df))
     c2.metric("Props Rows", len(props_live))
     c3.metric("Books", props_live["book"].nunique() if not props_live.empty else 0)
     st.markdown("### Feed status")
     st.dataframe(source_status, use_container_width=True)
-    st.info("This build uses Super Sharp score compression and hit-rate control for more realistic top plays.")
+    tier_counts = props_live["play_tier"].value_counts() if not props_live.empty else pd.Series(dtype=int)
+    a, b, c = st.columns(3)
+    a.metric("Tier 1", int(tier_counts.get("Tier 1", 0)))
+    b.metric("Tier 2", int(tier_counts.get("Tier 2", 0)))
+    c.metric("Tier 3", int(tier_counts.get("Tier 3", 0)))
+    st.info("This build adds play tiers so you can separate core bets from watchlist plays.")
 
 with tab_best:
     st.subheader("Auto Best Bets Board")
@@ -801,8 +827,9 @@ with tab_best:
     segment_opts = ["All"] + sorted(base_df["game_segment"].dropna().astype(str).unique().tolist()) if not base_df.empty else ["All"]
     prop_opts = ["All"] + sorted(base_df["prop_type"].dropna().astype(str).unique().tolist()) if not base_df.empty else ["All"]
     book_opts = ["All"] + sorted(base_df["book"].dropna().astype(str).unique().tolist()) if not base_df.empty else ["All"]
+    tier_opts = ["All", "Tier 1", "Tier 2", "Tier 3"]
 
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3, c4, c5 = st.columns(5)
     with c1:
         selected_sport = st.selectbox("Sport", sport_opts)
     with c2:
@@ -811,23 +838,25 @@ with tab_best:
         selected_prop = st.selectbox("Prop Type", prop_opts)
     with c4:
         selected_book = st.selectbox("Book", book_opts)
-
-    c5, c6, c7, c8 = st.columns(4)
     with c5:
-        starters_only = st.checkbox("Starters Only", value=True)
+        selected_tier = st.selectbox("Tier", tier_opts)
+
+    c6, c7, c8, c9 = st.columns(4)
     with c6:
-        confirmed_only = st.checkbox("Confirmed Only", value=False)
+        starters_only = st.checkbox("Starters Only", value=True)
     with c7:
-        min_edge = st.slider("Min Edge Score", 0, 100, 60, 5)
+        confirmed_only = st.checkbox("Confirmed Only", value=False)
     with c8:
+        min_edge = st.slider("Min Edge Score", 0, 100, 60, 5)
+    with c9:
         min_hit = st.slider("Min Hit %", 50, 95, 54, 1)
 
-    c9, c10, c11 = st.columns(3)
-    with c9:
-        min_odds = st.slider("Min Odds", -300, 200, -300, 5)
+    c10, c11, c12 = st.columns(3)
     with c10:
-        max_odds = st.slider("Max Odds", -300, 200, 200, 5)
+        min_odds = st.slider("Min Odds", -300, 200, -300, 5)
     with c11:
+        max_odds = st.slider("Max Odds", -300, 200, 200, 5)
+    with c12:
         min_ev = st.slider("Min EV Edge %", -10, 25, 0, 1)
 
     filtered = filter_props_base(
@@ -843,6 +872,7 @@ with tab_best:
         min_ev,
         selected_book,
         selected_prop,
+        selected_tier,
     )
 
     if filtered.empty:
@@ -860,8 +890,8 @@ with tab_sections:
         table_cols = [
             "player", "opponent", "book", "game_segment", "recommended_side",
             "line", "projection", "proj_edge", "odds", "hit_probability",
-            "expected_value_edge", "edge_score", "bet_grade", "confidence_status",
-            "odds_move", "source_time"
+            "expected_value_edge", "edge_score", "bet_grade", "play_tier",
+            "confidence_status", "odds_move", "source_time"
         ]
         for title, prop_key, seg in [
             ("Points", "points", None),
@@ -936,7 +966,7 @@ with tab_inj:
         if caution_df.empty:
             st.info("No caution flags.")
         else:
-            cols = ["player", "book", "prop_type", "game_segment", "line", "odds", "injury_status", "starter_status", "starter_confirmed", "confidence_status", "confidence_warning", "edge_score"]
+            cols = ["player", "book", "prop_type", "game_segment", "line", "odds", "injury_status", "starter_status", "starter_confirmed", "play_tier", "confidence_status", "confidence_warning", "edge_score"]
             st.dataframe(caution_df[cols], use_container_width=True)
 
 with tab_template:

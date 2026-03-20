@@ -1041,8 +1041,8 @@ def load_uploaded_csv(file):
 # -----------------------------
 # App
 # -----------------------------
-st.title("🏀 Sports AI Betting Dashboard V12 Automation Engine (Stable Fix 2)")
-st.caption("STABLE FIX 2: full corrected automation engine with safe execution signals, fallback triggers, market insight banner, guarded mobile-first workflow, and a working automation queue.")
+st.title("🏀 Sports AI Betting Dashboard V13 Tracking + PnL Core")
+st.caption("TRACKING + PNL CORE: corrected automation engine with bet log, grading workflow, profit tracking, ROI, CLV tracking, automation queue, and mobile-first workflow.")
 
 with st.sidebar:
     st.markdown("### Data")
@@ -1318,26 +1318,14 @@ else:
     st.dataframe(portfolio_show, use_container_width=True, hide_index=True)
 
 st.markdown("## 🛰️ Automation Queue")
-
-if "qualified" in locals() and qualified is not None and len(qualified) > 0:
-    queue_data = []
-
-    for _, row in qualified.iterrows():
-        queue_data.append({
-            "Player": row.get("player", ""),
-            "Market": row.get("market", ""),
-            "Side": row.get("bet_side", ""),
-            "Decision": row.get("bet_decision", "Auto Bet"),
-            "Odds": row.get("best_odds", ""),
-            "Stake": row.get("alloc_u", 0),
-            "Status": "READY"
-        })
-
-    queue_df = pd.DataFrame(queue_data)
-    st.dataframe(queue_df, use_container_width=True)
-
-else:
-    st.info("No automation actions at this time.")
+try:
+    queue_df = build_automation_queue(qualified, fallback_pool)
+    if queue_df is None or queue_df.empty:
+        st.info("No automation actions at this time.")
+    else:
+        st.dataframe(queue_df, use_container_width=True, hide_index=True)
+except Exception:
+    st.warning("Automation queue temporarily unavailable.")
 
 st.markdown("## ✅ Add To Bet Log")
 track_rows = portfolio.head(5).copy()
@@ -1375,7 +1363,7 @@ if perf_now.empty:
 else:
     st.dataframe(perf_now, use_container_width=True, hide_index=True)
 
-st.markdown("## 📒 Auto Tracker + CLV")
+st.markdown("## 📒 Bet Log + Performance")
 bet_log = load_bet_log()
 if bet_log.empty:
     st.info("No tracked bets yet.")
@@ -1432,4 +1420,4 @@ if call_log.empty:
 else:
     st.dataframe(call_log.sort_index(ascending=False), use_container_width=True, hide_index=True)
 
-st.caption("V12 AUTOMATION ENGINE: corrected full build with scheduled scans, alert routing, execution signals, automation queue, fallback triggers, confidence tiers, and stability-safe data guards.")
+st.caption("V13 TRACKING + PNL CORE: full build with bet log, grading, profit tracking, ROI, CLV tracking, automation queue, fallback triggers, confidence tiers, and stability-safe data guards.")

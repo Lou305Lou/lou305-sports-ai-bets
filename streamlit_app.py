@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Sports AI Betting Dashboard V12 Automation Engine", layout="wide")
+st.set_page_config(page_title="Sports AI Betting Dashboard V13.1 Grading Engine", layout="wide")
 
 CALL_LOG_FILE = "api_call_log.csv"
 BET_LOG_FILE = "bet_log.csv"
@@ -1041,7 +1041,7 @@ def load_uploaded_csv(file):
 # -----------------------------
 # App
 # -----------------------------
-st.title("🏀 Sports AI Betting Dashboard V13 Tracking + PnL Core (Clean Full Fix)")
+st.title("🏀 Sports AI Betting Dashboard V13.1 Grading Engine")
 st.caption("TRACKING + PNL CORE: corrected automation engine with bet log, grading workflow, profit tracking, ROI, CLV tracking, automation queue, and mobile-first workflow.")
 
 with st.sidebar:
@@ -1318,23 +1318,23 @@ else:
     st.dataframe(portfolio_show, use_container_width=True, hide_index=True)
 
 st.markdown("## 🛰️ Automation Queue")
-try:
-    queue_df = build_automation_queue(qualified, fallback_pool)
-    if queue_df is None or queue_df.empty:
-        st.info("No automation actions at this time.")
-    else:
-        st.dataframe(queue_df, use_container_width=True, hide_index=True)
-except Exception:
-    st.warning("Automation queue temporarily unavailable.")
+queue_df = build_automation_queue(qualified, fallback_pool)
+if queue_df is None or queue_df.empty:
+    st.info("No automation actions at this time.")
+else:
+    st.dataframe(queue_df, use_container_width=True, hide_index=True)
 
 st.markdown("## ✅ Add To Bet Log")
 track_rows = portfolio.head(5).copy()
-cols = st.columns(min(3, len(track_rows))) if len(track_rows) > 0 else []
-for i, (_, row) in enumerate(track_rows.iterrows()):
-    with cols[i % len(cols)]:
-        if st.button(f"Track {row['player']}", key=f"track_{i}"):
-            add_bet_to_log(row)
-            st.success(f"Added {row['player']} to bet log.")
+if track_rows.empty:
+    st.info("No portfolio plays available to track.")
+else:
+    cols = st.columns(min(3, len(track_rows)))
+    for i, (_, row) in enumerate(track_rows.iterrows()):
+        with cols[i % len(cols)]:
+            if st.button(f"Track {row['player']}", key=f"track_{i}"):
+                add_bet_to_log(row)
+                st.success(f"Added {row['player']} to bet log.")
 
 st.markdown("## 💰 Bankroll")
 parlay_units = 0.75 if not best_parlay else min(1.00, max(0.25, best_parlay["ev_pct"] / 20))
@@ -1363,31 +1363,57 @@ if perf_now.empty:
 else:
     st.dataframe(perf_now, use_container_width=True, hide_index=True)
 
-st.markdown("## 📒 Bet Log + Performance")
+st.markdown("## 🧾 V13.1 Grading Engine")
 bet_log = load_bet_log()
+pending_log = pending_bets_only(bet_log)
+settled_log = settled_bets_only(bet_log)
+
 if bet_log.empty:
     st.info("No tracked bets yet.")
 else:
-    summary = tracker_summary(bet_log)
+    all_summary = tracker_summary(bet_log)
+    settled_summary = tracker_summary(settled_log) if not settled_log.empty else {"bets": 0, "wins": 0, "losses": 0, "pushes": 0, "profit_u": 0.0, "roi_pct": 0.0, "win_rate": 0.0, "avg_clv": 0.0}
     render_summary_box([
-        ("Tracked Bets", str(summary["bets"])),
-        ("Profit", f"{summary['profit_u']:.2f}u"),
-        ("ROI", f"{summary['roi_pct']:.1f}%"),
-        ("Avg CLV", f"{summary['avg_clv']:.2f}%"),
+        ("Tracked Bets", str(all_summary["bets"])),
+        ("Pending", str(len(pending_log))),
+        ("Settled", str(len(settled_log))),
+        ("Wins", str(settled_summary["wins"])),
+        ("Losses", str(settled_summary["losses"])),
+        ("Pushes", str(settled_summary["pushes"])),
+        ("Profit", f"{settled_summary['profit_u']:.2f}u"),
+        ("ROI", f"{settled_summary['roi_pct']:.1f}%"),
+        ("Win Rate", f"{settled_summary['win_rate']:.1f}%"),
+        ("Avg CLV", f"{settled_summary['avg_clv']:.2f}%"),
     ])
 
+    st.markdown("### ✍️ Grade Bets")
     editable = bet_log.copy()
     for idx in editable.index:
         title = f'{editable.loc[idx, "player"]} • {editable.loc[idx, "market"]} • {editable.loc[idx, "bet_side"]} {editable.loc[idx, "line"]}'
-        with st.expander(title, expanded=False):
-            result = st.selectbox("Result", ["Pending", "Win", "Loss", "Push"], index=["Pending","Win","Loss","Push"].index(str(editable.loc[idx, "result"])), key=f"res_{idx}")
-            closing_odds = st.number_input("Closing odds", value=float(editable.loc[idx, "closing_odds"]) if pd.notna(editable.loc[idx, "closing_odds"]) else 0.0, step=1.0, key=f"close_{idx}")
+        status = str(editable.loc[idx, "result"])
+        with st.expander(f"{title} — {status}", expanded=False):
+            c1, c2 = st.columns(2)
+            with c1:
+                result = st.selectbox(
+                    "Result",
+                    ["Pending", "Win", "Loss", "Push"],
+                    index=["Pending", "Win", "Loss", "Push"].index(status if status in ["Pending", "Win", "Loss", "Push"] else "Pending"),
+                    key=f"res_{idx}"
+                )
+            with c2:
+                existing_close = editable.loc[idx, "closing_odds"]
+                base_close = float(existing_close) if pd.notna(existing_close) else float(safe_float(editable.loc[idx, "best_odds"], 0) or 0)
+                closing_odds = st.number_input("Closing odds", value=base_close, step=1.0, key=f"close_{idx}")
             notes = st.text_input("Notes", value=str(editable.loc[idx, "notes"]), key=f"note_{idx}")
             if st.button("Save grading", key=f"save_{idx}"):
                 editable.loc[idx, "result"] = result
                 editable.loc[idx, "closing_odds"] = closing_odds if closing_odds != 0 else np.nan
                 editable.loc[idx, "notes"] = notes
-                editable.loc[idx, "profit_u"] = settle_bet(result, safe_float(editable.loc[idx, "placed_odds"], np.nan), safe_float(editable.loc[idx, "stake_u"], 0.0))
+                editable.loc[idx, "profit_u"] = settle_bet(
+                    result,
+                    safe_float(editable.loc[idx, "placed_odds"], np.nan),
+                    safe_float(editable.loc[idx, "stake_u"], 0.0)
+                )
                 if pd.notna(editable.loc[idx, "closing_odds"]):
                     placed_ip = american_to_implied_prob(safe_float(editable.loc[idx, "placed_odds"], np.nan))
                     close_ip = american_to_implied_prob(safe_float(editable.loc[idx, "closing_odds"], np.nan))
@@ -1395,16 +1421,56 @@ else:
                 else:
                     editable.loc[idx, "clv_placed_vs_close_pct"] = np.nan
                 save_df(editable, BET_LOG_FILE)
-                st.success("Bet updated.")
+                st.success("Bet updated. Scroll to performance below for refreshed grading stats.")
+                st.rerun()
 
+    st.markdown("## 📒 Bet Log + Performance")
     display_log = load_bet_log().copy()
-    if not display_log.empty:
+    pending_after = pending_bets_only(display_log)
+    settled_after = settled_bets_only(display_log)
+
+    if not pending_after.empty:
+        st.markdown("### 🕒 Pending Bets")
+        pending_show = pending_after.copy()
         for col in ["placed_odds", "best_odds", "closing_odds"]:
-            display_log[col] = display_log[col].apply(lambda x: fmt_american(x) if pd.notna(x) else "—")
+            pending_show[col] = pending_show[col].apply(lambda x: fmt_american(x) if pd.notna(x) else "—")
         for col in ["edge_pct", "ev_pct", "predicted_clv_pct", "clv_placed_vs_close_pct"]:
-            display_log[col] = pd.to_numeric(display_log[col], errors="coerce").apply(lambda x: f"{x:.2f}%" if pd.notna(x) else "—")
-        display_log["stake_u"] = pd.to_numeric(display_log["stake_u"], errors="coerce").round(2).astype(str) + "u"
-        st.dataframe(display_log, use_container_width=True, hide_index=True)
+            pending_show[col] = pd.to_numeric(pending_show[col], errors="coerce").apply(fmt_pct_or_dash)
+        pending_show["stake_u"] = pd.to_numeric(pending_show["stake_u"], errors="coerce").round(2).astype(str) + "u"
+        st.dataframe(pending_show, use_container_width=True, hide_index=True)
+
+    if not settled_after.empty:
+        st.markdown("### ✅ Settled Bets")
+        settled_show = settled_after.copy()
+        for col in ["placed_odds", "best_odds", "closing_odds"]:
+            settled_show[col] = settled_show[col].apply(lambda x: fmt_american(x) if pd.notna(x) else "—")
+        for col in ["edge_pct", "ev_pct", "predicted_clv_pct", "clv_placed_vs_close_pct"]:
+            settled_show[col] = pd.to_numeric(settled_show[col], errors="coerce").apply(fmt_pct_or_dash)
+        settled_show["stake_u"] = pd.to_numeric(settled_show["stake_u"], errors="coerce").round(2).astype(str) + "u"
+        settled_show["profit_u"] = pd.to_numeric(settled_show["profit_u"], errors="coerce").round(2).astype(str) + "u"
+        st.dataframe(settled_show, use_container_width=True, hide_index=True)
+
+        by_market, by_player, by_book = grading_performance_tables(display_log)
+
+        st.markdown("### 📊 Grading Performance by Market")
+        if by_market.empty:
+            st.info("No settled market data yet.")
+        else:
+            st.dataframe(by_market, use_container_width=True, hide_index=True)
+
+        st.markdown("### 🧍 Grading Performance by Player")
+        if by_player.empty:
+            st.info("No settled player data yet.")
+        else:
+            st.dataframe(by_player, use_container_width=True, hide_index=True)
+
+        st.markdown("### 📚 Grading Performance by Book")
+        if by_book.empty:
+            st.info("No settled book data yet.")
+        else:
+            st.dataframe(by_book, use_container_width=True, hide_index=True)
+    else:
+        st.info("No settled bets yet. Grade a tracked bet as Win, Loss, or Push to activate performance analytics.")
 
 st.markdown("## 📢 Alert Log")
 alert_log = load_alert_log()
@@ -1420,4 +1486,4 @@ if call_log.empty:
 else:
     st.dataframe(call_log.sort_index(ascending=False), use_container_width=True, hide_index=True)
 
-st.caption("V13 TRACKING + PNL CORE CLEAN FIX: full build with bet log, grading, profit tracking, ROI, CLV tracking, automation queue, fallback triggers, confidence tiers, and stability-safe data guards.")
+st.caption("V13.1 GRADING ENGINE: full build with tracking, grading workflow, settled-bet analytics, PnL, ROI, CLV tracking, automation queue, fallback triggers, confidence tiers, and stability-safe data guards.")

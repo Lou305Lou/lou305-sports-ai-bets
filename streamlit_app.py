@@ -7,7 +7,7 @@ import streamlit as st
 
 
 # ============================================================
-# Sports AI Betting Dashboard — V6 Top Plays Engine
+# Sports AI Betting Dashboard — V6.1 Dashboard UI Upgrade
 # ============================================================
 
 st.set_page_config(page_title="Sports AI Betting Dashboard", layout="wide")
@@ -250,7 +250,7 @@ def portfolio_flag(score: float, ev_edge: float, hit_pct: float) -> str:
 
 
 # -----------------------------
-# Game Script AI (V5)
+# Game Script AI
 # -----------------------------
 def script_type_for_row(row: pd.Series) -> str:
     total = safe_float(row.get("game_total"), np.nan)
@@ -584,7 +584,6 @@ def build_top_plays(df: pd.DataFrame, max_plays: int = 3, min_score: float = 76,
         corr_group = str(row["correlation_group"])
         group_key = f"{matchup}|{corr_group}"
 
-        # hard portfolio controls
         if used_matchups.get(matchup, 0) >= 2:
             continue
         if group_key in used_groups:
@@ -676,9 +675,36 @@ def inject_ui_css():
         """
         <style>
         div.block-container {
-            padding-top: 1.2rem;
+            padding-top: 1.0rem;
             padding-bottom: 2rem;
         }
+        .metric-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 10px;
+            margin: 6px 0 18px 0;
+        }
+        .metric-grid.three {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+        .metric-card {
+            border: 1px solid rgba(128,128,128,0.20);
+            border-radius: 16px;
+            padding: 12px 12px 10px 12px;
+            background: rgba(250,250,250,0.72);
+            box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+        }
+        .metric-label {
+            font-size: 0.76rem;
+            opacity: 0.72;
+            margin-bottom: 6px;
+        }
+        .metric-value {
+            font-size: 1.4rem;
+            font-weight: 700;
+            line-height: 1.05;
+        }
+
         .bet-card {
             border: 1px solid rgba(128,128,128,0.25);
             border-radius: 16px;
@@ -688,8 +714,9 @@ def inject_ui_css():
             box-shadow: 0 1px 3px rgba(0,0,0,0.04);
         }
         .bet-card.top-play {
-            border: 1.5px solid rgba(255,180,0,0.45);
-            background: rgba(255,248,225,0.9);
+            border: 2px solid rgba(230, 180, 20, 0.55);
+            background: rgba(255,248,225,0.95);
+            box-shadow: 0 3px 10px rgba(220,170,20,0.10);
         }
         .bet-card-title {
             font-size: 1.03rem;
@@ -720,6 +747,9 @@ def inject_ui_css():
             line-height: 1.35;
             margin-top: 4px;
         }
+        .pill-wrap {
+            margin-bottom: 6px;
+        }
         .pill {
             display: inline-block;
             padding: 2px 8px;
@@ -738,6 +768,12 @@ def inject_ui_css():
             margin-bottom: 10px;
         }
         @media (max-width: 768px) {
+            .metric-grid, .metric-grid.three {
+                grid-template-columns: repeat(2, minmax(0,1fr));
+            }
+            .metric-value {
+                font-size: 1.2rem;
+            }
             .bet-card-title { font-size: 0.95rem; }
             .bet-card-sub { font-size: 0.74rem; }
             .bet-stat { font-size: 0.73rem; }
@@ -747,6 +783,20 @@ def inject_ui_css():
         """,
         unsafe_allow_html=True,
     )
+
+
+def render_metric_boxes(items, three=False):
+    cls = "metric-grid three" if three else "metric-grid"
+    html = f'<div class="{cls}">'
+    for label, value in items:
+        html += f"""
+        <div class="metric-card">
+            <div class="metric-label">{label}</div>
+            <div class="metric-value">{value}</div>
+        </div>
+        """
+    html += "</div>"
+    st.markdown(html, unsafe_allow_html=True)
 
 
 def format_bet_cards(df: pd.DataFrame, top_n: int = 10, top_play_mode: bool = False):
@@ -762,21 +812,28 @@ def format_bet_cards(df: pd.DataFrame, top_n: int = 10, top_play_mode: bool = Fa
         selected = row.get("portfolio_status", "")
         script = row.get("script_type", "")
         conf = int(row["script_confidence"]) if pd.notna(row.get("script_confidence", np.nan)) else "N/A"
-        extra_rank = f"🏆 Top Play #{int(row['top_play_rank'])}" if top_play_mode and "top_play_rank" in row else ""
+        extra_rank = f"🏆 Top Play #{int(row['top_play_rank'])}" if top_play_mode and "top_play_rank" in row else f"#{idx + 1}"
         card_class = "bet-card top-play" if top_play_mode else "bet-card"
-        extra_value = f"<div class='pill'>{row['bet_this']}</div><div class='pill'>Value {row['top_play_value']:.1f}</div>" if top_play_mode else ""
+
+        pill_html = f"""
+        <div class="pill-wrap">
+            <span class="pill">{tier}</span>
+            <span class="pill">{selected}</span>
+            <span class="pill">{realism}</span>
+        """
+        if top_play_mode and "bet_this" in row:
+            pill_html += f"""
+            <span class="pill">{row['bet_this']}</span>
+            <span class="pill">Value {row['top_play_value']:.1f}</span>
+            """
+        pill_html += "</div>"
 
         html = f"""
         <div class="{card_class}">
-            <div class="bet-card-title">{extra_rank if extra_rank else '#' + str(idx + 1)} {row['player']} — {row['bet_side']} {row['line']} {str(row['market']).title()}</div>
+            <div class="bet-card-title">{extra_rank} {row['player']} — {row['bet_side']} {row['line']} {str(row['market']).title()}</div>
             <div class="bet-card-sub">{row['matchup']} • FULL_GAME • {row['book'] if row['book'] else 'Book N/A'}</div>
 
-            <div>
-                <span class="pill">{tier}</span>
-                <span class="pill">{selected}</span>
-                <span class="pill">{realism}</span>
-                {extra_value}
-            </div>
+            {pill_html}
 
             <div class="bet-grid">
                 <div class="bet-stat"><b>Projection</b><br>{row['projection']:.2f}</div>
@@ -848,7 +905,7 @@ def load_csv(file) -> pd.DataFrame:
 inject_ui_css()
 
 st.title("🏀 Sports AI Betting Dashboard")
-st.caption("V6 Top Plays Engine: auto-selects the best 2–3 bets while reducing same-game correlation mistakes.")
+st.caption("V6.1 Dashboard UI upgrade: boxed metric bars, fixed Bet This cards, and cleaner mobile spacing.")
 
 with st.sidebar:
     st.header("Data")
@@ -901,11 +958,12 @@ if only_starters_global:
     filtered = filtered[filtered["starter"] == True]
 filtered = filtered[filtered["score"] >= min_score].copy()
 
-m1, m2, m3, m4 = st.columns(4)
-m1.metric("Bets Loaded", f"{len(model_df)}")
-m2.metric("Filtered Bets", f"{len(filtered)}")
-m3.metric("Avg Hit %", f"{filtered['hit_pct'].mean():.1f}%" if not filtered.empty else "N/A")
-m4.metric("Avg EV Edge", f"{filtered['ev_edge_pct'].mean():.2f}%" if not filtered.empty else "N/A")
+render_metric_boxes([
+    ("Bets Loaded", f"{len(model_df)}"),
+    ("Filtered Bets", f"{len(filtered)}"),
+    ("Avg Hit %", f"{filtered['hit_pct'].mean():.1f}%" if not filtered.empty else "N/A"),
+    ("Avg EV Edge", f"{filtered['ev_edge_pct'].mean():.2f}%" if not filtered.empty else "N/A"),
+])
 
 tabs = st.tabs(["⭐ Top Plays Engine", "🔥 Best Bets", "🧠 NBA Player Props V2", "🎮 Game Script AI", "⚡ Arbitrage & Middles", "📦 Portfolio", "🗂️ Raw Data"])
 
@@ -937,10 +995,11 @@ with tabs[0]:
         avoid_review=avoid_review,
     )
 
-    a1, a2, a3 = st.columns(3)
-    a1.metric("Top Plays Found", f"{len(top_df)}")
-    a2.metric("Avg Top Play Score", f"{top_df['score'].mean():.1f}" if not top_df.empty else "N/A")
-    a3.metric("Total Suggested Units", f"{top_df['portfolio_size_u'].sum():.2f}u" if not top_df.empty else "0.00u")
+    render_metric_boxes([
+        ("Top Plays Found", f"{len(top_df)}"),
+        ("Avg Top Play Score", f"{top_df['score'].mean():.1f}" if not top_df.empty else "N/A"),
+        ("Total Suggested Units", f"{top_df['portfolio_size_u'].sum():.2f}u" if not top_df.empty else "0.00u"),
+    ], three=True)
 
     if top_df.empty:
         st.info("No top plays match the current auto-selector rules. Lower the thresholds a bit.")
@@ -1052,10 +1111,11 @@ with tabs[3]:
         hide_index=True,
     )
 
-    s1, s2, s3 = st.columns(3)
-    s1.metric("Track Meet / Shootout Bets", int(gs["script_type"].isin(["Track meet", "Competitive shootout"]).sum()))
-    s2.metric("Blowout Risk Bets", int((gs["blowout_risk"] == "High").sum()))
-    s3.metric("Avg Script Boost", f"{gs['game_script_boost'].mean():.2f}" if not gs.empty else "N/A")
+    render_metric_boxes([
+        ("Track Meet / Shootout", f"{int(gs['script_type'].isin(['Track meet', 'Competitive shootout']).sum())}"),
+        ("High Blowout Risk", f"{int((gs['blowout_risk'] == 'High').sum())}"),
+        ("Avg Script Boost", f"{gs['game_script_boost'].mean():.2f}" if not gs.empty else "N/A"),
+    ], three=True)
 
 with tabs[4]:
     st.subheader("Arbitrage & Middles Scanner")
@@ -1092,10 +1152,11 @@ with tabs[5]:
     dollar_per_unit = bankroll * (unit_pct / 100.0)
     port["stake_$"] = (port["portfolio_size_u"] * dollar_per_unit).round(2)
 
-    k1, k2, k3 = st.columns(3)
-    k1.metric("Selected Bets", f"{len(port)}")
-    k2.metric("Total Units", f"{port['portfolio_size_u'].sum():.2f}u" if not port.empty else "0.00u")
-    k3.metric("Total Stake", f"${port['stake_$'].sum():,.2f}" if not port.empty else "$0.00")
+    render_metric_boxes([
+        ("Selected Bets", f"{len(port)}"),
+        ("Total Units", f"{port['portfolio_size_u'].sum():.2f}u" if not port.empty else "0.00u"),
+        ("Total Stake", f"${port['stake_$'].sum():,.2f}" if not port.empty else "$0.00"),
+    ], three=True)
 
     st.dataframe(
         port[[
@@ -1115,9 +1176,9 @@ with tabs[6]:
     st.download_button(
         "Download scored bets CSV",
         data=csv,
-        file_name="scored_bets_v6_top_plays.csv",
+        file_name="scored_bets_v6_1_dashboard_ui.csv",
         mime="text/csv",
     )
 
 st.markdown("---")
-st.caption("V6 Top Plays Engine added: auto-selector, portfolio-safe ranking, and a dedicated 'Bet This' section.")
+st.caption("Dashboard UI upgraded: boxed metric summaries, fixed Bet This cards, and cleaner mobile layout.")

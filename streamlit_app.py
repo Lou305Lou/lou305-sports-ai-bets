@@ -39,15 +39,6 @@ def safe_float(v, default=np.nan):
 def clamp01(x):
     return max(0.0, min(1.0, x))
 
-def normalize_score(x, min_val, max_val):
-    x = safe_float(x, np.nan)
-    if pd.isna(x):
-        return 0.0
-    if max_val == min_val:
-        return 50.0
-    val = (x - min_val) / (max_val - min_val) * 100.0
-    return round(max(0.0, min(100.0, val)), 1)
-
 def american_to_decimal(odds):
     odds = safe_float(odds)
     if pd.isna(odds):
@@ -86,12 +77,19 @@ def today_et_str():
 def current_et_label():
     return et_now().strftime("%Y-%m-%d %I:%M %p ET")
 
+def normalize_series(s):
+    s = pd.to_numeric(s, errors="coerce")
+    mn, mx = s.min(), s.max()
+    if pd.isna(mn) or pd.isna(mx) or mx - mn == 0:
+        return pd.Series(np.full(len(s), 50.0), index=s.index)
+    return ((s - mn) / (mx - mn) * 100).clip(0, 100)
+
 # -----------------------------
-# Styles
+# Styling
 # -----------------------------
 st.markdown("""
 <style>
-.block-container {padding-top: 1rem; padding-bottom: 4rem; max-width: 1180px;}
+.block-container {padding-top: 1rem; padding-bottom: 4rem; max-width: 1220px;}
 .banner {
     border:1px solid rgba(148,163,184,.24);
     border-radius:22px;
@@ -108,36 +106,43 @@ st.markdown("""
     margin-bottom:10px;
 }
 .metric-label {font-size:.88rem; color:#6b7280; margin-bottom:6px;}
-.metric-value {font-size:1.65rem; line-height:1.05; font-weight:800;}
-.alert-box {
-    border:1px solid rgba(245,158,11,.35);
-    border-radius:18px;
-    padding:14px;
-    background: #fff7ed;
-    margin-bottom: 12px;
+.metric-value {font-size:1.75rem; line-height:1.05; font-weight:800;}
+.good-box, .watch-box, .alert-box, .model-box {
+    border-radius:18px; padding:14px; margin-bottom:12px;
 }
-.watch-box {
-    border:1px solid rgba(59,130,246,.28);
-    border-radius:18px;
-    padding:14px;
-    background: #eff6ff;
-    margin-bottom: 12px;
-}
-.good-box {
-    border:1px solid rgba(34,197,94,.28);
-    border-radius:18px;
-    padding:14px;
-    background: #f0fdf4;
-    margin-bottom: 12px;
-}
-.pass-box {
-    border:1px solid rgba(239,68,68,.20);
-    border-radius:18px;
-    padding:14px;
-    background: #fef2f2;
-    margin-bottom: 12px;
-}
+.good-box {border:1px solid rgba(34,197,94,.28); background:#f0fdf4;}
+.watch-box {border:1px solid rgba(59,130,246,.28); background:#eff6ff;}
+.alert-box {border:1px solid rgba(245,158,11,.35); background:#fff7ed;}
+.model-box {border:1px solid rgba(148,163,184,.20); background:#ffffff;}
 .small-muted {color:#6b7280; font-size:.94rem;}
+.summary-box {
+    border:1px solid rgba(148,163,184,.22);
+    border-radius:20px;
+    background: rgba(255,255,255,.98);
+    padding:14px;
+    margin-bottom:12px;
+}
+.summary-grid {
+    display:grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap:10px;
+}
+.summary-cell {
+    border:1px solid rgba(148,163,184,.16);
+    border-radius:14px;
+    background:#f8fafc;
+    padding:10px 12px;
+}
+.summary-label {
+    font-size:.84rem;
+    color:#6b7280;
+    margin-bottom:6px;
+}
+.summary-value {
+    font-size:1.15rem;
+    font-weight:800;
+    line-height:1.1;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -162,7 +167,8 @@ def load_bet_log():
     return load_csv_file(BET_LOG_FILE, [
         "timestamp", "player", "market", "bet_side", "line", "book", "best_book",
         "placed_odds", "best_odds", "stake_u", "stake_$", "edge_pct", "ev_pct",
-        "tier", "bet_decision", "predicted_clv_pct", "agreement_count", "ensemble_score",
+        "tier", "bet_decision", "predicted_clv_pct", "ensemble_score", "agreement_count",
+        "model_projection", "model_market", "model_clv", "model_script", "model_variance",
         "result", "profit_u", "closing_odds", "clv_placed_vs_close_pct", "notes"
     ])
 
@@ -178,33 +184,18 @@ def load_snapshot():
 
 def load_model_perf():
     return load_csv_file(MODEL_PERF_FILE, [
-        "model", "weight", "bets_tracked", "wins", "losses", "win_rate_pct", "avg_clv_pct", "suggested_weight"
+        "timestamp", "model_name", "raw_weight", "adj_weight", "sample_size", "avg_clv", "win_rate", "roi_pct"
     ])
 
 def log_api_call(reason, call_count=1, window=""):
     log = load_call_log()
-    row = {
-        "timestamp_et": current_et_label(),
-        "date_et": today_et_str(),
-        "window": window,
-        "reason": reason,
-        "call_count": call_count,
-    }
-    log = pd.concat([log, pd.DataFrame([row])], ignore_index=True)
-    save_df(log, CALL_LOG_FILE)
+    row = {"timestamp_et": current_et_label(), "date_et": today_et_str(), "window": window, "reason": reason, "call_count": call_count}
+    save_df(pd.concat([log, pd.DataFrame([row])], ignore_index=True), CALL_LOG_FILE)
 
 def log_alert(window, play_key, alert_type, message):
     log = load_alert_log()
-    row = {
-        "timestamp_et": current_et_label(),
-        "date_et": today_et_str(),
-        "window": window,
-        "play_key": play_key,
-        "alert_type": alert_type,
-        "message": message,
-    }
-    log = pd.concat([log, pd.DataFrame([row])], ignore_index=True)
-    save_df(log, ALERT_LOG_FILE)
+    row = {"timestamp_et": current_et_label(), "date_et": today_et_str(), "window": window, "play_key": play_key, "alert_type": alert_type, "message": message}
+    save_df(pd.concat([log, pd.DataFrame([row])], ignore_index=True), ALERT_LOG_FILE)
 
 def get_today_calls():
     log = load_call_log()
@@ -237,7 +228,7 @@ def should_run_window(window_name):
     return False
 
 # -----------------------------
-# Engine prep
+# Data prep
 # -----------------------------
 def ensure_columns(df):
     df = df.copy()
@@ -254,9 +245,8 @@ def ensure_columns(df):
             df[col] = val
     for c in ["player", "team", "opponent", "matchup", "market", "bet_side", "book"]:
         df[c] = df[c].fillna("").astype(str).str.strip()
-    num_cols = ["line", "projection", "odds", "minutes", "std_dev", "spread", "pace", "usage",
-                "open_odds", "last5_avg", "defense_rank", "minutes_volatility",
-                "odds_fanduel", "odds_draftkings", "odds_betmgm", "odds_caesars"]
+    num_cols = ["line", "projection", "odds", "minutes", "std_dev", "spread", "pace", "usage", "open_odds",
+                "last5_avg", "defense_rank", "minutes_volatility", "odds_fanduel", "odds_draftkings", "odds_betmgm", "odds_caesars"]
     for c in num_cols:
         df[c] = pd.to_numeric(df[c], errors="coerce")
     df["starter"] = df["starter"].fillna(False).astype(bool)
@@ -329,82 +319,96 @@ def movement_label(delta_implied_pct):
     return "⏳ Stable"
 
 # -----------------------------
-# Raw models
+# Multi-AI models
 # -----------------------------
-def raw_projection_edge(row):
-    proj = safe_float(row.get("projection"), np.nan)
-    line = safe_float(row.get("line"), np.nan)
-    if pd.isna(proj) or pd.isna(line):
+def model_projection_raw(row):
+    line = safe_float(row.get("line"))
+    proj = safe_float(row.get("projection"))
+    if pd.isna(line) or pd.isna(proj):
         return 0.0
-    return proj - line
+    std = infer_market_std(row)
+    return (proj - line) / max(std, 1e-6)
 
-def raw_market_intel(row):
-    best_odds = safe_float(row.get("best_display_odds"), np.nan)
-    open_odds = safe_float(row.get("open_odds"), np.nan)
+def model_market_raw(row):
+    best_odds = safe_float(row.get("best_display_odds"))
+    open_odds = safe_float(row.get("open_odds"))
     if pd.isna(best_odds):
         return 0.0
     best_ip = american_to_implied_prob(best_odds)
     open_ip = american_to_implied_prob(open_odds) if not pd.isna(open_odds) else best_ip
-    move = (open_ip - best_ip) * 100
+    raw = (open_ip - best_ip) * 100
     if "Steam" in str(row.get("movement_note", "")):
-        move += 1.5
-    return move
+        raw += 1.0
+    return raw
 
-def raw_clv_predictor(row):
+def model_clv_raw(row):
     move = safe_float(row.get("line_move_pct"), 0.0)
     edge = safe_float(row.get("true_edge"), 0.0) * 100
-    return move * 0.8 + edge * 0.5
+    return move * 0.6 + edge * 0.3
 
-def raw_game_script(row):
+def model_script_raw(row):
     pace = safe_float(row.get("pace"), 98.0)
     usage = safe_float(row.get("usage"), 22.0)
     spread = abs(safe_float(row.get("spread"), 0.0))
     market = str(row.get("market", "")).lower()
-    raw = 0.0
-    raw += (pace - 98) * 0.8
-    raw += max(usage - 22, 0) * 0.45
-    raw += 2.5 if spread <= 5 else (-2.5 if spread >= 10 else 0.0)
-    raw += 1.5 if ("points" in market or "pra" in market) else 0.0
+    raw = (pace - 98) * 0.8 + max(usage - 22, 0) * 0.35
+    if spread <= 5:
+        raw += 2.0
+    elif spread >= 10:
+        raw -= 2.0
+    if "points" in market or "pra" in market:
+        raw += 1.2
     return raw
 
-def raw_variance_risk(row):
+def model_variance_raw(row):
     starter = bool(row.get("starter", False))
     minutes = safe_float(row.get("minutes"), 0.0)
     mv = safe_float(row.get("minutes_volatility"), 3.0)
-    market = str(row.get("market", "")).lower()
-    raw = 0.0
-    raw += 3.0 if starter else -4.0
-    raw += max(minutes - 28, 0) * 0.30
-    raw -= mv * 1.0
-    raw -= 2.0 if ("threes" in market or "3pm" in market) else 0.0
+    raw = (minutes / 36.0) * 10 - mv * 1.5
+    raw += 1.5 if starter else -2.0
     return raw
 
-def predicted_clv_pct_from_score(model_clv_score):
-    return round(max(0.0, (safe_float(model_clv_score, 0) - 50) / 12), 2)
+def weight_adjustment_from_perf(base_weights):
+    perf = load_model_perf()
+    if perf.empty:
+        return base_weights.copy(), pd.DataFrame()
+    latest = perf.sort_values("timestamp").groupby("model_name", as_index=False).tail(1)
+    factors = {}
+    for _, row in latest.iterrows():
+        sample = safe_float(row.get("sample_size"), 0)
+        if sample < 50:
+            factors[row["model_name"]] = 1.0
+            continue
+        roi = safe_float(row.get("roi_pct"), 0.0)
+        clv = safe_float(row.get("avg_clv"), 0.0)
+        win = safe_float(row.get("win_rate"), 50.0)
+        adj = 1.0 + max(-0.05, min(0.05, (roi / 100) * 0.4 + (clv / 100) * 0.4 + ((win - 50) / 100) * 0.2))
+        factors[row["model_name"]] = adj
+    out = {}
+    total = 0.0
+    for k, v in base_weights.items():
+        out[k] = v * factors.get(k, 1.0)
+        total += out[k]
+    if total <= 0:
+        total = 1.0
+    out = {k: v / total for k, v in out.items()}
+    latest = latest.copy()
+    latest["adj_factor"] = latest["model_name"].map(factors)
+    return out, latest
 
-# -----------------------------
-# Decision layers
-# -----------------------------
+def predicted_clv_pct(row):
+    raw = safe_float(row.get("model_clv"), 50.0)
+    return round(max(0.0, (raw - 50) / 10), 2)
+
 def agreement_count(row):
     vals = [
-        safe_float(row.get("model_projection"), 0),
-        safe_float(row.get("model_market"), 0),
-        safe_float(row.get("model_clv"), 0),
-        safe_float(row.get("model_script"), 0),
-        safe_float(row.get("model_variance"), 0),
+        safe_float(row.get("model_projection"), 0.0),
+        safe_float(row.get("model_market"), 0.0),
+        safe_float(row.get("model_clv"), 0.0),
+        safe_float(row.get("model_script"), 0.0),
+        safe_float(row.get("model_variance"), 0.0),
     ]
     return int(sum(v >= 60 for v in vals))
-
-def confidence_grade_from_ensemble(ensemble):
-    if ensemble >= 82:
-        return "A+ ELITE"
-    if ensemble >= 74:
-        return "A STRONG"
-    if ensemble >= 66:
-        return "B+ VALUE"
-    if ensemble >= 58:
-        return "B LEAN"
-    return "C PASS"
 
 def tier_and_decision(row):
     ensemble = safe_float(row.get("ensemble_score"), 0.0)
@@ -414,18 +418,24 @@ def tier_and_decision(row):
     agree = int(row.get("agreement_count", 0))
     starter = bool(row.get("starter", False))
 
-    if ensemble >= 76 and agree >= 4 and edge >= 3.5 and ev >= 2:
+    if ensemble >= 74 and agree >= 4 and edge >= 3.5 and ev >= 2.0:
         return "Qualified", "Auto Bet"
-    if ensemble >= 68 and agree >= 3 and starter and edge >= 8 and ev >= 10:
-        return "Near threshold", "Strong Bet"
-    if ensemble >= 58 and agree >= 3 and ev >= 7 and clv >= 0.8:
-        return "Monitor", "Lean"
-    return "Needs line movement", "Pass"
+    if ensemble >= 68 and agree >= 4 and edge >= 2.5 and ev >= 2.0:
+        return "Qualified", "Strong Bet"
+    if starter and ensemble >= 62 and agree >= 3 and edge >= 8 and ev >= 10:
+        return "Near threshold", "Reduced Stake"
+    if ensemble >= 55 and agree >= 3 and ev >= 7 and clv >= 1.0:
+        return "Monitor", "Watch"
+    return "Needs line movement", "Wait"
 
-def stake_multiplier_by_tier(tier):
+def stake_multiplier_by_tier(tier, decision):
+    if decision == "Auto Bet":
+        return 1.00
+    if decision == "Strong Bet":
+        return 0.85
     return {
-        "Qualified": 1.00,
-        "Near threshold": 0.65,
+        "Qualified": 0.75,
+        "Near threshold": 0.60,
         "Monitor": 0.35,
         "Needs line movement": 0.00,
     }.get(tier, 0.00)
@@ -445,73 +455,9 @@ def apply_aggression_mode(df, mode):
         return out
     return out
 
-# -----------------------------
-# Self-learning supervised weights
-# -----------------------------
-def build_model_perf_table(base_weights):
-    bet_log = load_bet_log()
-    models = ["projection", "market", "clv", "script", "variance"]
-    rows = []
-    tracked = len(bet_log)
-    for m in models:
-        wins = int((bet_log["result"] == "Win").sum()) if not bet_log.empty else 0
-        losses = int((bet_log["result"] == "Loss").sum()) if not bet_log.empty else 0
-        settled = wins + losses
-        win_rate = (wins / settled * 100) if settled > 0 else np.nan
-        avg_clv = pd.to_numeric(bet_log["clv_placed_vs_close_pct"], errors="coerce").dropna().mean() if not bet_log.empty else np.nan
-        avg_clv = np.nan if pd.isna(avg_clv) else float(avg_clv)
-
-        current_w = base_weights[m]
-        suggested = current_w
-        if tracked >= 50 and settled >= 20:
-            adj = 0.0
-            if not pd.isna(win_rate):
-                if win_rate >= 56:
-                    adj += 0.02
-                elif win_rate <= 47:
-                    adj -= 0.02
-            if not pd.isna(avg_clv):
-                if avg_clv >= 1.0:
-                    adj += 0.01
-                elif avg_clv <= -1.0:
-                    adj -= 0.01
-            suggested = max(0.05, min(0.50, current_w + adj))
-
-        rows.append({
-            "model": m,
-            "weight": round(current_w, 3),
-            "bets_tracked": tracked,
-            "wins": wins,
-            "losses": losses,
-            "win_rate_pct": round(win_rate, 1) if not pd.isna(win_rate) else np.nan,
-            "avg_clv_pct": round(avg_clv, 2) if not pd.isna(avg_clv) else np.nan,
-            "suggested_weight": round(suggested, 3),
-        })
-    perf = pd.DataFrame(rows)
-    save_df(perf, MODEL_PERF_FILE)
-    return perf
-
-def get_effective_weights(base_weights, use_suggested):
-    perf = build_model_perf_table(base_weights)
-    if not use_suggested or perf.empty:
-        return base_weights, perf
-    eff = {row["model"]: float(row["suggested_weight"]) for _, row in perf.iterrows()}
-    total = sum(eff.values())
-    eff = {k: v / total for k, v in eff.items()}
-    return eff, perf
-
-# -----------------------------
-# Main scoring
-# -----------------------------
 def compute_scores(df, bankroll=1000, max_single_pct=0.0125, model_weights=None):
     if model_weights is None:
-        model_weights = {
-            "projection": 0.28,
-            "market": 0.20,
-            "clv": 0.18,
-            "script": 0.18,
-            "variance": 0.16,
-        }
+        model_weights = {"projection": 0.28, "market": 0.20, "clv": 0.18, "script": 0.18, "variance": 0.16}
 
     out = df.copy()
     out["bet_side"] = out.apply(infer_bet_side, axis=1)
@@ -538,17 +484,17 @@ def compute_scores(df, bankroll=1000, max_single_pct=0.0125, model_weights=None)
     out["realistic_ev"] = (out["realistic_hit_prob"] * (dec - 1)) - (1 - out["realistic_hit_prob"])
     out["realistic_ev_pct"] = (out["realistic_ev"] * 100).clip(-10, 45).round(2)
 
-    out["raw_projection"] = out.apply(raw_projection_edge, axis=1)
-    out["raw_market"] = out.apply(raw_market_intel, axis=1)
-    out["raw_clv"] = out.apply(raw_clv_predictor, axis=1)
-    out["raw_script"] = out.apply(raw_game_script, axis=1)
-    out["raw_variance"] = out.apply(raw_variance_risk, axis=1)
+    out["projection_raw"] = out.apply(model_projection_raw, axis=1)
+    out["market_raw"] = out.apply(model_market_raw, axis=1)
+    out["clv_raw"] = out.apply(model_clv_raw, axis=1)
+    out["script_raw"] = out.apply(model_script_raw, axis=1)
+    out["variance_raw"] = out.apply(model_variance_raw, axis=1)
 
-    out["model_projection"] = out["raw_projection"].apply(lambda x: normalize_score(x, -5, 8))
-    out["model_market"] = out["raw_market"].apply(lambda x: normalize_score(x, -6, 6))
-    out["model_clv"] = out["raw_clv"].apply(lambda x: normalize_score(x, -3, 8))
-    out["model_script"] = out["raw_script"].apply(lambda x: normalize_score(x, -6, 12))
-    out["model_variance"] = out["raw_variance"].apply(lambda x: normalize_score(x, -6, 8))
+    out["model_projection"] = normalize_series(out["projection_raw"]).round(1)
+    out["model_market"] = normalize_series(out["market_raw"]).round(1)
+    out["model_clv"] = normalize_series(out["clv_raw"]).round(1)
+    out["model_script"] = normalize_series(out["script_raw"]).round(1)
+    out["model_variance"] = normalize_series(out["variance_raw"]).round(1)
 
     out["ensemble_score"] = (
         out["model_projection"] * model_weights["projection"]
@@ -559,35 +505,37 @@ def compute_scores(df, bankroll=1000, max_single_pct=0.0125, model_weights=None)
     ).round(1)
 
     out["agreement_count"] = out.apply(agreement_count, axis=1)
-    out["confidence_grade"] = out["ensemble_score"].apply(confidence_grade_from_ensemble)
-    out["consensus_action"] = np.select(
-        [out["agreement_count"] >= 5, out["agreement_count"] >= 4, out["agreement_count"] >= 3],
-        ["Auto Bet", "Strong Bet", "Lean"],
-        default="Pass"
+
+    out["confidence_grade"] = np.select(
+        [out["ensemble_score"] >= 84, out["ensemble_score"] >= 76, out["ensemble_score"] >= 68, out["ensemble_score"] >= 60],
+        ["A+ ELITE", "A STRONG", "B+ VALUE", "B LEAN"], default="C PASS"
     )
-    out["predicted_clv_pct"] = out["model_clv"].apply(predicted_clv_pct_from_score)
+    out["consensus_action"] = np.where(
+        (out["ensemble_score"] >= 74) & (out["agreement_count"] >= 4) & (out["true_edge"] >= 0.035), "Bet",
+        np.where((out["ensemble_score"] >= 62) & (out["agreement_count"] >= 3) & (out["true_edge"] >= 0.015), "Lean", "Pass")
+    )
 
     b = dec - 1
     q = 1 - out["realistic_hit_prob"]
     raw_kelly = np.where((b > 0) & out["realistic_hit_prob"].between(0.001, 0.999), np.maximum(0, (b * out["realistic_hit_prob"] - q) / b), 0)
-    mult = np.where(out["ensemble_score"] >= 76, 0.42, np.where(out["ensemble_score"] >= 66, 0.30, 0.18))
+    mult = np.where(out["ensemble_score"] >= 78, 0.42, np.where(out["ensemble_score"] >= 68, 0.30, 0.18))
     frac = np.minimum(raw_kelly * mult, max_single_pct)
-
     out["base_stake_$"] = bankroll * frac
     out["base_stake_u"] = np.where(bankroll > 0, out["base_stake_$"] / (bankroll * 0.01), 0)
 
+    out["predicted_clv_pct"] = out.apply(predicted_clv_pct, axis=1)
     tier_decisions = out.apply(tier_and_decision, axis=1)
     out["tier"] = [x[0] for x in tier_decisions]
     out["bet_decision"] = [x[1] for x in tier_decisions]
-    out["stake_mult"] = out["tier"].apply(stake_multiplier_by_tier)
+    out["stake_mult"] = [stake_multiplier_by_tier(t, d) for t, d in zip(out["tier"], out["bet_decision"])]
     out["single_stake_$"] = (out["base_stake_$"] * out["stake_mult"]).round(2)
     out["single_stake_u"] = (out["base_stake_u"] * out["stake_mult"]).round(2)
 
     out["rank_score"] = (
-        out["ensemble_score"] * 0.55
-        + out["realistic_ev_pct"] * 0.75
-        + (out["true_edge"] * 100) * 0.80
-        + out["predicted_clv_pct"] * 2.0
+        out["ensemble_score"] * 0.52
+        + out["realistic_ev_pct"] * 0.72
+        + (out["true_edge"] * 100) * 0.70
+        + out["predicted_clv_pct"] * 2.5
         + out["agreement_count"] * 2.0
     ).round(2)
 
@@ -669,33 +617,39 @@ def create_alerts(previous_snapshot, current_all, current_qualified, window_name
     for key, row in curr_all_map.items():
         prev_row = prev_map.get(key)
         player = row["player"]
+        current_tier = row["tier"]
+        current_clv = safe_float(row.get("predicted_clv_pct"), 0.0)
+        current_ensemble = safe_float(row.get("ensemble_score"), 0.0)
 
-        if prev_row is None and row["tier"] == "Qualified":
+        if prev_row is None and current_tier == "Qualified":
             msg = f"{player}: new qualified play entered pool."
             alerts.append(msg); log_alert(window_name, key, "new_qualified", msg)
             continue
 
         if prev_row is not None:
             prev_tier = str(prev_row.get("tier", ""))
-            prev_ens = safe_float(prev_row.get("ensemble_score"), np.nan)
-            curr_ens = safe_float(row.get("ensemble_score"), np.nan)
+            prev_ev = safe_float(prev_row.get("realistic_ev_pct"), np.nan)
+            curr_ev = safe_float(row.get("realistic_ev_pct"), np.nan)
             prev_book = str(prev_row.get("best_book", ""))
             curr_book = str(row.get("best_book", ""))
             prev_clv = safe_float(prev_row.get("predicted_clv_pct"), 0.0)
-            curr_clv = safe_float(row.get("predicted_clv_pct"), 0.0)
+            prev_ensemble = safe_float(prev_row.get("ensemble_score"), 0.0)
 
-            if prev_tier != "Qualified" and row["tier"] == "Qualified":
+            if prev_tier != "Qualified" and current_tier == "Qualified":
                 msg = f"{player}: upgraded from {prev_tier or 'watch'} to Qualified."
                 alerts.append(msg); log_alert(window_name, key, "upgrade_to_qualified", msg)
-            if not pd.isna(prev_ens) and not pd.isna(curr_ens) and curr_ens - prev_ens >= 4.0:
-                msg = f"{player}: ensemble score improved to {curr_ens:.1f}."
-                alerts.append(msg); log_alert(window_name, key, "ensemble_improved", msg)
+            if not pd.isna(prev_ev) and not pd.isna(curr_ev) and curr_ev - prev_ev >= 2.0:
+                msg = f"{player}: EV improved by {curr_ev - prev_ev:.1f}%."
+                alerts.append(msg); log_alert(window_name, key, "ev_improved", msg)
             if prev_book != curr_book:
                 msg = f"{player}: best book changed to {curr_book}."
                 alerts.append(msg); log_alert(window_name, key, "best_book_changed", msg)
-            if curr_clv - prev_clv >= 1.0:
-                msg = f"{player}: predicted CLV improved to {curr_clv:.2f}%."
+            if current_clv - prev_clv >= 1.0:
+                msg = f"{player}: predicted CLV improved to {current_clv:.2f}%."
                 alerts.append(msg); log_alert(window_name, key, "clv_improved", msg)
+            if current_ensemble - prev_ensemble >= 4.0:
+                msg = f"{player}: ensemble score improved to {current_ensemble:.1f}."
+                alerts.append(msg); log_alert(window_name, key, "ensemble_improved", msg)
 
     for key, row in prev_map.items():
         if str(row.get("tier", "")) == "Qualified" and key not in curr_qual_keys:
@@ -707,8 +661,8 @@ def save_snapshot_from_df(df):
     if df.empty:
         save_df(pd.DataFrame(columns=[
             "play_key", "player", "market", "bet_side", "line", "best_book", "best_display_odds",
-            "true_edge", "realistic_ev_pct", "movement_note", "tier", "qualified", "predicted_clv_pct",
-            "ensemble_score", "agreement_count"
+            "true_edge", "realistic_ev_pct", "movement_note", "tier", "qualified",
+            "predicted_clv_pct", "ensemble_score", "agreement_count"
         ]), SNAPSHOT_FILE)
         return
     snap = df[[
@@ -728,7 +682,7 @@ def portfolio_bucket_score(row):
     clv = safe_float(row.get("predicted_clv_pct"), 0.0)
     ensemble = safe_float(row.get("ensemble_score"), 0.0)
     agree = safe_float(row.get("agreement_count"), 0.0)
-    score = edge * 1.0 + ev * 0.8 + clv * 2.0 + ensemble * 0.5 + agree * 3.0
+    score = edge * 0.9 + ev * 0.8 + clv * 2.0 + ensemble * 0.45 + agree * 2.5
     if str(row.get("tier", "")) == "Qualified":
         score += 12
     elif str(row.get("tier", "")) == "Near threshold":
@@ -751,11 +705,60 @@ def allocate_portfolio(df, bankroll, max_total_u, max_per_game=2):
     port = pd.DataFrame(kept_rows).reset_index(drop=True)
     port["portfolio_raw"] = port.apply(portfolio_bucket_score, axis=1)
     total_raw = port["portfolio_raw"].sum()
-    port["portfolio_weight"] = 0.0 if total_raw <= 0 else port["portfolio_raw"] / total_raw
+    if total_raw <= 0:
+        port["portfolio_weight"] = 0.0
+    else:
+        port["portfolio_weight"] = port["portfolio_raw"] / total_raw
     port["alloc_u"] = (port["portfolio_weight"] * max_total_u).round(2)
     port["alloc_u"] = np.minimum(port["alloc_u"], port["single_stake_u"])
     port["alloc_$"] = (port["alloc_u"] * (bankroll * 0.01)).round(2)
     return port.sort_values(["alloc_u", "rank_score"], ascending=[False, False]).reset_index(drop=True)
+
+# -----------------------------
+# Self-learning perf tracker
+# -----------------------------
+def compute_model_performance_from_betlog(log):
+    if log.empty:
+        return pd.DataFrame(columns=["model_name", "raw_weight", "adj_weight", "sample_size", "avg_clv", "win_rate", "roi_pct"])
+    settled = log[log["result"].isin(["Win", "Loss", "Push"])].copy()
+    if settled.empty:
+        return pd.DataFrame(columns=["model_name", "raw_weight", "adj_weight", "sample_size", "avg_clv", "win_rate", "roi_pct"])
+
+    models = {
+        "projection": "model_projection",
+        "market": "model_market",
+        "clv": "model_clv",
+        "script": "model_script",
+        "variance": "model_variance",
+    }
+    rows = []
+    for model_name, col in models.items():
+        sample = settled[pd.to_numeric(settled[col], errors="coerce").notna()].copy()
+        if sample.empty:
+            continue
+        high = sample[pd.to_numeric(sample[col], errors="coerce") >= 60]
+        if high.empty:
+            high = sample
+        wins = int((high["result"] == "Win").sum())
+        losses = int((high["result"] == "Loss").sum())
+        total = len(high)
+        total_staked = pd.to_numeric(high["stake_u"], errors="coerce").fillna(0).sum()
+        profit = pd.to_numeric(high["profit_u"], errors="coerce").fillna(0).sum()
+        roi = (profit / total_staked * 100) if total_staked > 0 else 0.0
+        win_rate = (wins / (wins + losses) * 100) if (wins + losses) > 0 else 50.0
+        avg_clv = pd.to_numeric(high["clv_placed_vs_close_pct"], errors="coerce").dropna().mean()
+        avg_clv = 0.0 if pd.isna(avg_clv) else avg_clv
+        rows.append({
+            "timestamp": current_et_label(),
+            "model_name": model_name,
+            "raw_weight": np.nan,
+            "adj_weight": np.nan,
+            "sample_size": total,
+            "avg_clv": round(avg_clv, 2),
+            "win_rate": round(win_rate, 1),
+            "roi_pct": round(roi, 1),
+        })
+    return pd.DataFrame(rows)
 
 # -----------------------------
 # Bet log helpers
@@ -779,16 +782,20 @@ def add_bet_to_log(row):
         "tier": row["tier"],
         "bet_decision": row["bet_decision"],
         "predicted_clv_pct": row["predicted_clv_pct"],
-        "agreement_count": row["agreement_count"],
         "ensemble_score": row["ensemble_score"],
+        "agreement_count": row["agreement_count"],
+        "model_projection": row["model_projection"],
+        "model_market": row["model_market"],
+        "model_clv": row["model_clv"],
+        "model_script": row["model_script"],
+        "model_variance": row["model_variance"],
         "result": "Pending",
         "profit_u": 0.0,
         "closing_odds": np.nan,
         "clv_placed_vs_close_pct": np.nan,
         "notes": ""
     }
-    log = pd.concat([log, pd.DataFrame([new_row])], ignore_index=True)
-    save_df(log, BET_LOG_FILE)
+    save_df(pd.concat([log, pd.DataFrame([new_row])], ignore_index=True), BET_LOG_FILE)
 
 def settle_bet(result, placed_odds, stake_u):
     dec = american_to_decimal(placed_odds)
@@ -820,6 +827,15 @@ def tracker_summary(log):
 def render_metric_box(label, value):
     st.markdown(f'<div class="metric-box"><div class="metric-label">{label}</div><div class="metric-value">{value}</div></div>', unsafe_allow_html=True)
 
+def render_summary_box(items):
+    html = ['<div class="summary-box"><div class="summary-grid">']
+    for label, value in items:
+        html.append(
+            f'<div class="summary-cell"><div class="summary-label">{label}</div><div class="summary-value">{value}</div></div>'
+        )
+    html.append('</div></div>')
+    st.markdown("".join(html), unsafe_allow_html=True)
+
 def render_best_bet(row):
     st.markdown("## 🔥 Best Bet")
     st.markdown(f"### {row['player']} — {row['bet_side']} {row['line']} {row['market']}")
@@ -829,29 +845,25 @@ def render_best_bet(row):
         f"**EV:** {row['realistic_ev_pct']:.1f}% | "
         f"**Predicted CLV:** {row['predicted_clv_pct']:.2f}%"
     )
-    c1, c2, c3, c4, c5 = st.columns(5)
-    with c1: render_metric_box("Hit %", f"{row['realistic_hit_prob']*100:.0f}%")
-    with c2: render_metric_box("Edge", f"{row['true_edge']*100:.1f}%")
-    with c3: render_metric_box("Stake", f"{row.get('alloc_u', row['single_stake_u']):.2f}u")
-    with c4: render_metric_box("Ensemble", f"{row['ensemble_score']:.1f}")
-    with c5: render_metric_box("Agreement", f"{int(row['agreement_count'])}/5")
+    render_summary_box([
+        ("Hit %", f"{row['realistic_hit_prob']*100:.0f}%"),
+        ("Edge", f"{row['true_edge']*100:.1f}%"),
+        ("Stake", f"{row.get('alloc_u', row['single_stake_u']):.2f}u"),
+        ("Ensemble", f"{row['ensemble_score']:.1f}"),
+        ("Agreement", f"{int(row['agreement_count'])}/5"),
+    ])
     st.progress(float(row["realistic_hit_prob"]))
 
 def render_compact_play(row):
-    tier = row["tier"]
-    if tier == "Qualified":
-        box_class = "good-box"
-    elif tier in ["Near threshold", "Monitor"]:
-        box_class = "watch-box"
-    else:
-        box_class = "pass-box"
+    box_class = "good-box" if row["tier"] == "Qualified" else "watch-box"
     stake_u = row.get("alloc_u", row.get("single_stake_u", 0))
     st.markdown(
-        f'<div class="{box_class}"><b>{row["tier"]}</b> • {row["bet_decision"]} • {int(row["agreement_count"])}/5 agree<br>'
+        f'<div class="{box_class}"><b>{row["tier"]}</b> • {row["bet_decision"]}<br>'
         f'{row["player"]} — {row["bet_side"]} {row["line"]} {row["market"]}<br>'
         f'Best {fmt_american(row["best_display_odds"])} ({row["best_book"]}) | '
         f'EV {row["realistic_ev_pct"]:.1f}% | Edge {row["true_edge"]*100:.1f}% | '
-        f'Stake {stake_u:.2f}u | Pred. CLV {row["predicted_clv_pct"]:.2f}% | Ensemble {row["ensemble_score"]:.1f}</div>',
+        f'Stake {stake_u:.2f}u | Pred. CLV {row["predicted_clv_pct"]:.2f}% | '
+        f'Ensemble {row["ensemble_score"]:.1f} | Agreement {int(row["agreement_count"])}/5</div>',
         unsafe_allow_html=True
     )
 
@@ -876,7 +888,7 @@ def load_uploaded_csv(file):
 # App
 # -----------------------------
 st.title("🏀 Sports AI Betting Dashboard V11.1 PRO FUSION")
-st.caption("PRO MODE: normalized multi-AI, agreement engine, portfolio optimizer, and supervised self-learning weights.")
+st.caption("PRO MODE + normalized multi-AI engine + portfolio optimizer + supervised self-learning weights.")
 
 with st.sidebar:
     st.markdown("### Data")
@@ -902,27 +914,29 @@ with st.sidebar:
     clv_w = st.slider("CLV model", 0.05, 0.50, 0.18, 0.01)
     script_w = st.slider("Game script model", 0.05, 0.50, 0.18, 0.01)
     variance_w = st.slider("Variance model", 0.05, 0.50, 0.16, 0.01)
-    use_suggested_weights = st.toggle("Use supervised suggested weights", value=False)
+    use_self_learning = st.toggle("Use self-learning adjustments", value=True)
 
-    st.markdown("### PRO Filters")
+    st.markdown("### PRO MODE Rules")
     min_ensemble = st.slider("Min ensemble score", 55, 90, 72)
-    min_agreement = st.slider("Min model agreement", 1, 5, 4)
     min_edge = st.slider("Min true edge %", 0.0, 15.0, 2.0, 0.5)
     min_ev = st.slider("Min EV %", 0.0, 25.0, 2.0, 0.5)
+    min_agreement = st.slider("Min model agreement", 1, 5, 4)
     sharp_mode = st.toggle("Sharp Mode", value=True)
     max_per_game = st.slider("Max plays per game", 1, 3, 2)
 
-weights_sum = projection_w + market_w + clv_w + script_w + variance_w
-if weights_sum <= 0:
-    weights_sum = 1.0
 base_weights = {
-    "projection": projection_w / weights_sum,
-    "market": market_w / weights_sum,
-    "clv": clv_w / weights_sum,
-    "script": script_w / weights_sum,
-    "variance": variance_w / weights_sum,
+    "projection": projection_w,
+    "market": market_w,
+    "clv": clv_w,
+    "script": script_w,
+    "variance": variance_w,
 }
-effective_weights, perf_table = get_effective_weights(base_weights, use_suggested_weights)
+total_w = sum(base_weights.values())
+if total_w <= 0:
+    total_w = 1.0
+base_weights = {k: v / total_w for k, v in base_weights.items()}
+
+adj_weights, perf_table = weight_adjustment_from_perf(base_weights) if use_self_learning else (base_weights.copy(), pd.DataFrame())
 
 used_calls = get_today_calls()
 remaining_calls = get_remaining_calls()
@@ -953,17 +967,17 @@ elif live_mode == "Scheduled (3x daily)":
 previous_snapshot = load_snapshot()
 alerts_to_show = []
 if refresh_reason:
-    base_df, call_cost = simulate_live_refresh(base_df, top_n=top_live_checks, edge_threshold_pct=min_live_edge, model_weights=effective_weights)
+    base_df, call_cost = simulate_live_refresh(base_df, top_n=top_live_checks, edge_threshold_pct=min_live_edge, model_weights=adj_weights)
     log_api_call(refresh_reason, call_count=max(1, call_cost), window=refresh_window)
     st.success(f"Live check completed for top plays. Logged {max(1, call_cost)} call(s).")
 
-scored = compute_scores(base_df, bankroll=float(bankroll), max_single_pct=float(max_single_pct), model_weights=effective_weights)
+scored = compute_scores(base_df, bankroll=float(bankroll), max_single_pct=float(max_single_pct), model_weights=adj_weights)
 scored = apply_aggression_mode(scored, aggression_mode)
 
 tier_decisions = scored.apply(tier_and_decision, axis=1)
 scored["tier"] = [x[0] for x in tier_decisions]
 scored["bet_decision"] = [x[1] for x in tier_decisions]
-scored["stake_mult"] = scored["tier"].apply(stake_multiplier_by_tier)
+scored["stake_mult"] = [stake_multiplier_by_tier(t, d) for t, d in zip(scored["tier"], scored["bet_decision"])]
 scored["single_stake_$"] = (scored["base_stake_$"] * scored["stake_mult"]).round(2)
 scored["single_stake_u"] = (scored["base_stake_u"] * scored["stake_mult"]).round(2)
 
@@ -989,14 +1003,14 @@ elif odds_preset == "Plus Money Only":
 qualified = approved_pool(filtered)
 qualified = qualified[
     (qualified["ensemble_score"] >= min_ensemble)
-    & (qualified["agreement_count"] >= min_agreement)
     & ((qualified["true_edge"] * 100) >= min_edge)
     & (qualified["realistic_ev_pct"] >= min_ev)
+    & (qualified["agreement_count"] >= min_agreement)
 ].copy()
 qualified = apply_game_exposure_limit(qualified, max_per_game=max_per_game)
 
 if sharp_mode:
-    qualified = qualified[(qualified["confidence_grade"].isin(["A+ ELITE", "A STRONG"])) & (qualified["consensus_action"].isin(["Auto Bet", "Strong Bet"]))].copy()
+    qualified = qualified[(qualified["confidence_grade"].isin(["A+ ELITE", "A STRONG"])) & (qualified["consensus_action"] == "Bet")].copy()
 
 all_ranked = filtered.sort_values(["rank_score", "realistic_ev_pct", "true_edge"], ascending=False).reset_index(drop=True)
 qualified = qualified.sort_values(["rank_score", "realistic_ev_pct", "true_edge"], ascending=False).reset_index(drop=True)
@@ -1017,6 +1031,14 @@ if alerts_to_show:
 
 fallback_pool = all_ranked[all_ranked["tier"] != "Qualified"].head(4).copy()
 
+# Save model performance snapshot from current bet log
+bet_log_for_perf = load_bet_log()
+perf_now = compute_model_performance_from_betlog(bet_log_for_perf)
+if not perf_now.empty:
+    perf_now["raw_weight"] = perf_now["model_name"].map(base_weights)
+    perf_now["adj_weight"] = perf_now["model_name"].map(adj_weights)
+    save_df(perf_now, MODEL_PERF_FILE)
+
 st.markdown(
     f'<div class="banner"><div><b>Qualified Plays:</b> {len(qualified)}</div>'
     f'<div><b>Fallback Plays:</b> {len(fallback_pool)}</div>'
@@ -1025,8 +1047,17 @@ st.markdown(
     unsafe_allow_html=True
 )
 
+st.markdown("## 🧠 Weight Engine")
+weights_df = pd.DataFrame({
+    "model": list(base_weights.keys()),
+    "base_weight": [round(base_weights[k], 3) for k in base_weights],
+    "active_weight": [round(adj_weights[k], 3) for k in base_weights],
+})
+st.dataframe(weights_df, use_container_width=True, hide_index=True)
+
 if qualified.empty:
     st.warning("No qualified plays under the current V11.1 PRO FUSION filters.")
+
     st.markdown("## 🔎 Fallback Plays")
     for _, row in fallback_pool.iterrows():
         render_compact_play(row)
@@ -1037,18 +1068,20 @@ if qualified.empty:
         st.info("No fallback allocations available.")
     else:
         for _, row in fallback_alloc.iterrows():
-            st.write(f"**{row['player']}** — {row['tier']} • {row['bet_decision']} • Stake {row['alloc_u']:.2f}u • CLV {row['predicted_clv_pct']:.2f}% • Ensemble {row['ensemble_score']:.1f} • Agreement {int(row['agreement_count'])}/5")
+            st.write(f"**{row['player']}** — {row['tier']} • {row['bet_decision']} • Stake {row['alloc_u']:.2f}u • Pred. CLV {row['predicted_clv_pct']:.2f}% • Ensemble {row['ensemble_score']:.1f} • Agreement {int(row['agreement_count'])}/5")
 
     st.markdown("## 🤖 PRO MODE Engine Output")
     engine_show = all_ranked[[
         "player", "market", "bet_side", "model_projection", "model_market", "model_clv",
-        "model_script", "model_variance", "ensemble_score", "agreement_count",
-        "tier", "bet_decision"
+        "model_script", "model_variance", "ensemble_score", "agreement_count", "tier", "bet_decision"
     ]].head(8)
     st.dataframe(engine_show, use_container_width=True, hide_index=True)
 
-    st.markdown("## 🧠 Supervised Weight Table")
-    st.dataframe(perf_table, use_container_width=True, hide_index=True)
+    st.markdown("## 📈 Self-Learning Status")
+    if perf_now.empty:
+        st.info("Not enough settled bet history yet for supervised self-learning. Track and grade at least 50 settled bets per model.")
+    else:
+        st.dataframe(perf_now, use_container_width=True, hide_index=True)
     st.stop()
 
 tops = unique_top_plays(qualified)
@@ -1064,13 +1097,14 @@ if not best_play_port.empty:
 render_best_bet(best_play)
 
 st.markdown("## 🤖 PRO MODE Model Panel")
-m1, m2, m3, m4, m5, m6 = st.columns(6)
-with m1: render_metric_box("Projection", f"{best_play['model_projection']:.1f}")
-with m2: render_metric_box("Market", f"{best_play['model_market']:.1f}")
-with m3: render_metric_box("CLV", f"{best_play['model_clv']:.1f}")
-with m4: render_metric_box("Script", f"{best_play['model_script']:.1f}")
-with m5: render_metric_box("Variance", f"{best_play['model_variance']:.1f}")
-with m6: render_metric_box("Agreement", f"{int(best_play['agreement_count'])}/5")
+render_summary_box([
+    ("Projection", f"{best_play['model_projection']:.1f}"),
+    ("Market", f"{best_play['model_market']:.1f}"),
+    ("CLV", f"{best_play['model_clv']:.1f}"),
+    ("Script", f"{best_play['model_script']:.1f}"),
+    ("Variance", f"{best_play['model_variance']:.1f}"),
+    ("Agreement", f"{int(best_play['agreement_count'])}/5"),
+])
 
 st.markdown("## ✅ Qualified Plays")
 for _, row in qualified.iterrows():
@@ -1092,8 +1126,7 @@ if not fallback_pool.empty:
 st.markdown("## 🤖 PRO MODE Engine Output")
 engine_show = all_ranked[[
     "player", "market", "bet_side", "model_projection", "model_market", "model_clv",
-    "model_script", "model_variance", "ensemble_score", "agreement_count",
-    "tier", "bet_decision"
+    "model_script", "model_variance", "ensemble_score", "agreement_count", "tier", "bet_decision"
 ]].head(10)
 st.dataframe(engine_show, use_container_width=True, hide_index=True)
 
@@ -1103,14 +1136,10 @@ if portfolio.empty:
 else:
     portfolio_show = portfolio[[
         "player", "market", "bet_side", "tier", "bet_decision",
-        "single_stake_u", "alloc_u", "alloc_$", "portfolio_weight",
-        "predicted_clv_pct", "ensemble_score", "agreement_count"
+        "single_stake_u", "alloc_u", "alloc_$", "portfolio_weight", "predicted_clv_pct", "ensemble_score", "agreement_count"
     ]].copy()
     portfolio_show["portfolio_weight"] = (portfolio_show["portfolio_weight"] * 100).round(1).astype(str) + "%"
     st.dataframe(portfolio_show, use_container_width=True, hide_index=True)
-
-st.markdown("## 🧠 Supervised Weight Table")
-st.dataframe(perf_table, use_container_width=True, hide_index=True)
 
 st.markdown("## ✅ Add To Bet Log")
 track_rows = portfolio.head(5).copy()
@@ -1122,23 +1151,26 @@ for i, (_, row) in enumerate(track_rows.iterrows()):
             st.success(f"Added {row['player']} to bet log.")
 
 st.markdown("## 💰 Bankroll")
-c1, c2, c3, c4 = st.columns(4)
-with c1:
-    render_metric_box("Top Stake", f"{best_play.get('alloc_u', best_play['single_stake_u']):.2f}u")
-with c2:
-    parlay_units = 0.75 if not best_parlay else min(1.00, max(0.25, best_parlay["ev_pct"] / 20))
-    render_metric_box("Parlay Stake", f"{parlay_units:.2f}u")
-with c3:
-    roi_est = (best_play["realistic_ev_pct"] * 0.55) + ((best_parlay["ev_pct"] if best_parlay else 0) * 0.45)
-    render_metric_box("ROI", f"{min(roi_est, 42.0):.1f}%")
-with c4:
-    render_metric_box("Pred. CLV", f"{best_play['predicted_clv_pct']:.2f}%")
+parlay_units = 0.75 if not best_parlay else min(1.00, max(0.25, best_parlay["ev_pct"] / 20))
+roi_est = (best_play["realistic_ev_pct"] * 0.55) + ((best_parlay["ev_pct"] if best_parlay else 0) * 0.45)
+render_summary_box([
+    ("Top Stake", f"{best_play.get('alloc_u', best_play['single_stake_u']):.2f}u"),
+    ("Parlay Stake", f"{parlay_units:.2f}u"),
+    ("ROI", f"{min(roi_est, 42.0):.1f}%"),
+    ("Pred. CLV", f"{best_play['predicted_clv_pct']:.2f}%"),
+])
 
 if best_parlay:
     legs_txt = " + ".join([f"{x['player']} {x['bet_side']} {x['line']}" for x in best_parlay["legs"]])
     st.markdown("## 🧩 Best 2-Leg Parlay")
     st.markdown(f"**Legs:** {legs_txt}")
     st.markdown(f"**Odds:** {fmt_american(best_parlay['odds'])} | **Hit %:** {best_parlay['hit_prob']*100:.1f}% | **EV:** {best_parlay['ev_pct']:.1f}% | **Correlation Penalty:** {best_parlay['corr_pen']:.2f}")
+
+st.markdown("## 📈 Self-Learning Status")
+if perf_now.empty:
+    st.info("Not enough settled bet history yet for supervised self-learning. Track and grade at least 50 settled bets per model.")
+else:
+    st.dataframe(perf_now, use_container_width=True, hide_index=True)
 
 st.markdown("## 📒 Auto Tracker + CLV")
 bet_log = load_bet_log()
@@ -1196,4 +1228,4 @@ if call_log.empty:
 else:
     st.dataframe(call_log.sort_index(ascending=False), use_container_width=True, hide_index=True)
 
-st.caption("V11.1 PRO FUSION: normalized multi-AI, agreement engine, portfolio optimizer, and supervised self-learning weights active.")
+st.caption("V11.1 PRO FUSION: normalized five-model ensemble, agreement engine, portfolio optimizer, and supervised self-learning weights.")

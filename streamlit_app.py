@@ -48,6 +48,37 @@ def safe_get(row, key, default=0):
     except Exception:
         return default
 
+
+def execution_signal(row):
+    try:
+        tier = safe_get(row, "tier", "")
+        decision = safe_get(row, "bet_decision", "")
+        clv = safe_float(safe_get(row, "predicted_clv_pct", 0.0), 0.0)
+        market = safe_float(safe_get(row, "model_market", 0.0), 0.0)
+        if tier == "Qualified" and decision == "Auto Bet":
+            if clv >= 3 and market >= 45:
+                return "🎯 BET NOW"
+            return "📈 SCALE IN"
+        if tier in ["Near threshold", "Monitor"]:
+            return "⏳ WAIT"
+        return "🛑 NO BET"
+    except Exception:
+        return "⏳ WAIT"
+
+def urgency_level(row):
+    try:
+        ens = safe_float(safe_get(row, "ensemble_score", 0.0), 0.0)
+        clv = safe_float(safe_get(row, "predicted_clv_pct", 0.0), 0.0)
+        agree = int(safe_get(row, "agreement_count", 0))
+        if ens >= 72 and clv >= 3 and agree >= 4:
+            return "HIGH"
+        if ens >= 58 and agree >= 3:
+            return "MEDIUM"
+        return "LOW"
+    except Exception:
+        return "LOW"
+
+
 def clamp01(x):
     return max(0.0, min(1.0, x))
 
@@ -1010,8 +1041,8 @@ def load_uploaded_csv(file):
 # -----------------------------
 # App
 # -----------------------------
-st.title("🏀 Sports AI Betting Dashboard V12 Automation Engine (Patched)")
-st.caption("FINAL POLISH: compact pro layout, confidence tiers, why-this-play engine, fallback triggers, and market insight banner.")
+st.title("🏀 Sports AI Betting Dashboard V12 Automation Engine (Stable)")
+st.caption("STABLE BUILD: full corrected automation engine with safe execution signals, fallback triggers, market insight banner, and guarded mobile-first workflow.")
 
 with st.sidebar:
     st.markdown("### Data")
@@ -1247,7 +1278,8 @@ if best_play["model_variance"] < 50: weak.append("Variance")
 insight = f"{' + '.join(strong) if strong else 'Mixed signals'} strong"
 if weak:
     insight += f" • {', '.join(weak)} slightly weaker"
-insight += f" → {execution_signal(best_play)}"
+best_exec_signal_for_insight = execution_signal(best_play) if "execution_signal" in globals() else "⏳ WAIT"
+insight += f" → {best_exec_signal_for_insight}"
 st.markdown(f"<div class='insight-box'><b>🧠 Model Insight:</b> {insight}</div>", unsafe_allow_html=True)
 
 st.markdown("## ✅ Qualified Plays")

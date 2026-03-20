@@ -1010,7 +1010,7 @@ def load_uploaded_csv(file):
 # -----------------------------
 # App
 # -----------------------------
-st.title("🏀 Sports AI Betting Dashboard V12 Automation Engine")
+st.title("🏀 Sports AI Betting Dashboard V12 Automation Engine (Patched)")
 st.caption("FINAL POLISH: compact pro layout, confidence tiers, why-this-play engine, fallback triggers, and market insight banner.")
 
 with st.sidebar:
@@ -1218,13 +1218,12 @@ if not best_play_port.empty:
 
 render_best_bet(best_play)
 
+best_exec_signal = execution_signal(best_play) if "execution_signal" in globals() else "⏳ WAIT"
+best_urgency = urgency_level(best_play) if "urgency_level" in globals() else "LOW"
+best_book_label = safe_get(best_play, "best_book", "—")
+best_odds_label = fmt_american(safe_get(best_play, "best_display_odds", safe_get(best_play, "best_odds", safe_get(best_play, "odds", np.nan))))
 st.markdown(
-    f'<div class="insight-box"><b>🎯 Execution Signal:</b> '
-    f'{execution_signal(best_play)} • '
-    f'Confidence {urgency_level(best_play)} • '
-    f'Best book {safe_get(best_play, "best_book", "—")} '
-    f'{fmt_american(safe_get(best_play, "best_display_odds", safe_get(best_play, "best_odds", safe_get(best_play, "odds", np.nan))))}'
-    f'</div>',
+    f'<div class="insight-box"><b>🎯 Execution Signal:</b> {best_exec_signal} • Confidence {best_urgency} • Best book {best_book_label} {best_odds_label}</div>',
     unsafe_allow_html=True
 )
 

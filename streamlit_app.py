@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Sports AI Betting Dashboard V8.3", layout="wide")
+st.set_page_config(page_title="Sports AI Betting Dashboard V8.4 FINAL", layout="wide")
 
 # ============================================================
 # Helpers
@@ -59,18 +59,19 @@ def fmt_american(v: float) -> str:
     return f"+{v}" if v > 0 else str(v)
 
 
-def fmt_pct(v: float, digits: int = 1) -> str:
-    if pd.isna(v):
-        return "—"
-    return f"{v:.{digits}f}%"
-
-
 # ============================================================
 # Styling
 # ============================================================
 st.markdown("""
 <style>
-.block-container {padding-top: 1rem; padding-bottom: 4rem; max-width: 1080px;}
+.block-container {padding-top: 1rem; padding-bottom: 4rem; max-width: 1120px;}
+.banner {
+    border:1px solid rgba(148,163,184,.24);
+    border-radius:22px;
+    padding:16px;
+    background: linear-gradient(135deg, #f8fafc 0%, #eff6ff 100%);
+    margin-bottom: 14px;
+}
 .metric-box {
     border:1px solid rgba(148,163,184,.22);
     border-radius:18px;
@@ -81,13 +82,6 @@ st.markdown("""
 }
 .metric-label {font-size:.88rem; color:#6b7280; margin-bottom:6px;}
 .metric-value {font-size:1.75rem; line-height:1.05; font-weight:800;}
-.banner {
-    border:1px solid rgba(148,163,184,.24);
-    border-radius:22px;
-    padding:16px;
-    background: linear-gradient(135deg, #f8fafc 0%, #eff6ff 100%);
-    margin-bottom: 14px;
-}
 .card {
     border:1px solid rgba(148,163,184,.22);
     border-radius:22px;
@@ -127,7 +121,6 @@ st.markdown("""
     margin-top:8px;
 }
 .small-muted {color:#6b7280; font-size:.95rem;}
-.hr-soft {height:1px; background:#e5e7eb; margin:14px 0;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -161,6 +154,10 @@ def ensure_columns(df: pd.DataFrame) -> pd.DataFrame:
         "last_5_avg": "last5_avg",
         "last5": "last5_avg",
         "minutes_vol": "minutes_volatility",
+        "book_fd": "odds_fanduel",
+        "book_dk": "odds_draftkings",
+        "book_mgm": "odds_betmgm",
+        "book_caesars": "odds_caesars",
     }
     for old, new in aliases.items():
         if old in df.columns and new not in df.columns:
@@ -172,7 +169,8 @@ def ensure_columns(df: pd.DataFrame) -> pd.DataFrame:
         "book": "", "starter": False, "minutes": np.nan, "std_dev": np.nan,
         "spread": np.nan, "pace": np.nan, "usage": np.nan, "open_odds": np.nan,
         "best_odds": np.nan, "last5_avg": np.nan, "defense_rank": np.nan,
-        "minutes_volatility": np.nan
+        "minutes_volatility": np.nan, "odds_fanduel": np.nan, "odds_draftkings": np.nan,
+        "odds_betmgm": np.nan, "odds_caesars": np.nan
     }
     for col, val in defaults.items():
         if col not in df.columns:
@@ -181,8 +179,12 @@ def ensure_columns(df: pd.DataFrame) -> pd.DataFrame:
     for c in ["player", "team", "opponent", "matchup", "market", "bet_side", "book"]:
         df[c] = df[c].fillna("").astype(str).str.strip()
 
-    for c in ["line", "projection", "odds", "minutes", "std_dev", "spread", "pace", "usage",
-              "open_odds", "best_odds", "last5_avg", "defense_rank", "minutes_volatility"]:
+    numeric_cols = [
+        "line", "projection", "odds", "minutes", "std_dev", "spread", "pace", "usage",
+        "open_odds", "best_odds", "last5_avg", "defense_rank", "minutes_volatility",
+        "odds_fanduel", "odds_draftkings", "odds_betmgm", "odds_caesars"
+    ]
+    for c in numeric_cols:
         df[c] = pd.to_numeric(df[c], errors="coerce")
 
     df["starter"] = df["starter"].fillna(False).astype(bool)
@@ -317,16 +319,6 @@ def movement_label(delta_implied_pct: float) -> str:
     return "⏳ Stable"
 
 
-def stale_line_flag(current_odds: float, best_odds: float) -> str:
-    if pd.isna(current_odds) or pd.isna(best_odds):
-        return ""
-    if best_odds - current_odds >= 12:
-        return "Best book available"
-    if current_odds - best_odds >= 12:
-        return "Stale line risk"
-    return ""
-
-
 def matchup_context(row: pd.Series) -> Tuple[str, float]:
     defense_rank = safe_float(row.get("defense_rank"), np.nan)
     last5_avg = safe_float(row.get("last5_avg"), np.nan)
@@ -365,6 +357,59 @@ def matchup_context(row: pd.Series) -> Tuple[str, float]:
     return label, bonus
 
 
+def best_book_and_odds(row: pd.Series) -> Tuple[str, float]:
+    books = {
+        "FanDuel": safe_float(row.get("odds_fanduel"), np.nan),
+        "DraftKings": safe_float(row.get("odds_draftkings"), np.nan),
+        "BetMGM": safe_float(row.get("odds_betmgm"), np.nan),
+        "Caesars": safe_float(row.get("odds_caesars"), np.nan),
+    }
+    valid = {k: v for k, v in books.items() if not pd.isna(v)}
+    if not valid:
+        current_book = str(row.get("book", "")) if str(row.get("book", "")).strip() else "Current Book"
+        current_odds = safe_float(row.get("odds"), np.nan)
+        return current_book, current_odds
+
+    best_book = None
+    best_prob = None
+    best_odds = np.nan
+    for bk, od in valid.items():
+        ip = american_to_implied_prob(od)
+        if pd.isna(ip):
+            continue
+        if best_prob is None or ip < best_prob:
+            best_prob = ip
+            best_book = bk
+            best_odds = od
+
+    if best_book is None:
+        current_book = str(row.get("book", "")) if str(row.get("book", "")).strip() else "Current Book"
+        current_odds = safe_float(row.get("odds"), np.nan)
+        return current_book, current_odds
+    return best_book, best_odds
+
+
+def stale_line_flag(current_odds: float, best_odds: float) -> str:
+    if pd.isna(current_odds) or pd.isna(best_odds):
+        return ""
+    curr_ip = american_to_implied_prob(current_odds)
+    best_ip = american_to_implied_prob(best_odds)
+    if pd.isna(curr_ip) or pd.isna(best_ip):
+        return ""
+    edge_gap = (curr_ip - best_ip) * 100
+    if edge_gap >= 3:
+        return "Stale line risk"
+    if edge_gap <= 0.3:
+        return "Current book in line"
+    return "Shop books"
+
+
+def ev_cap_adjustment(ev_pct: float) -> float:
+    if pd.isna(ev_pct):
+        return np.nan
+    return min(ev_pct, 45.0)
+
+
 def single_stake_units(row: pd.Series, bankroll: float, max_single_pct: float) -> Dict:
     prob = safe_float(row.get("realistic_hit_prob"), 0.0)
     dec = american_to_decimal(row.get("best_display_odds", row.get("odds")))
@@ -394,7 +439,10 @@ def compute_scores(df: pd.DataFrame, bankroll: float = 1000, max_single_pct: flo
     out["hit_prob"] = out.apply(calculate_hit_probability, axis=1)
     out["hit_pct"] = (out["hit_prob"] * 100).round(1)
 
-    out["best_display_odds"] = np.where(out["best_odds"].notna(), out["best_odds"], out["odds"])
+    bests = out.apply(best_book_and_odds, axis=1)
+    out["best_book"] = [x[0] for x in bests]
+    out["best_display_odds"] = [x[1] for x in bests]
+
     out["implied_prob"] = out["best_display_odds"].apply(american_to_implied_prob)
     out["true_edge"] = (out["hit_prob"] - out["implied_prob"]).round(4)
 
@@ -409,7 +457,6 @@ def compute_scores(df: pd.DataFrame, bankroll: float = 1000, max_single_pct: flo
         - np.where(out["starter"], 0.0, 0.02)
     ).clip(lower=0.01, upper=0.95)
 
-    # market intelligence
     open_ip = out["open_odds"].apply(american_to_implied_prob)
     curr_ip = out["odds"].apply(american_to_implied_prob)
     out["line_move_pct"] = ((curr_ip - open_ip) * 100).round(2)
@@ -429,6 +476,7 @@ def compute_scores(df: pd.DataFrame, bankroll: float = 1000, max_single_pct: flo
 
     out["realistic_ev"] = (out["realistic_hit_prob"] * (dec - 1)) - (1 - out["realistic_hit_prob"])
     out["realistic_ev_pct"] = (out["realistic_ev"] * 100).round(2)
+    out["realistic_ev_pct"] = out["realistic_ev_pct"].apply(ev_cap_adjustment)
 
     script_vals = out.apply(script_note, axis=1)
     out["script_type"] = [x[0] for x in script_vals]
@@ -436,14 +484,14 @@ def compute_scores(df: pd.DataFrame, bankroll: float = 1000, max_single_pct: flo
     out["variance_note"] = out.apply(variance_note, axis=1)
 
     out["consensus_score"] = (
-        out["hit_pct"] * 0.24
-        + out["true_edge"].clip(lower=-0.05, upper=0.15) * 185
-        + out["realistic_ev_pct"].clip(lower=-10, upper=25) * 0.90
+        out["hit_pct"] * 0.23
+        + out["true_edge"].clip(lower=-0.05, upper=0.15) * 180
+        + out["realistic_ev_pct"].clip(lower=-10, upper=22) * 0.82
         + np.where(out["starter"], 4, -8)
         + np.where(out["minutes"].fillna(0) >= 33, 5, np.where(out["minutes"].fillna(0) >= 28, 2, -5))
-        + out["script_score"] * 0.15
+        + out["script_score"] * 0.14
         + out["matchup_bonus"]
-        + np.where(out["line_move_pct"] >= 2, 2.5, 0.0)
+        + np.where(out["line_move_pct"] >= 2, 2.0, 0.0)
         - np.where(out["line_move_pct"] <= -2, 2.0, 0.0)
         - np.where(abs(out["spread"].fillna(0)) >= 10, 4, 0)
     ).clip(0, 100).round(1)
@@ -465,11 +513,11 @@ def compute_scores(df: pd.DataFrame, bankroll: float = 1000, max_single_pct: flo
     out = pd.concat([out.reset_index(drop=True), pd.DataFrame(stake_rows)], axis=1)
 
     out["rank_score"] = (
-        out["consensus_score"] * 0.45
-        + out["realistic_ev_pct"].clip(lower=-10, upper=30) * 1.05
-        + (out["true_edge"] * 100).clip(lower=-5, upper=20) * 1.10
-        + (out["realistic_hit_prob"] * 100) * 0.18
-        + np.where(out["line_move_pct"] >= 2, 2.0, 0.0)
+        out["consensus_score"] * 0.46
+        + out["realistic_ev_pct"].clip(lower=-10, upper=22) * 0.95
+        + (out["true_edge"] * 100).clip(lower=-5, upper=18) * 1.05
+        + (out["realistic_hit_prob"] * 100) * 0.16
+        + np.where(out["line_move_pct"] >= 2, 1.8, 0.0)
     ).round(2)
 
     return out
@@ -499,6 +547,20 @@ def approved_pool(df: pd.DataFrame) -> pd.DataFrame:
 
     primary["fallback_flag"] = False
     return primary
+
+
+def apply_game_exposure_limit(df: pd.DataFrame, max_per_game: int = 2) -> pd.DataFrame:
+    if df.empty:
+        return df
+    counts = {}
+    rows = []
+    for _, row in df.sort_values(["rank_score", "realistic_ev_pct"], ascending=False).iterrows():
+        matchup = str(row.get("matchup", ""))
+        counts.setdefault(matchup, 0)
+        if counts[matchup] < max_per_game:
+            rows.append(row)
+            counts[matchup] += 1
+    return pd.DataFrame(rows).reset_index(drop=True)
 
 
 def unique_top_plays(df: pd.DataFrame) -> Dict[str, pd.Series]:
@@ -568,13 +630,12 @@ def build_best_parlay(df: pd.DataFrame, leg_size: int = 2) -> Dict:
         corr_pen = combo_corr_penalty(list(combo))
         hit_prob = clamp01(float(np.prod(probs)) * (1 - corr_pen))
         ev = hit_prob * (combined_dec - 1) - (1 - hit_prob)
-        market_bonus = sum([1.5 if "Strong steam" in str(r.get("movement_note", "")) else 0 for r in combo])
-        score = ev * 100 + hit_prob * 30 - corr_pen * 20 + market_bonus
+        score = (min(ev * 100, 55) + hit_prob * 25 - corr_pen * 20)
         candidate = {
             "legs": list(combo),
             "odds": decimal_to_american(combined_dec),
             "hit_prob": hit_prob,
-            "ev_pct": ev * 100,
+            "ev_pct": min(ev * 100, 60),
             "corr_pen": corr_pen,
             "score": score
         }
@@ -606,7 +667,8 @@ def why_this_play(row: pd.Series) -> List[str]:
     matchup = row.get("matchup_context", "Neutral matchup context")
     movement = row.get("movement_note", "Stable")
     stale = row.get("stale_line_note", "")
-    book = row.get("book", "")
+    best_book = row.get("best_book", "")
+    best_odds = fmt_american(row.get("best_display_odds", np.nan))
 
     notes = [
         f"Projection Edge: {proj_edge:+.1f} vs line" if not pd.isna(proj_edge) else "Projection Edge: N/A",
@@ -615,7 +677,8 @@ def why_this_play(row: pd.Series) -> List[str]:
         f"Game Script: {script_type} ({script_score})",
         f"Matchup Context: {matchup}",
         f"Line Movement: {movement}",
-        f"Book Read: {stale if stale else f'Current book {book}'}",
+        f"Best Line Shop: {best_book} {best_odds}" if str(best_book).strip() else "Best Line Shop: Not available",
+        f"Book Quality: {stale if stale else 'Current book acceptable'}",
         f"Risk: {variance}",
         f"Recommended stake: {stake_u:.2f}u",
     ]
@@ -627,7 +690,7 @@ def render_best_bet(row: pd.Series):
     st.markdown(f"### {row['player']} — {row['bet_side']} {row['line']} {row['market']}")
     st.markdown(
         f"**Current Odds:** {fmt_american(row['odds'])} | "
-        f"**Best Odds:** {fmt_american(row['best_display_odds'])} | "
+        f"**Best Odds:** {fmt_american(row['best_display_odds'])} ({row['best_book']}) | "
         f"**EV:** {row['realistic_ev_pct']:.1f}%"
     )
 
@@ -649,8 +712,9 @@ def render_best_bet(row: pd.Series):
 def render_compact_play(row: pd.Series):
     st.markdown(f"**{row['player']} — {row['bet_side']} {row['line']} {row['market']}**")
     st.caption(
-        f"Odds {fmt_american(row['best_display_odds'])} | EV {row['realistic_ev_pct']:.1f}% | "
-        f"Edge {row['true_edge']*100:.1f}% | Stake {row['single_stake_u']:.2f}u | {row['movement_note']}"
+        f"Best {fmt_american(row['best_display_odds'])} ({row['best_book']}) | "
+        f"EV {row['realistic_ev_pct']:.1f}% | Edge {row['true_edge']*100:.1f}% | "
+        f"Stake {row['single_stake_u']:.2f}u | {row['movement_note']}"
     )
     st.divider()
 
@@ -660,14 +724,14 @@ def render_compact_play(row: pd.Series):
 # ============================================================
 def sample_data() -> pd.DataFrame:
     return pd.DataFrame([
-        {"player": "Stephen Curry", "team": "GSW", "opponent": "LAL", "matchup": "Warriors vs Lakers", "market": "points", "bet_side": "Over", "line": 27.0, "projection": 32.2, "odds": -115, "open_odds": -102, "best_odds": -108, "book": "DraftKings", "starter": True, "minutes": 35, "spread": -2.5, "pace": 102.4, "usage": 31.0, "last5_avg": 33.1, "defense_rank": 24, "minutes_volatility": 2.1},
-        {"player": "LeBron James", "team": "LAL", "opponent": "GSW", "matchup": "Lakers vs Warriors", "market": "pra", "bet_side": "Over", "line": 38.0, "projection": 43.8, "odds": -115, "open_odds": -105, "best_odds": -110, "book": "DraftKings", "starter": True, "minutes": 36, "spread": 2.5, "pace": 101.9, "usage": 30.5, "last5_avg": 45.2, "defense_rank": 23, "minutes_volatility": 2.2},
-        {"player": "Anthony Davis", "team": "LAL", "opponent": "GSW", "matchup": "Lakers vs Warriors", "market": "rebounds", "bet_side": "Over", "line": 11.5, "projection": 13.1, "odds": -105, "open_odds": -104, "best_odds": 100, "book": "FanDuel", "starter": True, "minutes": 35, "spread": 2.5, "pace": 101.9, "usage": 27.0, "last5_avg": 12.8, "defense_rank": 19, "minutes_volatility": 2.6},
-        {"player": "Austin Reaves", "team": "LAL", "opponent": "GSW", "matchup": "Lakers vs Warriors", "market": "assists", "bet_side": "Under", "line": 6.5, "projection": 5.2, "odds": -102, "open_odds": -110, "best_odds": -102, "book": "BetMGM", "starter": True, "minutes": 34, "spread": 2.5, "pace": 101.9, "usage": 21.0, "last5_avg": 5.7, "defense_rank": 11, "minutes_volatility": 3.4},
-        {"player": "Jordan Poole", "team": "WAS", "opponent": "BKN", "matchup": "Wizards vs Nets", "market": "points", "bet_side": "Over", "line": 21.5, "projection": 24.4, "odds": 102, "open_odds": 108, "best_odds": 105, "book": "Caesars", "starter": True, "minutes": 33, "spread": 5.0, "pace": 99.6, "usage": 30.0, "last5_avg": 25.8, "defense_rank": 25, "minutes_volatility": 4.2},
-        {"player": "Jalen Brunson", "team": "NYK", "opponent": "MIA", "matchup": "Knicks vs Heat", "market": "points", "bet_side": "Over", "line": 26.5, "projection": 29.7, "odds": -110, "open_odds": -101, "best_odds": -104, "book": "FanDuel", "starter": True, "minutes": 36, "spread": -3.0, "pace": 98.7, "usage": 30.6, "last5_avg": 30.9, "defense_rank": 9, "minutes_volatility": 1.8},
-        {"player": "Jimmy Butler", "team": "MIA", "opponent": "NYK", "matchup": "Heat vs Knicks", "market": "assists", "bet_side": "Over", "line": 5.5, "projection": 6.7, "odds": 100, "open_odds": -105, "best_odds": 102, "book": "DraftKings", "starter": True, "minutes": 35, "spread": 3.0, "pace": 98.7, "usage": 25.1, "last5_avg": 6.1, "defense_rank": 20, "minutes_volatility": 2.8},
-        {"player": "Bench Example", "team": "MIA", "opponent": "BOS", "matchup": "Heat vs Celtics", "market": "points", "bet_side": "Over", "line": 10.5, "projection": 13.2, "odds": -110, "open_odds": -112, "best_odds": -108, "book": "DraftKings", "starter": False, "minutes": 24, "spread": 9.5, "pace": 95.8, "usage": 18.0, "last5_avg": 11.9, "defense_rank": 5, "minutes_volatility": 7.2},
+        {"player": "Stephen Curry", "team": "GSW", "opponent": "LAL", "matchup": "Warriors vs Lakers", "market": "points", "bet_side": "Over", "line": 27.0, "projection": 32.2, "odds": -115, "open_odds": -102, "book": "DraftKings", "starter": True, "minutes": 35, "spread": -2.5, "pace": 102.4, "usage": 31.0, "last5_avg": 33.1, "defense_rank": 24, "minutes_volatility": 2.1, "odds_fanduel": -112, "odds_draftkings": -115, "odds_betmgm": -108, "odds_caesars": -110},
+        {"player": "LeBron James", "team": "LAL", "opponent": "GSW", "matchup": "Lakers vs Warriors", "market": "pra", "bet_side": "Over", "line": 38.0, "projection": 43.8, "odds": -115, "open_odds": -105, "book": "DraftKings", "starter": True, "minutes": 36, "spread": 2.5, "pace": 101.9, "usage": 30.5, "last5_avg": 45.2, "defense_rank": 23, "minutes_volatility": 2.2, "odds_fanduel": -112, "odds_draftkings": -115, "odds_betmgm": -110, "odds_caesars": -111},
+        {"player": "Anthony Davis", "team": "LAL", "opponent": "GSW", "matchup": "Lakers vs Warriors", "market": "rebounds", "bet_side": "Over", "line": 11.5, "projection": 13.1, "odds": -105, "open_odds": -104, "book": "FanDuel", "starter": True, "minutes": 35, "spread": 2.5, "pace": 101.9, "usage": 27.0, "last5_avg": 12.8, "defense_rank": 19, "minutes_volatility": 2.6, "odds_fanduel": -105, "odds_draftkings": -102, "odds_betmgm": 100, "odds_caesars": -101},
+        {"player": "Austin Reaves", "team": "LAL", "opponent": "GSW", "matchup": "Lakers vs Warriors", "market": "assists", "bet_side": "Under", "line": 6.5, "projection": 5.2, "odds": -102, "open_odds": -110, "book": "BetMGM", "starter": True, "minutes": 34, "spread": 2.5, "pace": 101.9, "usage": 21.0, "last5_avg": 5.7, "defense_rank": 11, "minutes_volatility": 3.4, "odds_fanduel": -108, "odds_draftkings": -105, "odds_betmgm": -102, "odds_caesars": -104},
+        {"player": "Jordan Poole", "team": "WAS", "opponent": "BKN", "matchup": "Wizards vs Nets", "market": "points", "bet_side": "Over", "line": 21.5, "projection": 24.4, "odds": 102, "open_odds": 108, "book": "Caesars", "starter": True, "minutes": 33, "spread": 5.0, "pace": 99.6, "usage": 30.0, "last5_avg": 25.8, "defense_rank": 25, "minutes_volatility": 4.2, "odds_fanduel": 100, "odds_draftkings": 101, "odds_betmgm": 103, "odds_caesars": 102},
+        {"player": "Jalen Brunson", "team": "NYK", "opponent": "MIA", "matchup": "Knicks vs Heat", "market": "points", "bet_side": "Over", "line": 26.5, "projection": 29.7, "odds": -110, "open_odds": -101, "book": "FanDuel", "starter": True, "minutes": 36, "spread": -3.0, "pace": 98.7, "usage": 30.6, "last5_avg": 30.9, "defense_rank": 9, "minutes_volatility": 1.8, "odds_fanduel": -110, "odds_draftkings": -106, "odds_betmgm": -104, "odds_caesars": -108},
+        {"player": "Jimmy Butler", "team": "MIA", "opponent": "NYK", "matchup": "Heat vs Knicks", "market": "assists", "bet_side": "Over", "line": 5.5, "projection": 6.7, "odds": 100, "open_odds": -105, "book": "DraftKings", "starter": True, "minutes": 35, "spread": 3.0, "pace": 98.7, "usage": 25.1, "last5_avg": 6.1, "defense_rank": 20, "minutes_volatility": 2.8, "odds_fanduel": 100, "odds_draftkings": 100, "odds_betmgm": 102, "odds_caesars": 101},
+        {"player": "Bench Example", "team": "MIA", "opponent": "BOS", "matchup": "Heat vs Celtics", "market": "points", "bet_side": "Over", "line": 10.5, "projection": 13.2, "odds": -110, "open_odds": -112, "book": "DraftKings", "starter": False, "minutes": 24, "spread": 9.5, "pace": 95.8, "usage": 18.0, "last5_avg": 11.9, "defense_rank": 5, "minutes_volatility": 7.2, "odds_fanduel": -108, "odds_draftkings": -110, "odds_betmgm": -106, "odds_caesars": -109},
     ])
 
 
@@ -679,8 +743,8 @@ def load_csv(file) -> pd.DataFrame:
 # ============================================================
 # App
 # ============================================================
-st.title("🏀 Sports AI Betting Dashboard V8.3")
-st.caption("Market intelligence: line movement, best-odds comparison, stale-line detection, matchup context, trend inputs, and mobile-first layout.")
+st.title("🏀 Sports AI Betting Dashboard V8.4")
+st.caption("FINAL: sharp mode, line shopping, market intelligence, exposure controls, and mobile-first layout.")
 
 with st.sidebar:
     st.markdown("### Data")
@@ -695,7 +759,8 @@ with st.sidebar:
     min_score = st.slider("Min approval score", 55, 90, 64)
     min_edge = st.slider("Min true edge %", 0.0, 15.0, 2.0, 0.5)
     min_ev = st.slider("Min EV %", 0.0, 25.0, 2.0, 0.5)
-    top3_only = st.toggle("Top 3 only mode", value=False)
+    sharp_mode = st.toggle("Sharp Mode", value=True)
+    max_per_game = st.slider("Max plays per game", 1, 3, 2)
 
 if uploaded and not use_sample:
     base_df = ensure_columns(load_csv(uploaded))
@@ -724,7 +789,7 @@ with st.expander("⚙️ Filters", expanded=False):
     with c5:
         market_intel_filter = st.selectbox("Movement", ["All", "Steam only", "Reverse only", "Stable only"])
     with c6:
-        stale_filter = st.selectbox("Book Quality", ["All", "Best book available", "Stale line risk"])
+        stale_filter = st.selectbox("Book Quality", ["All", "Current book in line", "Shop books", "Stale line risk"])
 
 filtered = scored.copy()
 
@@ -761,15 +826,20 @@ pool = pool[
     & (pool["realistic_ev_pct"] >= min_ev)
 ].copy()
 
+pool = apply_game_exposure_limit(pool, max_per_game=max_per_game)
+
+if sharp_mode:
+    pool = pool[
+        (pool["confidence_grade"].isin(["A+ ELITE", "A STRONG"]))
+        & (pool["consensus_action"] == "Bet")
+    ].copy()
+    pool = pool.sort_values(["rank_score", "realistic_ev_pct"], ascending=False).head(3)
+
 if pool.empty:
-    st.warning("No plays qualify under the current V8.3 filters.")
+    st.warning("No plays qualify under the current V8.4 FINAL filters.")
     st.stop()
 
 pool = pool.sort_values(["rank_score", "realistic_ev_pct", "true_edge"], ascending=False).reset_index(drop=True)
-
-if top3_only:
-    pool = pool.head(3).copy()
-
 tops = unique_top_plays(pool)
 best_play = tops["best"]
 safe_play = tops["safe"]
@@ -783,7 +853,7 @@ st.markdown(
         <div><b>Best Play:</b> {best_play['player']} {best_play['bet_side']} {best_play['line']} {best_play['market']}</div>
         <div><b>Safest Play:</b> {safe_play['player']} ({safe_play['realistic_hit_prob']*100:.1f}%)</div>
         <div><b>Highest Edge:</b> {edge_play['player']} ({edge_play['true_edge']*100:.1f}%)</div>
-        <div><b>Market Read:</b> {best_play['movement_note']} • {best_play['stale_line_note'] if best_play['stale_line_note'] else 'Current book in line'}</div>
+        <div><b>Line Shop:</b> {best_play['best_book']} {fmt_american(best_play['best_display_odds'])} • {best_play['stale_line_note']}</div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -800,18 +870,18 @@ c1, c2, c3 = st.columns(3)
 with c1:
     render_metric_box("Top Stake", f"{best_play['single_stake_u']:.2f}u")
 with c2:
-    parlay_units = 0.75 if not best_parlay else min(1.00, max(0.25, best_parlay["ev_pct"] / 15))
+    parlay_units = 0.75 if not best_parlay else min(1.00, max(0.25, best_parlay["ev_pct"] / 20))
     render_metric_box("Parlay Stake", f"{parlay_units:.2f}u")
 with c3:
     roi_est = (best_play["realistic_ev_pct"] * 0.55) + ((best_parlay["ev_pct"] if best_parlay else 0) * 0.45)
-    render_metric_box("ROI", f"{roi_est:.1f}%")
+    render_metric_box("ROI", f"{min(roi_est, 42.0):.1f}%")
 
 with st.expander("🧠 Engine Details", expanded=False):
     engine_view = pool[[
         "player", "market", "bet_side", "line", "projection", "odds", "best_display_odds",
-        "realistic_hit_prob", "true_edge", "realistic_ev_pct", "consensus_score",
-        "model_agreement_pct", "single_stake_u", "movement_note", "stale_line_note",
-        "matchup_context", "script_type", "variance_note"
+        "book", "best_book", "realistic_hit_prob", "true_edge", "realistic_ev_pct",
+        "consensus_score", "model_agreement_pct", "single_stake_u", "movement_note",
+        "stale_line_note", "matchup_context", "script_type", "variance_note"
     ]].copy()
     engine_view["odds"] = engine_view["odds"].apply(fmt_american)
     engine_view["best_display_odds"] = engine_view["best_display_odds"].apply(fmt_american)
@@ -832,4 +902,4 @@ if best_parlay:
         f"**Correlation Penalty:** {best_parlay['corr_pen']:.2f}"
     )
 
-st.caption("V8.3: market intelligence active with line-movement, best-odds, stale-line, and matchup-context layers.")
+st.caption("V8.4 FINAL: sharp mode and line shopping active.")

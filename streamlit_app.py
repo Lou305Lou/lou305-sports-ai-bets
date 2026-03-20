@@ -7,13 +7,7 @@ import streamlit as st
 
 
 # ============================================================
-# Sports AI Betting Dashboard — Game Script AI (V5)
-# Full clean replacement with:
-# - Best Bets
-# - NBA Player Props V2
-# - Arbitrage + Middles
-# - Portfolio view
-# - Game Script AI layer
+# Sports AI Betting Dashboard — Game Script AI (V5) + UI Upgrade
 # ============================================================
 
 st.set_page_config(page_title="Sports AI Betting Dashboard", layout="wide")
@@ -319,7 +313,6 @@ def market_script_direction(row: pd.Series) -> float:
 
     boost = 0.0
 
-    # Overs benefit from faster / closer games
     if side == "over":
         if script_type == "Track meet":
             boost += 4.0 if any(k in market for k in ["points", "pra", "assists"]) else 2.5
@@ -330,7 +323,6 @@ def market_script_direction(row: pd.Series) -> float:
         elif script_type == "Blowout risk":
             boost -= 4.0 if starter and minutes >= 30 else -1.0
 
-    # Unders benefit from slower / blowout scripts
     if side == "under":
         if script_type == "Slow grind":
             boost += 3.0 if any(k in market for k in ["points", "pra", "assists"]) else 1.5
@@ -339,7 +331,6 @@ def market_script_direction(row: pd.Series) -> float:
         elif script_type == "Track meet":
             boost -= 2.5 if any(k in market for k in ["points", "pra", "assists"]) else -1.0
 
-    # Rebounds often less script-sensitive than points/PRA
     if "rebounds" in market:
         boost *= 0.7
 
@@ -440,7 +431,6 @@ def compute_edges(df: pd.DataFrame) -> pd.DataFrame:
     out["edge_z"] = (out["projection_edge"] / out["std_dev_used"]).replace([np.inf, -np.inf], np.nan)
     out["edge_z"] = out["edge_z"].round(3)
 
-    # Game Script AI columns
     out["script_type"] = out.apply(script_type_for_row, axis=1)
     out["script_confidence"] = out.apply(script_confidence_for_row, axis=1)
     out["blowout_risk"] = out.apply(blowout_risk_label, axis=1)
@@ -448,7 +438,6 @@ def compute_edges(df: pd.DataFrame) -> pd.DataFrame:
     out["correlation_group"] = out.apply(correlation_group_for_row, axis=1)
     out["correlation_penalty"] = correlation_penalty(out)
 
-    # Core score pieces
     hit_component = bounded_component(out["hit_pct"], 53, 66, 20)
     ev_component = bounded_component(out["ev_edge_pct"], 0, 12, 12)
     edge_component = out.apply(market_edge_component, axis=1)
@@ -618,6 +607,80 @@ def find_arbitrage_and_middles(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataF
     return pd.DataFrame(arb_rows).drop_duplicates(), pd.DataFrame(mid_rows).drop_duplicates()
 
 
+def inject_ui_css():
+    st.markdown(
+        """
+        <style>
+        div.block-container {
+            padding-top: 1.2rem;
+            padding-bottom: 2rem;
+        }
+        .bet-card {
+            border: 1px solid rgba(128,128,128,0.25);
+            border-radius: 16px;
+            padding: 14px 14px 10px 14px;
+            margin: 0 0 12px 0;
+            background: rgba(250,250,250,0.65);
+            box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+        }
+        .bet-card-title {
+            font-size: 1.03rem;
+            font-weight: 700;
+            line-height: 1.2;
+            margin-bottom: 4px;
+        }
+        .bet-card-sub {
+            font-size: 0.78rem;
+            opacity: 0.80;
+            margin-bottom: 10px;
+        }
+        .bet-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0,1fr));
+            gap: 6px 10px;
+            margin-bottom: 8px;
+        }
+        .bet-stat {
+            font-size: 0.77rem;
+            line-height: 1.25;
+            padding: 6px 8px;
+            border-radius: 10px;
+            background: rgba(0,0,0,0.035);
+        }
+        .bet-footer {
+            font-size: 0.75rem;
+            line-height: 1.35;
+            margin-top: 4px;
+        }
+        .pill {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 999px;
+            font-size: 0.72rem;
+            font-weight: 700;
+            margin-right: 6px;
+            margin-bottom: 6px;
+            border: 1px solid rgba(128,128,128,0.25);
+            background: rgba(0,0,0,0.03);
+        }
+        .section-caption {
+            font-size: 0.80rem;
+            opacity: 0.72;
+            margin-top: -4px;
+            margin-bottom: 10px;
+        }
+        @media (max-width: 768px) {
+            .bet-card-title { font-size: 0.95rem; }
+            .bet-card-sub { font-size: 0.74rem; }
+            .bet-stat { font-size: 0.73rem; }
+            .bet-footer { font-size: 0.72rem; }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def format_best_bet_cards(df: pd.DataFrame, top_n: int = 10):
     if df.empty:
         st.info("No bets match the current filters.")
@@ -626,17 +689,45 @@ def format_best_bet_cards(df: pd.DataFrame, top_n: int = 10):
     top = df.sort_values(["score", "ev_edge_pct", "hit_pct"], ascending=False).head(top_n).reset_index(drop=True)
 
     for idx, row in top.iterrows():
-        st.markdown(
-            f"""
-**#{idx + 1} {row['player']} — {row['bet_side']} {row['line']} {row['market'].title()}**  
-{row['matchup']} • FULL_GAME • {row['book'] if row['book'] else 'Book N/A'}  
-Projection: {row['projection']:.2f} | Edge: {row['projection_edge']:.2f} | Odds: {int(row['odds']) if pd.notna(row['odds']) else 'N/A'} | Hit %: {row['hit_pct']:.1f}% | EV Edge: {row['ev_edge_pct']:.2f}% | Score: {row['score']:.1f} ({row['grade']})  
-Tier: {row['tier']} | Model Size: {row['model_size_u']:.2f}u | Portfolio Size: {row['portfolio_size_u']:.2f}u  
-Matchup: {row['matchup_note']} | Script: {row['script_type']} ({row['script_confidence']}) | Blowout Risk: {row['blowout_risk']}  
-Variance: {row['variance_note']} | Correlation Penalty: {row['correlation_penalty']:.1f} | Portfolio: {row['portfolio_status']} | Realism: {row['realism_flag']}
----
-"""
-        )
+        tier = row["tier"]
+        realism = row["realism_flag"]
+        selected = row["portfolio_status"]
+        script = row["script_type"]
+        conf = int(row["script_confidence"]) if pd.notna(row["script_confidence"]) else "N/A"
+
+        html = f"""
+        <div class="bet-card">
+            <div class="bet-card-title">#{idx + 1} {row['player']} — {row['bet_side']} {row['line']} {str(row['market']).title()}</div>
+            <div class="bet-card-sub">{row['matchup']} • FULL_GAME • {row['book'] if row['book'] else 'Book N/A'}</div>
+
+            <div>
+                <span class="pill">{tier}</span>
+                <span class="pill">{selected}</span>
+                <span class="pill">{realism}</span>
+            </div>
+
+            <div class="bet-grid">
+                <div class="bet-stat"><b>Projection</b><br>{row['projection']:.2f}</div>
+                <div class="bet-stat"><b>Edge</b><br>{row['projection_edge']:.2f}</div>
+                <div class="bet-stat"><b>Odds</b><br>{int(row['odds']) if pd.notna(row['odds']) else 'N/A'}</div>
+                <div class="bet-stat"><b>Hit %</b><br>{row['hit_pct']:.1f}%</div>
+                <div class="bet-stat"><b>EV Edge</b><br>{row['ev_edge_pct']:.2f}%</div>
+                <div class="bet-stat"><b>Score</b><br>{row['score']:.1f} ({row['grade']})</div>
+                <div class="bet-stat"><b>Model Size</b><br>{row['model_size_u']:.2f}u</div>
+                <div class="bet-stat"><b>Portfolio Size</b><br>{row['portfolio_size_u']:.2f}u</div>
+            </div>
+
+            <div class="bet-footer">
+                <b>Matchup:</b> {row['matchup_note']} &nbsp;|&nbsp;
+                <b>Script:</b> {script} ({conf}) &nbsp;|&nbsp;
+                <b>Blowout:</b> {row['blowout_risk']}<br>
+                <b>Variance:</b> {row['variance_note']} &nbsp;|&nbsp;
+                <b>Corr Penalty:</b> {row['correlation_penalty']:.1f} &nbsp;|&nbsp;
+                <b>Realism:</b> {realism}
+            </div>
+        </div>
+        """
+        st.markdown(html, unsafe_allow_html=True)
 
 
 def sample_data() -> pd.DataFrame:
@@ -682,8 +773,10 @@ def load_csv(file) -> pd.DataFrame:
 # -----------------------------
 # App
 # -----------------------------
+inject_ui_css()
+
 st.title("🏀 Sports AI Betting Dashboard")
-st.caption("Game Script AI (V5): competitive-shootout boosts, blowout penalties, and same-game correlation awareness.")
+st.caption("Game Script AI (V5) with upgraded mobile card UI.")
 
 with st.sidebar:
     st.header("Data")
@@ -746,6 +839,7 @@ tabs = st.tabs(["🔥 Best Bets", "🧠 NBA Player Props V2", "🎮 Game Script 
 
 with tabs[0]:
     st.subheader("Top Best Bets")
+    st.markdown('<div class="section-caption">Sharper scores with cleaner mobile cards.</div>', unsafe_allow_html=True)
     left, right = st.columns([1, 2])
 
     with left:
@@ -900,9 +994,9 @@ with tabs[5]:
     st.download_button(
         "Download scored bets CSV",
         data=csv,
-        file_name="scored_bets_v5_game_script_ai.csv",
+        file_name="scored_bets_v5_ui_upgrade.csv",
         mime="text/csv",
     )
 
 st.markdown("---")
-st.caption("Game Script AI (V5) adds script-type labels, blowout risk, and same-game correlation awareness to the scoring engine.")
+st.caption("UI upgrade applied: boxed card view, smaller text, cleaner spacing, and better mobile readability.")

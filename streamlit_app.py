@@ -1,4 +1,18 @@
 
+def settled_bets_only(df):
+    try:
+        import pandas as pd
+        if df is None or len(df) == 0:
+            return pd.DataFrame()
+        if "result" not in df.columns:
+            return pd.DataFrame(columns=df.columns)
+        settled = df[df["result"].notna()].copy()
+        return settled
+    except:
+        return None
+
+
+
 def pending_bets_only(df):
     try:
         import pandas as pd

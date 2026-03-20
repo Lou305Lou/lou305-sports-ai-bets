@@ -9,24 +9,73 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-def build_automation_queue(df):
+
+def build_automation_queue(qualified_df=None, fallback_df=None):
+    """Builds an automation queue from qualified and fallback plays.
+    Safe against missing columns, None inputs, empty frames, and bad values.
+    """
     try:
-        if df is None or len(df) == 0:
-            return None
+        import pandas as pd
+
+        frames = []
+        if qualified_df is not None and hasattr(qualified_df, "__len__") and len(qualified_df) > 0:
+            q = qualified_df.copy()
+            q["queue_source"] = "Qualified"
+            frames.append(q)
+
+        if fallback_df is not None and hasattr(fallback_df, "__len__") and len(fallback_df) > 0:
+            f = fallback_df.copy()
+            f["queue_source"] = "Fallback"
+            frames.append(f)
+
+        if not frames:
+            return pd.DataFrame(columns=["Player", "Market", "Side", "Decision", "Odds", "Stake", "Status", "Source"])
+
+        df = pd.concat(frames, ignore_index=True)
+
         rows = []
         for _, r in df.iterrows():
+            decision = r.get("bet_decision", "")
+            tier = r.get("tier", "")
+            best_odds = r.get("best_odds", r.get("odds", ""))
+            stake = r.get("alloc_u", r.get("single_stake_u", 0))
+
+            if pd.isna(stake):
+                stake = 0.0
+            try:
+                stake = float(stake)
+            except Exception:
+                stake = 0.0
+
+            if decision == "Auto Bet":
+                status = "READY"
+            elif "Wait" in str(decision) or "line movement" in str(tier):
+                status = "WATCH"
+            elif "Monitor" in str(tier):
+                status = "MONITOR"
+            else:
+                status = "QUEUE"
+
             rows.append({
-                "Player": r.get("player",""),
-                "Market": r.get("market",""),
-                "Side": r.get("bet_side",""),
-                "Decision": r.get("bet_decision","Auto Bet"),
-                "Odds": r.get("best_odds", r.get("odds","")),
-                "Stake": r.get("alloc_u",0),
-                "Status": "READY"
+                "Player": r.get("player", ""),
+                "Market": r.get("market", ""),
+                "Side": r.get("bet_side", ""),
+                "Decision": decision if decision else "Review",
+                "Odds": best_odds,
+                "Stake": round(stake, 2),
+                "Status": status,
+                "Source": r.get("queue_source", "")
             })
-        import pandas as pd
-        return pd.DataFrame(rows)
-    except:
+
+        out = pd.DataFrame(rows)
+
+        for col in ["Player", "Market", "Side", "Decision", "Odds", "Stake", "Status", "Source"]:
+            if col not in out.columns:
+                out[col] = ""
+
+        return out[["Player", "Market", "Side", "Decision", "Odds", "Stake", "Status", "Source"]]
+
+    except Exception:
         return None
 
 

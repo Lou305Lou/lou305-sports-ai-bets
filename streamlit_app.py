@@ -7,7 +7,7 @@ import streamlit as st
 
 
 # ============================================================
-# Sports AI Betting Dashboard — Game Script AI (V5) + UI Upgrade
+# Sports AI Betting Dashboard — V6 Top Plays Engine
 # ============================================================
 
 st.set_page_config(page_title="Sports AI Betting Dashboard", layout="wide")
@@ -542,6 +542,70 @@ def compute_edges(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def build_top_plays(df: pd.DataFrame, max_plays: int = 3, min_score: float = 76, min_hit: float = 56,
+                    min_ev: float = 3, min_script_conf: int = 60, avoid_review: bool = False) -> pd.DataFrame:
+    if df.empty:
+        return df.copy()
+
+    work = df.copy()
+    work = work[
+        (work["score"] >= min_score) &
+        (work["hit_pct"] >= min_hit) &
+        (work["ev_edge_pct"] >= min_ev) &
+        (work["portfolio_status"] == "Selected") &
+        (work["script_confidence"] >= min_script_conf)
+    ].copy()
+
+    if avoid_review:
+        work = work[work["realism_flag"] != "Review"].copy()
+
+    if work.empty:
+        return work
+
+    work["top_play_value"] = (
+        work["score"] * 0.48
+        + work["hit_pct"] * 0.18
+        + work["ev_edge_pct"].clip(upper=20) * 0.22
+        + work["script_confidence"] * 0.10
+        + work["game_script_boost"] * 1.25
+        - work["correlation_penalty"] * 3.2
+        + np.where(work["blowout_risk"] == "Low", 2.0, np.where(work["blowout_risk"] == "Medium", -1.5, -4.0))
+        + np.where(work["realism_flag"] == "Normal", 2.0, -1.0)
+    ).round(2)
+
+    work = work.sort_values(["top_play_value", "score", "ev_edge_pct"], ascending=False)
+
+    selected_rows = []
+    used_matchups = {}
+    used_groups = set()
+
+    for _, row in work.iterrows():
+        matchup = str(row["matchup"])
+        corr_group = str(row["correlation_group"])
+        group_key = f"{matchup}|{corr_group}"
+
+        # hard portfolio controls
+        if used_matchups.get(matchup, 0) >= 2:
+            continue
+        if group_key in used_groups:
+            continue
+
+        selected_rows.append(row)
+        used_matchups[matchup] = used_matchups.get(matchup, 0) + 1
+        used_groups.add(group_key)
+
+        if len(selected_rows) >= max_plays:
+            break
+
+    if not selected_rows:
+        return work.head(max_plays).copy()
+
+    result = pd.DataFrame(selected_rows).copy().reset_index(drop=True)
+    result["top_play_rank"] = np.arange(1, len(result) + 1)
+    result["bet_this"] = "✅ Bet This"
+    return result
+
+
 def find_arbitrage_and_middles(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
     if df.empty:
         return pd.DataFrame(), pd.DataFrame()
@@ -623,6 +687,10 @@ def inject_ui_css():
             background: rgba(250,250,250,0.65);
             box-shadow: 0 1px 3px rgba(0,0,0,0.04);
         }
+        .bet-card.top-play {
+            border: 1.5px solid rgba(255,180,0,0.45);
+            background: rgba(255,248,225,0.9);
+        }
         .bet-card-title {
             font-size: 1.03rem;
             font-weight: 700;
@@ -681,7 +749,7 @@ def inject_ui_css():
     )
 
 
-def format_best_bet_cards(df: pd.DataFrame, top_n: int = 10):
+def format_bet_cards(df: pd.DataFrame, top_n: int = 10, top_play_mode: bool = False):
     if df.empty:
         st.info("No bets match the current filters.")
         return
@@ -689,21 +757,25 @@ def format_best_bet_cards(df: pd.DataFrame, top_n: int = 10):
     top = df.sort_values(["score", "ev_edge_pct", "hit_pct"], ascending=False).head(top_n).reset_index(drop=True)
 
     for idx, row in top.iterrows():
-        tier = row["tier"]
-        realism = row["realism_flag"]
-        selected = row["portfolio_status"]
-        script = row["script_type"]
-        conf = int(row["script_confidence"]) if pd.notna(row["script_confidence"]) else "N/A"
+        tier = row.get("tier", "")
+        realism = row.get("realism_flag", "")
+        selected = row.get("portfolio_status", "")
+        script = row.get("script_type", "")
+        conf = int(row["script_confidence"]) if pd.notna(row.get("script_confidence", np.nan)) else "N/A"
+        extra_rank = f"🏆 Top Play #{int(row['top_play_rank'])}" if top_play_mode and "top_play_rank" in row else ""
+        card_class = "bet-card top-play" if top_play_mode else "bet-card"
+        extra_value = f"<div class='pill'>{row['bet_this']}</div><div class='pill'>Value {row['top_play_value']:.1f}</div>" if top_play_mode else ""
 
         html = f"""
-        <div class="bet-card">
-            <div class="bet-card-title">#{idx + 1} {row['player']} — {row['bet_side']} {row['line']} {str(row['market']).title()}</div>
+        <div class="{card_class}">
+            <div class="bet-card-title">{extra_rank if extra_rank else '#' + str(idx + 1)} {row['player']} — {row['bet_side']} {row['line']} {str(row['market']).title()}</div>
             <div class="bet-card-sub">{row['matchup']} • FULL_GAME • {row['book'] if row['book'] else 'Book N/A'}</div>
 
             <div>
                 <span class="pill">{tier}</span>
                 <span class="pill">{selected}</span>
                 <span class="pill">{realism}</span>
+                {extra_value}
             </div>
 
             <div class="bet-grid">
@@ -776,7 +848,7 @@ def load_csv(file) -> pd.DataFrame:
 inject_ui_css()
 
 st.title("🏀 Sports AI Betting Dashboard")
-st.caption("Game Script AI (V5) with upgraded mobile card UI.")
+st.caption("V6 Top Plays Engine: auto-selects the best 2–3 bets while reducing same-game correlation mistakes.")
 
 with st.sidebar:
     st.header("Data")
@@ -835,9 +907,58 @@ m2.metric("Filtered Bets", f"{len(filtered)}")
 m3.metric("Avg Hit %", f"{filtered['hit_pct'].mean():.1f}%" if not filtered.empty else "N/A")
 m4.metric("Avg EV Edge", f"{filtered['ev_edge_pct'].mean():.2f}%" if not filtered.empty else "N/A")
 
-tabs = st.tabs(["🔥 Best Bets", "🧠 NBA Player Props V2", "🎮 Game Script AI", "⚡ Arbitrage & Middles", "📦 Portfolio", "🗂️ Raw Data"])
+tabs = st.tabs(["⭐ Top Plays Engine", "🔥 Best Bets", "🧠 NBA Player Props V2", "🎮 Game Script AI", "⚡ Arbitrage & Middles", "📦 Portfolio", "🗂️ Raw Data"])
 
 with tabs[0]:
+    st.subheader("Top Plays Engine")
+    st.markdown('<div class="section-caption">Auto-select the cleanest portfolio-safe bets for the slate.</div>', unsafe_allow_html=True)
+
+    t1, t2, t3, t4, t5 = st.columns(5)
+    with t1:
+        max_top_plays = st.slider("Max top plays", 1, 5, 3)
+    with t2:
+        top_min_score = st.slider("Min score", 60, 90, 76)
+    with t3:
+        top_min_hit = st.slider("Min hit %", 50, 75, 56)
+    with t4:
+        top_min_ev = st.slider("Min EV %", 0, 20, 3)
+    with t5:
+        top_min_script = st.slider("Min script confidence", 40, 95, 60)
+
+    avoid_review = st.toggle("Avoid realism-review plays", value=False)
+
+    top_df = build_top_plays(
+        filtered,
+        max_plays=max_top_plays,
+        min_score=top_min_score,
+        min_hit=top_min_hit,
+        min_ev=top_min_ev,
+        min_script_conf=top_min_script,
+        avoid_review=avoid_review,
+    )
+
+    a1, a2, a3 = st.columns(3)
+    a1.metric("Top Plays Found", f"{len(top_df)}")
+    a2.metric("Avg Top Play Score", f"{top_df['score'].mean():.1f}" if not top_df.empty else "N/A")
+    a3.metric("Total Suggested Units", f"{top_df['portfolio_size_u'].sum():.2f}u" if not top_df.empty else "0.00u")
+
+    if top_df.empty:
+        st.info("No top plays match the current auto-selector rules. Lower the thresholds a bit.")
+    else:
+        st.dataframe(
+            top_df[[
+                "top_play_rank", "bet_this", "player", "matchup", "market", "bet_side", "line",
+                "odds", "hit_pct", "ev_edge_pct", "score", "tier", "script_type",
+                "script_confidence", "correlation_penalty", "realism_flag", "top_play_value"
+            ]],
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        st.markdown("### Bet This")
+        format_bet_cards(top_df, top_n=len(top_df), top_play_mode=True)
+
+with tabs[1]:
     st.subheader("Top Best Bets")
     st.markdown('<div class="section-caption">Sharper scores with cleaner mobile cards.</div>', unsafe_allow_html=True)
     left, right = st.columns([1, 2])
@@ -867,9 +988,9 @@ with tabs[0]:
             st.info("No bets meet the Best Bets filters.")
 
     st.markdown("### Card View")
-    format_best_bet_cards(display_df, top_n=top_n)
+    format_bet_cards(display_df, top_n=top_n)
 
-with tabs[1]:
+with tabs[2]:
     st.subheader("NBA Player Props V2 — Starters Only")
 
     prop_df = filtered.copy()
@@ -913,9 +1034,9 @@ with tabs[1]:
     )
 
     st.markdown("### Featured Props")
-    format_best_bet_cards(prop_df, top_n=8)
+    format_bet_cards(prop_df, top_n=8)
 
-with tabs[2]:
+with tabs[3]:
     st.subheader("Game Script AI (V5)")
 
     gs = filtered.copy()
@@ -936,7 +1057,7 @@ with tabs[2]:
     s2.metric("Blowout Risk Bets", int((gs["blowout_risk"] == "High").sum()))
     s3.metric("Avg Script Boost", f"{gs['game_script_boost'].mean():.2f}" if not gs.empty else "N/A")
 
-with tabs[3]:
+with tabs[4]:
     st.subheader("Arbitrage & Middles Scanner")
     arb_df, mid_df = find_arbitrage_and_middles(model_df)
 
@@ -955,7 +1076,7 @@ with tabs[3]:
         else:
             st.dataframe(mid_df.sort_values("gap", ascending=False), use_container_width=True, hide_index=True)
 
-with tabs[4]:
+with tabs[5]:
     st.subheader("Portfolio Engine Snapshot")
 
     port = filtered.copy()
@@ -986,7 +1107,7 @@ with tabs[4]:
         hide_index=True,
     )
 
-with tabs[5]:
+with tabs[6]:
     st.subheader("Model Data")
     st.dataframe(model_df, use_container_width=True, hide_index=True)
 
@@ -994,9 +1115,9 @@ with tabs[5]:
     st.download_button(
         "Download scored bets CSV",
         data=csv,
-        file_name="scored_bets_v5_ui_upgrade.csv",
+        file_name="scored_bets_v6_top_plays.csv",
         mime="text/csv",
     )
 
 st.markdown("---")
-st.caption("UI upgrade applied: boxed card view, smaller text, cleaner spacing, and better mobile readability.")
+st.caption("V6 Top Plays Engine added: auto-selector, portfolio-safe ranking, and a dedicated 'Bet This' section.")

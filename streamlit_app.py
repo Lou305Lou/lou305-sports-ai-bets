@@ -1,5 +1,5 @@
 import math
-from typing import Optional, Tuple
+from typing import Tuple
 
 import numpy as np
 import pandas as pd
@@ -7,8 +7,13 @@ import streamlit as st
 
 
 # ============================================================
-# Sports AI Betting Dashboard — Clean Rebuild
-# Version: Full App with NBA Player Props V2 + Scoring Fix
+# Sports AI Betting Dashboard — Game Script AI (V5)
+# Full clean replacement with:
+# - Best Bets
+# - NBA Player Props V2
+# - Arbitrage + Middles
+# - Portfolio view
+# - Game Script AI layer
 # ============================================================
 
 st.set_page_config(page_title="Sports AI Betting Dashboard", layout="wide")
@@ -68,6 +73,11 @@ def safe_bool(x) -> bool:
         return False
     s = str(x).strip().lower()
     return s in {"1", "true", "yes", "y", "starter", "starting"}
+
+
+def bounded_component(series: pd.Series, low: float, high: float, max_points: float) -> pd.Series:
+    clipped = series.clip(lower=low, upper=high)
+    return ((clipped - low) / (high - low) * max_points).clip(lower=0, upper=max_points)
 
 
 def ensure_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -142,27 +152,26 @@ def infer_market_std(row: pd.Series) -> float:
         return supplied
 
     defaults = {
-        "points": 8.0,
-        "rebounds": 3.6,
-        "assists": 3.2,
-        "pra": 8.5,
-        "threes": 2.0,
-        "3pm": 2.0,
-        "blocks": 1.2,
-        "steals": 1.3,
-        "pts+reb+ast": 8.5,
+        "points": 8.5,
+        "rebounds": 4.0,
+        "assists": 3.6,
+        "pra": 9.0,
+        "threes": 2.3,
+        "3pm": 2.3,
+        "blocks": 1.4,
+        "steals": 1.5,
+        "pts+reb+ast": 9.0,
     }
     for key, val in defaults.items():
         if key in market:
             return val
-    return 7.0
+    return 7.5
 
 
 def infer_bet_side(row: pd.Series) -> str:
     side = str(row.get("bet_side", "")).strip().title()
     if side in {"Over", "Under"}:
         return side
-
     projection = safe_float(row.get("projection"), np.nan)
     line = safe_float(row.get("line"), np.nan)
     if np.isnan(projection) or np.isnan(line):
@@ -175,58 +184,49 @@ def calculate_hit_probability(row: pd.Series) -> float:
     line = safe_float(row.get("line"), np.nan)
     if np.isnan(projection) or np.isnan(line):
         return np.nan
-
     std_dev = infer_market_std(row)
     side = infer_bet_side(row)
-
     p_over = prob_over_normal(projection, line, std_dev)
-    if side == "Under":
-        return clamp01(1 - p_over)
-    return clamp01(p_over)
-
-
-def bounded_component(x: pd.Series, low: float, high: float, max_points: float) -> pd.Series:
-    clipped = x.clip(lower=low, upper=high)
-    return ((clipped - low) / (high - low) * max_points).clip(lower=0, upper=max_points)
+    return clamp01(1 - p_over if side == "Under" else p_over)
 
 
 def grade_from_score(score: float) -> str:
-    if score >= 85:
+    if score >= 87:
         return "🟢 A"
-    if score >= 77:
+    if score >= 79:
         return "🟢 B"
-    if score >= 69:
+    if score >= 71:
         return "🟡 C"
-    if score >= 60:
+    if score >= 63:
         return "🟠 D"
     return "🔴 F"
 
 
 def tier_from_score(score: float) -> str:
-    if score >= 85:
+    if score >= 87:
         return "🟢 Tier 1"
-    if score >= 75:
+    if score >= 78:
         return "🟡 Tier 2"
-    if score >= 65:
+    if score >= 69:
         return "⚪ Tier 3"
     return "⚫ Pass"
 
 
 def unit_size_from_score(score: float) -> float:
-    if score >= 87:
+    if score >= 89:
         return 1.00
-    if score >= 80:
+    if score >= 83:
         return 0.75
-    if score >= 72:
+    if score >= 76:
         return 0.50
-    if score >= 65:
+    if score >= 69:
         return 0.25
     return 0.00
 
 
 def variance_label(std_dev: float, market: str) -> str:
     market = str(market).lower()
-    if std_dev >= 8:
+    if std_dev >= 8.5:
         return "High-upside profile"
     if "three" in market or "3pm" in market:
         return "High variance"
@@ -240,7 +240,7 @@ def matchup_label(row: pd.Series) -> str:
     spread = abs(safe_float(row.get("spread"), np.nan))
     minutes = safe_float(row.get("minutes"), np.nan)
 
-    if not np.isnan(total) and total >= 235 and (np.isnan(spread) or spread <= 8):
+    if not np.isnan(total) and total >= 236 and (np.isnan(spread) or spread <= 7):
         return "Strong matchup"
     if not np.isnan(minutes) and minutes >= 34:
         return "Stable role"
@@ -250,9 +250,174 @@ def matchup_label(row: pd.Series) -> str:
 
 
 def portfolio_flag(score: float, ev_edge: float, hit_pct: float) -> str:
-    if score >= 72 and ev_edge >= 3 and hit_pct >= 56:
+    if score >= 76 and ev_edge >= 2.5 and hit_pct >= 55:
         return "Selected"
     return "Pass"
+
+
+# -----------------------------
+# Game Script AI (V5)
+# -----------------------------
+def script_type_for_row(row: pd.Series) -> str:
+    total = safe_float(row.get("game_total"), np.nan)
+    spread = abs(safe_float(row.get("spread"), np.nan))
+
+    if not np.isnan(total) and total >= 238 and (np.isnan(spread) or spread <= 4):
+        return "Track meet"
+    if not np.isnan(total) and total >= 232 and (np.isnan(spread) or spread <= 7):
+        return "Competitive shootout"
+    if not np.isnan(total) and total <= 220 and not np.isnan(spread) and spread <= 7:
+        return "Slow grind"
+    if not np.isnan(spread) and spread >= 12:
+        return "Blowout risk"
+    return "Neutral environment"
+
+
+def script_confidence_for_row(row: pd.Series) -> int:
+    total = safe_float(row.get("game_total"), np.nan)
+    spread = abs(safe_float(row.get("spread"), np.nan))
+
+    score = 50
+    if not np.isnan(total):
+        if total >= 238:
+            score += 20
+        elif total >= 232:
+            score += 12
+        elif total <= 220:
+            score += 14
+
+    if not np.isnan(spread):
+        if spread <= 3:
+            score += 18
+        elif spread <= 6:
+            score += 10
+        elif spread >= 12:
+            score += 15
+        elif spread >= 9:
+            score += 8
+
+    return int(max(40, min(95, score)))
+
+
+def blowout_risk_label(row: pd.Series) -> str:
+    spread = abs(safe_float(row.get("spread"), np.nan))
+    if np.isnan(spread):
+        return "Unknown"
+    if spread >= 14:
+        return "High"
+    if spread >= 10:
+        return "Medium"
+    return "Low"
+
+
+def market_script_direction(row: pd.Series) -> float:
+    market = str(row.get("market", "")).lower()
+    side = str(row.get("bet_side", "")).lower()
+    script_type = str(row.get("script_type", ""))
+    starter = safe_bool(row.get("starter"))
+    minutes = safe_float(row.get("minutes"), 0)
+
+    boost = 0.0
+
+    # Overs benefit from faster / closer games
+    if side == "over":
+        if script_type == "Track meet":
+            boost += 4.0 if any(k in market for k in ["points", "pra", "assists"]) else 2.5
+        elif script_type == "Competitive shootout":
+            boost += 2.5 if any(k in market for k in ["points", "pra", "assists"]) else 1.5
+        elif script_type == "Slow grind":
+            boost -= 3.0 if any(k in market for k in ["points", "pra", "assists"]) else -1.5
+        elif script_type == "Blowout risk":
+            boost -= 4.0 if starter and minutes >= 30 else -1.0
+
+    # Unders benefit from slower / blowout scripts
+    if side == "under":
+        if script_type == "Slow grind":
+            boost += 3.0 if any(k in market for k in ["points", "pra", "assists"]) else 1.5
+        elif script_type == "Blowout risk":
+            boost += 3.5 if starter else 1.5
+        elif script_type == "Track meet":
+            boost -= 2.5 if any(k in market for k in ["points", "pra", "assists"]) else -1.0
+
+    # Rebounds often less script-sensitive than points/PRA
+    if "rebounds" in market:
+        boost *= 0.7
+
+    return round(boost, 2)
+
+
+def correlation_group_for_row(row: pd.Series) -> str:
+    return f"{row.get('matchup', '')} | {row.get('team', '')} | {row.get('bet_side', '')}"
+
+
+def correlation_penalty(df: pd.DataFrame) -> pd.Series:
+    keys = df["correlation_group"].fillna("")
+    counts = keys.map(keys.value_counts())
+    minutes = df["minutes"].fillna(0)
+
+    penalty = np.where(
+        counts >= 3,
+        np.where(minutes >= 32, 4.0, 2.5),
+        np.where(counts == 2, np.where(minutes >= 32, 2.0, 1.0), 0.0)
+    )
+    return pd.Series(penalty, index=df.index)
+
+
+def market_edge_component(row: pd.Series) -> float:
+    edge = safe_float(row.get("projection_edge"), np.nan)
+    market = str(row.get("market", "")).lower()
+    if np.isnan(edge):
+        return 0.0
+
+    if "points" in market or "pra" in market:
+        capped = min(edge, 4.5)
+        return float(np.interp(capped, [0.5, 1.0, 2.0, 3.0, 4.5], [0, 3, 8, 12, 15]))
+    capped = min(edge, 3.0)
+    return float(np.interp(capped, [0.3, 0.7, 1.2, 2.0, 3.0], [0, 3, 7, 11, 14]))
+
+
+def realism_penalty_from_edge_z(z: float) -> float:
+    if np.isnan(z):
+        return 0.0
+    if z <= 0.9:
+        return 0.0
+    if z <= 1.15:
+        return 2.0
+    if z <= 1.35:
+        return 5.0
+    if z <= 1.55:
+        return 8.0
+    return 11.0
+
+
+def realism_penalty_from_hit(hit_pct: float) -> float:
+    if np.isnan(hit_pct):
+        return 0.0
+    if hit_pct <= 64:
+        return 0.0
+    if hit_pct <= 67:
+        return 2.0
+    if hit_pct <= 70:
+        return 4.0
+    if hit_pct <= 73:
+        return 7.0
+    return 10.0
+
+
+def realism_penalty_from_ev(ev_pct: float) -> float:
+    if np.isnan(ev_pct):
+        return 0.0
+    if ev_pct <= 10:
+        return 0.0
+    if ev_pct <= 15:
+        return 2.0
+    if ev_pct <= 20:
+        return 4.0
+    if ev_pct <= 25:
+        return 7.0
+    if ev_pct <= 30:
+        return 10.0
+    return 13.0
 
 
 def compute_edges(df: pd.DataFrame) -> pd.DataFrame:
@@ -272,25 +437,83 @@ def compute_edges(df: pd.DataFrame) -> pd.DataFrame:
     out["ev"] = (out["hit_prob"] * (dec - 1)) - (1 - out["hit_prob"])
     out["ev_edge_pct"] = (out["ev"] * 100).round(2)
 
-    # -----------------------------
-    # SCORING FIX
-    # -----------------------------
-    # Designed to create actual separation instead of everything scoring 99.9.
-    hit_component = bounded_component(out["hit_pct"], 52, 70, 28)
-    ev_component = bounded_component(out["ev_edge_pct"], 0, 20, 22)
-    edge_component = bounded_component(out["projection_edge"], 0.5, 5.0, 18)
+    out["edge_z"] = (out["projection_edge"] / out["std_dev_used"]).replace([np.inf, -np.inf], np.nan)
+    out["edge_z"] = out["edge_z"].round(3)
 
-    starter_bonus = np.where(out["starter"], 4.0, 0.0)
-    minutes_bonus = bounded_component(out["minutes"].fillna(0), 28, 36, 8)
-    matchup_bonus = np.where(out["game_total"].fillna(0) >= 235, 3.0, np.where(out["game_total"].fillna(0) >= 228, 1.5, 0.0))
-    price_bonus = np.where((out["odds"] >= -135) & (out["odds"] <= 125), 2.0, 0.0)
+    # Game Script AI columns
+    out["script_type"] = out.apply(script_type_for_row, axis=1)
+    out["script_confidence"] = out.apply(script_confidence_for_row, axis=1)
+    out["blowout_risk"] = out.apply(blowout_risk_label, axis=1)
+    out["game_script_boost"] = out.apply(market_script_direction, axis=1)
+    out["correlation_group"] = out.apply(correlation_group_for_row, axis=1)
+    out["correlation_penalty"] = correlation_penalty(out)
 
-    blowout_penalty = np.where(abs(out["spread"].fillna(0)) >= 12, 5.0, np.where(abs(out["spread"].fillna(0)) >= 9, 2.5, 0.0))
-    nonstarter_penalty = np.where(~out["starter"], 8.0, 0.0)
-    low_minutes_penalty = np.where(out["minutes"].fillna(0) < 28, 6.0, 0.0)
+    # Core score pieces
+    hit_component = bounded_component(out["hit_pct"], 53, 66, 20)
+    ev_component = bounded_component(out["ev_edge_pct"], 0, 12, 12)
+    edge_component = out.apply(market_edge_component, axis=1)
+
+    starter_bonus = np.where(out["starter"], 3.0, -10.0)
+
+    minutes_bonus = np.select(
+        [
+            out["minutes"].fillna(0) >= 36,
+            out["minutes"].fillna(0) >= 33,
+            out["minutes"].fillna(0) >= 30,
+            out["minutes"].fillna(0) >= 27,
+        ],
+        [7.0, 5.0, 3.0, 1.5],
+        default=-3.0,
+    )
+
+    matchup_bonus = np.select(
+        [
+            (out["game_total"].fillna(0) >= 236) & (abs(out["spread"].fillna(0)) <= 7),
+            out["game_total"].fillna(0) >= 230,
+        ],
+        [3.0, 1.0],
+        default=0.0,
+    )
+
+    price_bonus = np.select(
+        [
+            (out["odds"] >= -125) & (out["odds"] <= 110),
+            (out["odds"] >= -145) & (out["odds"] <= 125),
+        ],
+        [2.0, 1.0],
+        default=0.0,
+    )
+
+    spread_penalty = np.select(
+        [
+            abs(out["spread"].fillna(0)) >= 14,
+            abs(out["spread"].fillna(0)) >= 10,
+            abs(out["spread"].fillna(0)) >= 8,
+        ],
+        [6.0, 3.5, 1.5],
+        default=0.0,
+    )
+
+    edge_z_penalty = out["edge_z"].apply(realism_penalty_from_edge_z)
+    hit_realism_penalty = out["hit_pct"].apply(realism_penalty_from_hit)
+    ev_realism_penalty = out["ev_edge_pct"].apply(realism_penalty_from_ev)
+
+    combo_penalty = np.where(
+        (out["hit_pct"] >= 68) & (out["ev_edge_pct"] >= 20),
+        5.0,
+        np.where((out["hit_pct"] >= 66) & (out["ev_edge_pct"] >= 15), 2.5, 0.0)
+    )
+
+    nonstarter_minutes_penalty = np.where(
+        (~out["starter"]) & (out["minutes"].fillna(0) < 28),
+        4.0,
+        0.0,
+    )
+
+    weak_edge_penalty = np.where(out["projection_edge"] < 0.75, 4.0, 0.0)
 
     out["score"] = (
-        28
+        42.0
         + hit_component
         + ev_component
         + edge_component
@@ -298,21 +521,34 @@ def compute_edges(df: pd.DataFrame) -> pd.DataFrame:
         + minutes_bonus
         + matchup_bonus
         + price_bonus
-        - blowout_penalty
-        - nonstarter_penalty
-        - low_minutes_penalty
-    ).clip(lower=0, upper=99.9).round(1)
+        + out["game_script_boost"]
+        - spread_penalty
+        - edge_z_penalty
+        - hit_realism_penalty
+        - ev_realism_penalty
+        - combo_penalty
+        - nonstarter_minutes_penalty
+        - weak_edge_penalty
+        - out["correlation_penalty"]
+    ).clip(lower=0, upper=96).round(1)
 
     out["grade"] = out["score"].apply(grade_from_score)
     out["tier"] = out["score"].apply(tier_from_score)
     out["model_size_u"] = out["score"].apply(unit_size_from_score)
     out["portfolio_size_u"] = np.where(
-        out["score"] >= 85, out["model_size_u"] + 0.10,
-        np.where(out["score"] >= 75, out["model_size_u"] + 0.05, out["model_size_u"])
+        out["score"] >= 87, out["model_size_u"] + 0.10,
+        np.where(out["score"] >= 78, out["model_size_u"] + 0.05, out["model_size_u"])
     ).round(2)
+
     out["matchup_note"] = out.apply(matchup_label, axis=1)
     out["variance_note"] = out.apply(lambda r: variance_label(r["std_dev_used"], r["market"]), axis=1)
     out["portfolio_status"] = out.apply(lambda r: portfolio_flag(r["score"], r["ev_edge_pct"], r["hit_pct"]), axis=1)
+
+    out["realism_flag"] = np.where(
+        (out["ev_edge_pct"] >= 20) | (out["hit_pct"] >= 68) | (out["edge_z"] >= 1.15),
+        "Review",
+        "Normal"
+    )
 
     return out
 
@@ -332,7 +568,7 @@ def find_arbitrage_and_middles(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataF
     mid_rows = []
 
     arb_group = work.groupby(["key", "line"], dropna=False)
-    for (key, line), g in arb_group:
+    for (_, line), g in arb_group:
         overs = g[g["bet_side"].str.lower() == "over"]
         unders = g[g["bet_side"].str.lower() == "under"]
 
@@ -354,7 +590,7 @@ def find_arbitrage_and_middles(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataF
                     })
 
     mid_group = work.groupby(["key"], dropna=False)
-    for key, g in mid_group:
+    for _, g in mid_group:
         overs = g[g["bet_side"].str.lower() == "over"].copy()
         unders = g[g["bet_side"].str.lower() == "under"].copy()
         if overs.empty or unders.empty:
@@ -379,9 +615,7 @@ def find_arbitrage_and_middles(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataF
                             "gap": round(gap, 2),
                         })
 
-    arb_df = pd.DataFrame(arb_rows).drop_duplicates()
-    mid_df = pd.DataFrame(mid_rows).drop_duplicates()
-    return arb_df, mid_df
+    return pd.DataFrame(arb_rows).drop_duplicates(), pd.DataFrame(mid_rows).drop_duplicates()
 
 
 def format_best_bet_cards(df: pd.DataFrame, top_n: int = 10):
@@ -398,7 +632,8 @@ def format_best_bet_cards(df: pd.DataFrame, top_n: int = 10):
 {row['matchup']} • FULL_GAME • {row['book'] if row['book'] else 'Book N/A'}  
 Projection: {row['projection']:.2f} | Edge: {row['projection_edge']:.2f} | Odds: {int(row['odds']) if pd.notna(row['odds']) else 'N/A'} | Hit %: {row['hit_pct']:.1f}% | EV Edge: {row['ev_edge_pct']:.2f}% | Score: {row['score']:.1f} ({row['grade']})  
 Tier: {row['tier']} | Model Size: {row['model_size_u']:.2f}u | Portfolio Size: {row['portfolio_size_u']:.2f}u  
-Matchup: {row['matchup_note']} | Variance: {row['variance_note']} | Portfolio: {row['portfolio_status']}
+Matchup: {row['matchup_note']} | Script: {row['script_type']} ({row['script_confidence']}) | Blowout Risk: {row['blowout_risk']}  
+Variance: {row['variance_note']} | Correlation Penalty: {row['correlation_penalty']:.1f} | Portfolio: {row['portfolio_status']} | Realism: {row['realism_flag']}
 ---
 """
         )
@@ -444,8 +679,11 @@ def load_csv(file) -> pd.DataFrame:
     return pd.read_csv(file)
 
 
+# -----------------------------
+# App
+# -----------------------------
 st.title("🏀 Sports AI Betting Dashboard")
-st.caption("Scoring fix applied: sharper separation between elite, strong, playable, and pass-level bets.")
+st.caption("Game Script AI (V5): competitive-shootout boosts, blowout penalties, and same-game correlation awareness.")
 
 with st.sidebar:
     st.header("Data")
@@ -504,7 +742,7 @@ m2.metric("Filtered Bets", f"{len(filtered)}")
 m3.metric("Avg Hit %", f"{filtered['hit_pct'].mean():.1f}%" if not filtered.empty else "N/A")
 m4.metric("Avg EV Edge", f"{filtered['ev_edge_pct'].mean():.2f}%" if not filtered.empty else "N/A")
 
-tabs = st.tabs(["🔥 Best Bets", "🧠 NBA Player Props V2", "⚡ Arbitrage & Middles", "📦 Portfolio", "🗂️ Raw Data"])
+tabs = st.tabs(["🔥 Best Bets", "🧠 NBA Player Props V2", "🎮 Game Script AI", "⚡ Arbitrage & Middles", "📦 Portfolio", "🗂️ Raw Data"])
 
 with tabs[0]:
     st.subheader("Top Best Bets")
@@ -525,8 +763,8 @@ with tabs[0]:
             st.dataframe(
                 ranked[[
                     "player", "matchup", "market", "bet_side", "line", "projection", "projection_edge",
-                    "odds", "hit_pct", "ev_edge_pct", "score", "grade", "tier",
-                    "model_size_u", "portfolio_size_u", "book", "starter"
+                    "odds", "hit_pct", "ev_edge_pct", "score", "grade", "tier", "script_type",
+                    "game_script_boost", "correlation_penalty", "realism_flag", "book"
                 ]],
                 use_container_width=True,
                 hide_index=True,
@@ -573,7 +811,8 @@ with tabs[1]:
         prop_df[[
             "player", "team", "matchup", "market", "bet_side", "line", "projection",
             "projection_edge", "odds", "hit_pct", "ev_edge_pct", "score", "grade",
-            "tier", "minutes", "book", "matchup_note", "variance_note", "portfolio_status"
+            "tier", "minutes", "script_type", "script_confidence", "game_script_boost",
+            "correlation_penalty", "book", "portfolio_status"
         ]],
         use_container_width=True,
         hide_index=True,
@@ -583,6 +822,27 @@ with tabs[1]:
     format_best_bet_cards(prop_df, top_n=8)
 
 with tabs[2]:
+    st.subheader("Game Script AI (V5)")
+
+    gs = filtered.copy()
+    gs = gs.sort_values(["script_confidence", "score"], ascending=[False, False])
+
+    st.dataframe(
+        gs[[
+            "player", "matchup", "team", "market", "bet_side", "minutes", "game_total", "spread",
+            "script_type", "script_confidence", "blowout_risk", "game_script_boost",
+            "correlation_group", "correlation_penalty", "score", "tier", "realism_flag"
+        ]],
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    s1, s2, s3 = st.columns(3)
+    s1.metric("Track Meet / Shootout Bets", int(gs["script_type"].isin(["Track meet", "Competitive shootout"]).sum()))
+    s2.metric("Blowout Risk Bets", int((gs["blowout_risk"] == "High").sum()))
+    s3.metric("Avg Script Boost", f"{gs['game_script_boost'].mean():.2f}" if not gs.empty else "N/A")
+
+with tabs[3]:
     st.subheader("Arbitrage & Middles Scanner")
     arb_df, mid_df = find_arbitrage_and_middles(model_df)
 
@@ -601,14 +861,14 @@ with tabs[2]:
         else:
             st.dataframe(mid_df.sort_values("gap", ascending=False), use_container_width=True, hide_index=True)
 
-with tabs[3]:
+with tabs[4]:
     st.subheader("Portfolio Engine Snapshot")
 
     port = filtered.copy()
     port = port[
         (port["portfolio_status"] == "Selected") &
-        (port["score"] >= 72) &
-        (port["ev_edge_pct"] >= 3)
+        (port["score"] >= 76) &
+        (port["ev_edge_pct"] >= 2.5)
     ].sort_values(["score", "ev_edge_pct"], ascending=False)
 
     bankroll = st.number_input("Bankroll ($)", min_value=50, max_value=100000, value=1000, step=50)
@@ -625,13 +885,14 @@ with tabs[3]:
     st.dataframe(
         port[[
             "player", "matchup", "market", "bet_side", "line", "odds", "hit_pct",
-            "ev_edge_pct", "score", "tier", "model_size_u", "portfolio_size_u", "stake_$", "book"
+            "ev_edge_pct", "score", "tier", "script_type", "game_script_boost",
+            "correlation_penalty", "model_size_u", "portfolio_size_u", "stake_$", "book"
         ]],
         use_container_width=True,
         hide_index=True,
     )
 
-with tabs[4]:
+with tabs[5]:
     st.subheader("Model Data")
     st.dataframe(model_df, use_container_width=True, hide_index=True)
 
@@ -639,9 +900,9 @@ with tabs[4]:
     st.download_button(
         "Download scored bets CSV",
         data=csv,
-        file_name="scored_bets.csv",
+        file_name="scored_bets_v5_game_script_ai.csv",
         mime="text/csv",
     )
 
 st.markdown("---")
-st.caption("Scoring V2 is live. Elite scores should now be rare instead of every bet showing as 99.9.")
+st.caption("Game Script AI (V5) adds script-type labels, blowout risk, and same-game correlation awareness to the scoring engine.")

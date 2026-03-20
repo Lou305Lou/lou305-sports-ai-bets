@@ -9,12 +9,13 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Sports AI Betting Dashboard V9.6", layout="wide")
+st.set_page_config(page_title="Sports AI Betting Dashboard V10", layout="wide")
 
 CALL_LOG_FILE = "api_call_log.csv"
 BET_LOG_FILE = "bet_log.csv"
 ALERT_LOG_FILE = "alert_log.csv"
 SNAPSHOT_FILE = "play_snapshot.csv"
+
 MAX_DAILY_CALLS = 500
 ET_TZ = ZoneInfo("America/New_York")
 SCHEDULE_WINDOWS = {
@@ -23,6 +24,9 @@ SCHEDULE_WINDOWS = {
     "5:30 PM ET": (17, 30),
 }
 
+# -----------------------------
+# Helpers
+# -----------------------------
 def safe_float(v, default=np.nan):
     try:
         if pd.isna(v):
@@ -72,6 +76,9 @@ def today_et_str():
 def current_et_label():
     return et_now().strftime("%Y-%m-%d %I:%M %p ET")
 
+# -----------------------------
+# Styles
+# -----------------------------
 st.markdown("""
 <style>
 .block-container {padding-top: 1rem; padding-bottom: 4rem; max-width: 1120px;}
@@ -106,9 +113,19 @@ st.markdown("""
     background: #eff6ff;
     margin-bottom: 12px;
 }
+.good-box {
+    border:1px solid rgba(34,197,94,.28);
+    border-radius:18px;
+    padding:14px;
+    background: #f0fdf4;
+    margin-bottom: 12px;
+}
 </style>
 """, unsafe_allow_html=True)
 
+# -----------------------------
+# Persistence
+# -----------------------------
 def load_csv_file(path, columns):
     if os.path.exists(path):
         try:
@@ -127,14 +144,18 @@ def load_bet_log():
     return load_csv_file(BET_LOG_FILE, [
         "timestamp", "player", "market", "bet_side", "line", "book", "best_book",
         "placed_odds", "best_odds", "stake_u", "stake_$", "edge_pct", "ev_pct",
-        "result", "profit_u", "closing_odds", "clv_placed_vs_close_pct", "notes"
+        "tier", "bet_decision", "predicted_clv_pct", "result", "profit_u",
+        "closing_odds", "clv_placed_vs_close_pct", "notes"
     ])
 
 def load_alert_log():
     return load_csv_file(ALERT_LOG_FILE, ["timestamp_et", "date_et", "window", "play_key", "alert_type", "message"])
 
 def load_snapshot():
-    return load_csv_file(SNAPSHOT_FILE, ["play_key", "player", "market", "bet_side", "line", "best_book", "best_display_odds", "true_edge", "realistic_ev_pct", "movement_note", "qualified"])
+    return load_csv_file(SNAPSHOT_FILE, [
+        "play_key", "player", "market", "bet_side", "line", "best_book", "best_display_odds",
+        "true_edge", "realistic_ev_pct", "movement_note", "tier", "qualified", "predicted_clv_pct"
+    ])
 
 def log_api_call(reason, call_count=1, window=""):
     log = load_call_log()
@@ -191,6 +212,9 @@ def should_run_window(window_name):
         return not was_window_run_today(window_name)
     return False
 
+# -----------------------------
+# Engine
+# -----------------------------
 def ensure_columns(df):
     df = df.copy()
     defaults = {
@@ -279,6 +303,43 @@ def movement_label(delta_implied_pct):
         return "↩️ Soft reverse"
     return "⏳ Stable"
 
+def predicted_clv_pct(row):
+    bonus = 0.0
+    move = safe_float(row.get("line_move_pct"), 0.0)
+    edge = safe_float(row.get("true_edge"), 0.0) * 100
+    score = safe_float(row.get("consensus_score"), 0.0)
+    if move >= 2:
+        bonus += 1.5
+    if "Steam" in str(row.get("movement_note", "")):
+        bonus += 1.0
+    if edge >= 10:
+        bonus += 1.5
+    if score >= 78:
+        bonus += 0.8
+    return round(bonus, 2)
+
+def tier_and_decision(row):
+    score = safe_float(row.get("consensus_score"), 0.0)
+    edge = safe_float(row.get("true_edge"), 0.0) * 100
+    ev = safe_float(row.get("realistic_ev_pct"), 0.0)
+    starter = bool(row.get("starter", False))
+
+    if score >= 78 and edge >= 3.5 and ev >= 2:
+        return "Qualified", "Bet Now"
+    if starter and edge >= 10 and ev >= 15:
+        return "Near threshold", "Reduced Stake"
+    if ev >= 10 and edge >= 6:
+        return "Monitor", "Watch"
+    return "Needs line movement", "Wait"
+
+def stake_multiplier_by_tier(tier):
+    return {
+        "Qualified": 1.00,
+        "Near threshold": 0.60,
+        "Monitor": 0.35,
+        "Needs line movement": 0.00,
+    }.get(tier, 0.00)
+
 def compute_scores(df, bankroll=1000, max_single_pct=0.0125):
     out = df.copy()
     out["bet_side"] = out.apply(infer_bet_side, axis=1)
@@ -288,6 +349,7 @@ def compute_scores(df, bankroll=1000, max_single_pct=0.0125):
     out["best_display_odds"] = [x[1] for x in bests]
     out["implied_prob"] = out["best_display_odds"].apply(american_to_implied_prob)
     out["true_edge"] = (out["hit_prob"] - out["implied_prob"]).round(4)
+
     dec = out["best_display_odds"].apply(american_to_decimal)
     out["realistic_hit_prob"] = (
         out["hit_prob"]
@@ -295,12 +357,15 @@ def compute_scores(df, bankroll=1000, max_single_pct=0.0125):
         - np.where(out["true_edge"] > 0.12, 0.03, 0.0)
         - np.where(out["starter"], 0.0, 0.02)
     ).clip(0.01, 0.95)
+
     open_ip = out["open_odds"].apply(american_to_implied_prob)
     curr_ip = out["odds"].apply(american_to_implied_prob)
     out["line_move_pct"] = ((curr_ip - open_ip) * 100).round(2)
     out["movement_note"] = out["line_move_pct"].apply(movement_label)
+
     out["realistic_ev"] = (out["realistic_hit_prob"] * (dec - 1)) - (1 - out["realistic_hit_prob"])
     out["realistic_ev_pct"] = (out["realistic_ev"] * 100).clip(-10, 45).round(2)
+
     out["consensus_score"] = (
         (out["realistic_hit_prob"] * 100) * 0.30
         + (out["true_edge"] * 100).clip(-5, 18) * 1.15
@@ -309,6 +374,7 @@ def compute_scores(df, bankroll=1000, max_single_pct=0.0125):
         + np.where(out["minutes"].fillna(0) >= 33, 5, np.where(out["minutes"].fillna(0) >= 28, 2, -4))
         + np.where(out["line_move_pct"] >= 2, 2, 0)
     ).clip(0, 100).round(1)
+
     out["model_agreement_pct"] = np.select(
         [out["consensus_score"] >= 80, out["consensus_score"] >= 72, out["consensus_score"] >= 64],
         [80, 60, 40], default=20
@@ -321,22 +387,28 @@ def compute_scores(df, bankroll=1000, max_single_pct=0.0125):
         [out["consensus_score"] >= 80, out["consensus_score"] >= 72, out["consensus_score"] >= 65, out["consensus_score"] >= 60],
         ["A+ ELITE", "A STRONG", "B+ VALUE", "B LEAN"], default="C PASS"
     )
+
     b = dec - 1
     q = 1 - out["realistic_hit_prob"]
     raw_kelly = np.where((b > 0) & out["realistic_hit_prob"].between(0.001, 0.999), np.maximum(0, (b * out["realistic_hit_prob"] - q) / b), 0)
     mult = np.where(out["consensus_score"] >= 78, 0.42, np.where(out["consensus_score"] >= 68, 0.30, 0.18))
     frac = np.minimum(raw_kelly * mult, max_single_pct)
-    out["single_stake_$"] = bankroll * frac
-    out["single_stake_u"] = np.where(bankroll > 0, out["single_stake_$"] / (bankroll * 0.01), 0).round(2)
+    out["base_stake_$"] = bankroll * frac
+    out["base_stake_u"] = np.where(bankroll > 0, out["base_stake_$"] / (bankroll * 0.01), 0)
+
+    tier_decisions = out.apply(tier_and_decision, axis=1)
+    out["tier"] = [x[0] for x in tier_decisions]
+    out["bet_decision"] = [x[1] for x in tier_decisions]
+    out["stake_mult"] = out["tier"].apply(stake_multiplier_by_tier)
+    out["single_stake_$"] = (out["base_stake_$"] * out["stake_mult"]).round(2)
+    out["single_stake_u"] = (out["base_stake_u"] * out["stake_mult"]).round(2)
+    out["predicted_clv_pct"] = out.apply(predicted_clv_pct, axis=1)
     out["rank_score"] = (out["consensus_score"] * 0.46 + out["realistic_ev_pct"] * 0.95 + (out["true_edge"] * 100) * 1.05).round(2)
     out["play_key"] = out["player"].astype(str) + "|" + out["market"].astype(str) + "|" + out["bet_side"].astype(str) + "|" + out["line"].astype(str)
     return out
 
 def approved_pool(df):
-    return df[
-        ((df["consensus_action"] == "Bet") | ((df["consensus_action"] == "Lean") & (df["model_agreement_pct"] >= 60)))
-        & (df["true_edge"] >= 0.02) & (df["realistic_ev_pct"] >= 2.0)
-    ].copy()
+    return df[df["tier"] == "Qualified"].copy()
 
 def apply_game_exposure_limit(df, max_per_game=2):
     if df.empty:
@@ -363,7 +435,7 @@ def combo_corr_penalty(rows):
     total = 0.0
     for i in range(len(rows)):
         for j in range(i + 1, len(rows)):
-            total += 0.12 if str(rows[i].get("matchup","")) == str(rows[j].get("matchup","")) else 0.0
+            total += 0.12 if str(rows[i].get("matchup", "")) == str(rows[j].get("matchup", "")) else 0.0
     return total
 
 def build_best_parlay(df, leg_size=2):
@@ -401,46 +473,71 @@ def simulate_live_refresh(df, top_n, edge_threshold_pct):
             refreshed.loc[idx, "odds"] = curr + np.random.choice([-2, -1, 0, 1, 2])
     return refreshed, max(1, count) if count > 0 else 0
 
-def create_alerts(previous_snapshot, current_pool, window_name):
+def create_alerts(previous_snapshot, current_all, current_qualified, window_name):
     alerts = []
     prev_map = {row["play_key"]: row for _, row in previous_snapshot.iterrows()} if not previous_snapshot.empty else {}
-    curr_map = {row["play_key"]: row for _, row in current_pool.iterrows()} if not current_pool.empty else {}
-    for key, row in curr_map.items():
+    curr_all_map = {row["play_key"]: row for _, row in current_all.iterrows()} if not current_all.empty else {}
+    curr_qual_keys = set(current_qualified["play_key"].tolist()) if not current_qualified.empty else set()
+
+    for key, row in curr_all_map.items():
         prev_row = prev_map.get(key)
         player = row["player"]
-        if prev_row is None:
+        current_tier = row["tier"]
+        current_clv = safe_float(row.get("predicted_clv_pct"), 0.0)
+
+        if prev_row is None and current_tier == "Qualified":
             msg = f"{player}: new qualified play entered pool."
-            alerts.append(msg); log_alert(window_name, key, "new_play", msg); continue
-        prev_ev = safe_float(prev_row.get("realistic_ev_pct"), np.nan)
-        curr_ev = safe_float(row.get("realistic_ev_pct"), np.nan)
-        prev_book = str(prev_row.get("best_book", ""))
-        curr_book = str(row.get("best_book", ""))
-        prev_move = str(prev_row.get("movement_note", ""))
-        curr_move = str(row.get("movement_note", ""))
-        if not pd.isna(prev_ev) and not pd.isna(curr_ev) and curr_ev - prev_ev >= 2.0:
-            msg = f"{player}: EV improved by {curr_ev - prev_ev:.1f}%."
-            alerts.append(msg); log_alert(window_name, key, "ev_improved", msg)
-        if prev_book != curr_book:
-            msg = f"{player}: best book changed to {curr_book}."
-            alerts.append(msg); log_alert(window_name, key, "best_book_changed", msg)
-        if "Steam" not in prev_move and "Steam" in curr_move:
-            msg = f"{player}: steam detected after refresh."
-            alerts.append(msg); log_alert(window_name, key, "steam_detected", msg)
+            alerts.append(msg); log_alert(window_name, key, "new_qualified", msg)
+            continue
+
+        if prev_row is not None:
+            prev_tier = str(prev_row.get("tier", ""))
+            prev_ev = safe_float(prev_row.get("realistic_ev_pct"), np.nan)
+            curr_ev = safe_float(row.get("realistic_ev_pct"), np.nan)
+            prev_book = str(prev_row.get("best_book", ""))
+            curr_book = str(row.get("best_book", ""))
+            prev_clv = safe_float(prev_row.get("predicted_clv_pct"), 0.0)
+
+            if prev_tier != "Qualified" and current_tier == "Qualified":
+                msg = f"{player}: upgraded from {prev_tier or 'watch'} to Qualified."
+                alerts.append(msg); log_alert(window_name, key, "upgrade_to_qualified", msg)
+
+            if not pd.isna(prev_ev) and not pd.isna(curr_ev) and curr_ev - prev_ev >= 2.0:
+                msg = f"{player}: EV improved by {curr_ev - prev_ev:.1f}%."
+                alerts.append(msg); log_alert(window_name, key, "ev_improved", msg)
+
+            if prev_book != curr_book:
+                msg = f"{player}: best book changed to {curr_book}."
+                alerts.append(msg); log_alert(window_name, key, "best_book_changed", msg)
+
+            if current_clv - prev_clv >= 1.0:
+                msg = f"{player}: predicted CLV improved to {current_clv:.2f}%."
+                alerts.append(msg); log_alert(window_name, key, "clv_improved", msg)
+
     for key, row in prev_map.items():
-        if key not in curr_map:
-            player = row["player"]
-            msg = f"{player}: play dropped out of qualification."
+        if str(row.get("tier", "")) == "Qualified" and key not in curr_qual_keys:
+            msg = f"{row['player']}: dropped out of qualified pool."
             alerts.append(msg); log_alert(window_name, key, "dropped_out", msg)
+
     return alerts
 
-def save_snapshot_from_pool(pool):
-    if pool.empty:
-        save_df(pd.DataFrame(columns=["play_key", "player", "market", "bet_side", "line", "best_book", "best_display_odds", "true_edge", "realistic_ev_pct", "movement_note", "qualified"]), SNAPSHOT_FILE)
+def save_snapshot_from_df(df):
+    if df.empty:
+        save_df(pd.DataFrame(columns=[
+            "play_key", "player", "market", "bet_side", "line", "best_book", "best_display_odds",
+            "true_edge", "realistic_ev_pct", "movement_note", "tier", "qualified", "predicted_clv_pct"
+        ]), SNAPSHOT_FILE)
         return
-    snap = pool[["play_key", "player", "market", "bet_side", "line", "best_book", "best_display_odds", "true_edge", "realistic_ev_pct", "movement_note"]].copy()
-    snap["qualified"] = True
+    snap = df[[
+        "play_key", "player", "market", "bet_side", "line", "best_book", "best_display_odds",
+        "true_edge", "realistic_ev_pct", "movement_note", "tier", "predicted_clv_pct"
+    ]].copy()
+    snap["qualified"] = snap["tier"].eq("Qualified")
     save_df(snap, SNAPSHOT_FILE)
 
+# -----------------------------
+# Bet log helpers
+# -----------------------------
 def add_bet_to_log(row):
     log = load_bet_log()
     new_row = {
@@ -457,6 +554,9 @@ def add_bet_to_log(row):
         "stake_$": row["single_stake_$"],
         "edge_pct": row["true_edge"] * 100,
         "ev_pct": row["realistic_ev_pct"],
+        "tier": row["tier"],
+        "bet_decision": row["bet_decision"],
+        "predicted_clv_pct": row["predicted_clv_pct"],
         "result": "Pending",
         "profit_u": 0.0,
         "closing_odds": np.nan,
@@ -490,24 +590,42 @@ def tracker_summary(log):
     avg_clv = 0.0 if pd.isna(avg_clv) else avg_clv
     return {"bets": int(len(log)), "wins": wins, "losses": losses, "pushes": pushes, "profit_u": round(profit_u, 2), "roi_pct": round(roi_pct, 1), "win_rate": round(win_rate, 1), "avg_clv": round(avg_clv, 2)}
 
+# -----------------------------
+# UI helpers
+# -----------------------------
 def render_metric_box(label, value):
     st.markdown(f'<div class="metric-box"><div class="metric-label">{label}</div><div class="metric-value">{value}</div></div>', unsafe_allow_html=True)
 
 def render_best_bet(row):
     st.markdown("## 🔥 Best Bet")
     st.markdown(f"### {row['player']} — {row['bet_side']} {row['line']} {row['market']}")
-    st.markdown(f"**Current Odds:** {fmt_american(row['odds'])} | **Best Odds:** {fmt_american(row['best_display_odds'])} ({row['best_book']}) | **EV:** {row['realistic_ev_pct']:.1f}%")
-    c1, c2, c3 = st.columns(3)
+    st.markdown(
+        f"**Current Odds:** {fmt_american(row['odds'])} | "
+        f"**Best Odds:** {fmt_american(row['best_display_odds'])} ({row['best_book']}) | "
+        f"**EV:** {row['realistic_ev_pct']:.1f}% | "
+        f"**Predicted CLV:** {row['predicted_clv_pct']:.2f}%"
+    )
+    c1, c2, c3, c4 = st.columns(4)
     with c1: render_metric_box("Hit %", f"{row['realistic_hit_prob']*100:.0f}%")
     with c2: render_metric_box("Edge", f"{row['true_edge']*100:.1f}%")
     with c3: render_metric_box("Stake", f"{row['single_stake_u']:.2f}u")
+    with c4: render_metric_box("Decision", row["bet_decision"])
     st.progress(float(row["realistic_hit_prob"]))
 
 def render_compact_play(row):
-    st.markdown(f"**{row['player']} — {row['bet_side']} {row['line']} {row['market']}**")
-    st.caption(f"Best {fmt_american(row['best_display_odds'])} ({row['best_book']}) | EV {row['realistic_ev_pct']:.1f}% | Edge {row['true_edge']*100:.1f}% | Stake {row['single_stake_u']:.2f}u | {row['movement_note']}")
-    st.divider()
+    box_class = "good-box" if row["tier"] == "Qualified" else "watch-box"
+    st.markdown(
+        f'<div class="{box_class}"><b>{row["tier"]}</b> • {row["bet_decision"]}<br>'
+        f'{row["player"]} — {row["bet_side"]} {row["line"]} {row["market"]}<br>'
+        f'Best {fmt_american(row["best_display_odds"])} ({row["best_book"]}) | '
+        f'EV {row["realistic_ev_pct"]:.1f}% | Edge {row["true_edge"]*100:.1f}% | '
+        f'Stake {row["single_stake_u"]:.2f}u | Pred. CLV {row["predicted_clv_pct"]:.2f}%</div>',
+        unsafe_allow_html=True
+    )
 
+# -----------------------------
+# Sample data
+# -----------------------------
 def sample_data():
     return pd.DataFrame([
         {"player": "Stephen Curry", "team": "GSW", "opponent": "LAL", "matchup": "Warriors vs Lakers", "market": "points", "bet_side": "Over", "line": 27.0, "projection": 32.2, "odds": -115, "open_odds": -102, "book": "DraftKings", "starter": True, "minutes": 35, "spread": -2.5, "pace": 102.4, "usage": 31.0, "last5_avg": 33.1, "defense_rank": 24, "minutes_volatility": 2.1, "odds_fanduel": -112, "odds_draftkings": -115, "odds_betmgm": -108, "odds_caesars": -110},
@@ -521,22 +639,28 @@ def sample_data():
 def load_uploaded_csv(file):
     return pd.read_csv(file)
 
-st.title("🏀 Sports AI Betting Dashboard V9.6")
-st.caption("Fallback plays, CLV tracking, and alerts only after scheduled windows or manual refresh.")
+# -----------------------------
+# App
+# -----------------------------
+st.title("🏀 Sports AI Betting Dashboard V10")
+st.caption("Auto-sized fallback tiers, predicted CLV, and upgrade alerts only after scheduled windows or manual refresh.")
 
 with st.sidebar:
     st.markdown("### Data")
     uploaded = st.file_uploader("Upload CSV", type=["csv"])
     use_sample = st.toggle("Use sample data", value=uploaded is None)
+
     st.markdown("### Live Control")
     live_mode = st.selectbox("Live mode", ["OFF", "Manual Only", "Scheduled (3x daily)"])
     scheduled_windows = st.multiselect("Scheduled windows", list(SCHEDULE_WINDOWS.keys()), default=["5:00 AM ET", "1:00 PM ET", "5:30 PM ET"])
     top_live_checks = st.slider("Top plays to live-check", 1, 5, 3)
     min_live_edge = st.slider("Minimum edge % for live-check", 0.0, 10.0, 5.0, 0.5)
     manual_refresh = st.button("Refresh Top Plays Only")
+
     st.markdown("### Bankroll")
     bankroll = st.number_input("Bankroll ($)", min_value=100, max_value=100000, value=1000, step=50)
     max_single_pct = st.slider("Max bankroll % per single", 0.25, 3.0, 1.25, 0.25) / 100.0
+
     st.markdown("### Engine")
     min_score = st.slider("Min approval score", 55, 90, 64)
     min_edge = st.slider("Min true edge %", 0.0, 15.0, 2.0, 0.5)
@@ -547,7 +671,12 @@ with st.sidebar:
 used_calls = get_today_calls()
 remaining_calls = get_remaining_calls()
 status = call_status_label(used_calls)
-st.markdown(f'<div class="banner"><div><b>API Calls Used Today:</b> {used_calls} / {MAX_DAILY_CALLS}</div><div><b>Remaining:</b> {remaining_calls}</div><div><b>Status:</b> {status}</div><div><b>Eastern Time:</b> {current_et_label()}</div></div>', unsafe_allow_html=True)
+st.markdown(
+    f'<div class="banner"><div><b>API Calls Used Today:</b> {used_calls} / {MAX_DAILY_CALLS}</div>'
+    f'<div><b>Remaining:</b> {remaining_calls}</div><div><b>Status:</b> {status}</div>'
+    f'<div><b>Eastern Time:</b> {current_et_label()}</div></div>',
+    unsafe_allow_html=True
+)
 st.progress(min(used_calls / MAX_DAILY_CALLS, 1.0))
 
 base_df = ensure_columns(load_uploaded_csv(uploaded) if (uploaded and not use_sample) else sample_data())
@@ -576,8 +705,10 @@ scored = compute_scores(base_df, bankroll=float(bankroll), max_single_pct=float(
 
 with st.expander("⚙️ Filters", expanded=False):
     c1, c2 = st.columns(2)
-    with c1: starters_only = st.toggle("Starters only", value=True)
-    with c2: min_minutes = st.slider("Min minutes", 0, 40, 0)
+    with c1:
+        starters_only = st.toggle("Starters only", value=True)
+    with c2:
+        min_minutes = st.slider("Min minutes", 0, 40, 0)
     odds_preset = st.selectbox("Odds Range", ["All", "-300 to +200", "-200 to +150", "Plus Money Only"])
 
 filtered = scored.copy()
@@ -591,79 +722,88 @@ elif odds_preset == "-200 to +150":
 elif odds_preset == "Plus Money Only":
     filtered = filtered[filtered["best_display_odds"] > 0]
 
-pool = approved_pool(filtered)
-pool = pool[(pool["consensus_score"] >= min_score) & ((pool["true_edge"] * 100) >= min_edge) & (pool["realistic_ev_pct"] >= min_ev)].copy()
-pool = apply_game_exposure_limit(pool, max_per_game=max_per_game)
+qualified = approved_pool(filtered)
+qualified = qualified[(qualified["consensus_score"] >= min_score) & ((qualified["true_edge"] * 100) >= min_edge) & (qualified["realistic_ev_pct"] >= min_ev)].copy()
+qualified = apply_game_exposure_limit(qualified, max_per_game=max_per_game)
 
 if sharp_mode:
-    pool = pool[(pool["confidence_grade"].isin(["A+ ELITE", "A STRONG"])) & (pool["consensus_action"] == "Bet")].copy()
-    pool = pool.sort_values(["rank_score", "realistic_ev_pct"], ascending=False).head(3)
+    qualified = qualified[(qualified["confidence_grade"].isin(["A+ ELITE", "A STRONG"])) & (qualified["consensus_action"] == "Bet")].copy()
+    qualified = qualified.sort_values(["rank_score", "realistic_ev_pct"], ascending=False).head(3)
+
+all_ranked = filtered.sort_values(["rank_score", "realistic_ev_pct", "true_edge"], ascending=False).reset_index(drop=True)
 
 if refresh_reason:
-    alerts_to_show = create_alerts(previous_snapshot, pool, refresh_window)
-    save_snapshot_from_pool(pool)
+    alerts_to_show = create_alerts(previous_snapshot, all_ranked.head(8), qualified, refresh_window)
+    save_snapshot_from_df(all_ranked.head(8))
 elif previous_snapshot.empty:
-    save_snapshot_from_pool(pool)
+    save_snapshot_from_df(all_ranked.head(8))
 
 if alerts_to_show:
     st.markdown("## 🔔 Alerts")
     for a in alerts_to_show:
         st.markdown(f'<div class="alert-box">{a}</div>', unsafe_allow_html=True)
 
-fallback_pool = filtered.sort_values(["rank_score", "realistic_ev_pct", "true_edge"], ascending=False).head(3).copy()
-if not fallback_pool.empty:
-    fallback_pool["fallback_label"] = np.where(
-        fallback_pool["consensus_score"] >= max(min_score - 3, 55),
-        "⚠️ Near threshold",
-        np.where(fallback_pool["realistic_ev_pct"] >= max(min_ev - 1, 0), "🟡 Monitor", "🔍 Needs line movement")
-    )
+fallback_pool = all_ranked[all_ranked["tier"] != "Qualified"].head(3).copy()
 
-if pool.empty:
-    st.warning("No plays qualify under the current V9.6 filters.")
+if qualified.empty:
+    st.warning("No qualified plays under the current V10 filters.")
+
     st.markdown("## 🔎 Fallback Plays")
     for _, row in fallback_pool.iterrows():
-        st.markdown(f'<div class="watch-box"><b>{row["fallback_label"]}</b><br>{row["player"]} — {row["bet_side"]} {row["line"]} {row["market"]}<br>Best {fmt_american(row["best_display_odds"])} ({row["best_book"]}) | EV {row["realistic_ev_pct"]:.1f}% | Edge {row["true_edge"]*100:.1f}%</div>', unsafe_allow_html=True)
+        render_compact_play(row)
+
+    st.markdown("## 💰 Suggested Fallback Stakes")
+    for _, row in fallback_pool.iterrows():
+        st.write(f"**{row['player']}** — {row['tier']} • {row['bet_decision']} • Stake {row['single_stake_u']:.2f}u • Pred. CLV {row['predicted_clv_pct']:.2f}%")
+
     st.stop()
 
-pool = pool.sort_values(["rank_score", "realistic_ev_pct", "true_edge"], ascending=False).reset_index(drop=True)
-tops = unique_top_plays(pool)
+qualified = qualified.sort_values(["rank_score", "realistic_ev_pct", "true_edge"], ascending=False).reset_index(drop=True)
+tops = unique_top_plays(qualified)
 best_play, safe_play, edge_play = tops["best"], tops["safe"], tops["edge"]
-best_parlay = build_best_parlay(pool, leg_size=2)
+best_parlay = build_best_parlay(qualified, leg_size=2)
 
-best_play_html = (
-    '<div class="banner">'
-    f'<div><b>Approved Plays:</b> {len(pool)}</div>'
+st.markdown(
+    f'<div class="banner"><div><b>Qualified Plays:</b> {len(qualified)}</div>'
     f'<div><b>Best Play:</b> {best_play["player"]} {best_play["bet_side"]} {best_play["line"]} {best_play["market"]}</div>'
     f'<div><b>Safest Play:</b> {safe_play["player"]} ({safe_play["realistic_hit_prob"]*100:.1f}%)</div>'
     f'<div><b>Highest Edge:</b> {edge_play["player"]} ({edge_play["true_edge"]*100:.1f}%)</div>'
-    f'<div><b>Line Shop:</b> {best_play["best_book"]} {fmt_american(best_play["best_display_odds"])}</div>'
-    '</div>'
+    f'<div><b>Line Shop:</b> {best_play["best_book"]} {fmt_american(best_play["best_display_odds"])}</div></div>',
+    unsafe_allow_html=True
 )
-st.markdown(best_play_html, unsafe_allow_html=True)
 
 render_best_bet(best_play)
 
-st.markdown("## 📋 Other Plays")
-for _, row in pool.iloc[1:4].iterrows():
+st.markdown("## ✅ Qualified Plays")
+for _, row in qualified.iterrows():
     render_compact_play(row)
 
+if not fallback_pool.empty:
+    st.markdown("## 🔎 Fallback Plays")
+    for _, row in fallback_pool.iterrows():
+        render_compact_play(row)
+
 st.markdown("## ✅ Add To Bet Log")
-cols = st.columns(min(3, len(pool)))
-for i, (_, row) in enumerate(pool.head(3).iterrows()):
-    with cols[i]:
+track_rows = pd.concat([qualified.head(3), fallback_pool.head(2)], ignore_index=True).drop_duplicates(subset=["play_key"])
+cols = st.columns(min(3, len(track_rows))) if len(track_rows) > 0 else []
+for i, (_, row) in enumerate(track_rows.iterrows()):
+    with cols[i % len(cols)]:
         if st.button(f"Track {row['player']}", key=f"track_{i}"):
             add_bet_to_log(row)
             st.success(f"Added {row['player']} to bet log.")
 
 st.markdown("## 💰 Bankroll")
-c1, c2, c3 = st.columns(3)
-with c1: render_metric_box("Top Stake", f"{best_play['single_stake_u']:.2f}u")
+c1, c2, c3, c4 = st.columns(4)
+with c1:
+    render_metric_box("Top Stake", f"{best_play['single_stake_u']:.2f}u")
 with c2:
     parlay_units = 0.75 if not best_parlay else min(1.00, max(0.25, best_parlay["ev_pct"] / 20))
     render_metric_box("Parlay Stake", f"{parlay_units:.2f}u")
 with c3:
     roi_est = (best_play["realistic_ev_pct"] * 0.55) + ((best_parlay["ev_pct"] if best_parlay else 0) * 0.45)
     render_metric_box("ROI", f"{min(roi_est, 42.0):.1f}%")
+with c4:
+    render_metric_box("Pred. CLV", f"{best_play['predicted_clv_pct']:.2f}%")
 
 if best_parlay:
     legs_txt = " + ".join([f"{x['player']} {x['bet_side']} {x['line']}" for x in best_parlay["legs"]])
@@ -682,6 +822,7 @@ else:
     with s2: render_metric_box("Profit", f"{summary['profit_u']:.2f}u")
     with s3: render_metric_box("ROI", f"{summary['roi_pct']:.1f}%")
     with s4: render_metric_box("Avg CLV", f"{summary['avg_clv']:.2f}%")
+
     editable = bet_log.copy()
     for idx in editable.index:
         title = f'{editable.loc[idx, "player"]} • {editable.loc[idx, "market"]} • {editable.loc[idx, "bet_side"]} {editable.loc[idx, "line"]}'
@@ -702,15 +843,14 @@ else:
                     editable.loc[idx, "clv_placed_vs_close_pct"] = np.nan
                 save_df(editable, BET_LOG_FILE)
                 st.success("Bet updated.")
+
     display_log = load_bet_log().copy()
     if not display_log.empty:
-        display_log["placed_odds"] = display_log["placed_odds"].apply(lambda x: fmt_american(x) if pd.notna(x) else "—")
-        display_log["best_odds"] = display_log["best_odds"].apply(lambda x: fmt_american(x) if pd.notna(x) else "—")
-        display_log["closing_odds"] = display_log["closing_odds"].apply(lambda x: fmt_american(x) if pd.notna(x) else "—")
-        display_log["edge_pct"] = pd.to_numeric(display_log["edge_pct"], errors="coerce").round(1).astype(str) + "%"
-        display_log["ev_pct"] = pd.to_numeric(display_log["ev_pct"], errors="coerce").round(1).astype(str) + "%"
+        for col in ["placed_odds", "best_odds", "closing_odds"]:
+            display_log[col] = display_log[col].apply(lambda x: fmt_american(x) if pd.notna(x) else "—")
+        for col in ["edge_pct", "ev_pct", "predicted_clv_pct", "clv_placed_vs_close_pct"]:
+            display_log[col] = pd.to_numeric(display_log[col], errors="coerce").apply(lambda x: f"{x:.2f}%" if pd.notna(x) else "—")
         display_log["stake_u"] = pd.to_numeric(display_log["stake_u"], errors="coerce").round(2).astype(str) + "u"
-        display_log["clv_placed_vs_close_pct"] = display_log["clv_placed_vs_close_pct"].apply(lambda x: f"{x:.2f}%" if pd.notna(x) else "—")
         st.dataframe(display_log, use_container_width=True, hide_index=True)
 
 st.markdown("## 📢 Alert Log")
@@ -727,4 +867,4 @@ if call_log.empty:
 else:
     st.dataframe(call_log.sort_index(ascending=False), use_container_width=True, hide_index=True)
 
-st.caption("V9.6: fallback plays, CLV tracking, and alerts only after scheduled windows or manual refresh.")
+st.caption("V10: auto-sized fallback tiers, CLV prediction, and upgrade alerts active.")

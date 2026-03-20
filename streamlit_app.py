@@ -567,7 +567,7 @@ def add_multi_ai_consensus(df: pd.DataFrame) -> pd.DataFrame:
     ).round(1)
 
     out["model_agreement_pct"] = (
-        (out[model_cols] >= 70).sum(axis=1) / len(model_cols) * 100
+        (out[model_cols] >= 65).sum(axis=1) / len(model_cols) * 100
     ).round(0)
 
     out["consensus_tier"] = out["consensus_score"].apply(consensus_tier)
@@ -929,7 +929,7 @@ with c2:
 with c3:
     only_starters_global = st.toggle("Starters only (global)", value=False)
 with c4:
-    min_consensus = st.slider("Minimum consensus", 0, 95, 60)
+    min_consensus = st.slider("Minimum consensus", 0, 95, 55)
 
 filtered = model_df.copy()
 if selected_books:
@@ -954,7 +954,7 @@ with tabs[0]:
     left, right = st.columns([1, 2])
 
     with left:
-        min_agreement = st.slider("Minimum agreement %", 0, 100, 60)
+        min_agreement = st.slider("Minimum agreement %", 0, 100, 50)
         action_filter = st.multiselect(
             "Consensus action",
             ["Bet", "Lean", "Pass"],
@@ -967,7 +967,8 @@ with tabs[0]:
 
     with right:
         if consensus_df.empty:
-            st.info("No plays match the current consensus filters.")
+            st.warning("No plays match filters — showing top available plays instead.")
+            consensus_df = filtered.sort_values(["consensus_score"], ascending=False).head(5)
         else:
             ranked = consensus_df.sort_values(["consensus_score", "model_agreement_pct"], ascending=False)
             st.dataframe(

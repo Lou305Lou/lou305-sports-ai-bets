@@ -1,118 +1,1199 @@
 
-# ===============================
-# V11 MULTI-AI PREDICTION ENGINE
-# ===============================
-
 import math
+import itertools
+import os
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 import numpy as np
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Sports AI Betting Dashboard V11", layout="wide")
+st.set_page_config(page_title="Sports AI Betting Dashboard V11.1 PRO FUSION", layout="wide")
+
+CALL_LOG_FILE = "api_call_log.csv"
+BET_LOG_FILE = "bet_log.csv"
+ALERT_LOG_FILE = "alert_log.csv"
+SNAPSHOT_FILE = "play_snapshot.csv"
+MODEL_PERF_FILE = "model_perf_log.csv"
+
+MAX_DAILY_CALLS = 500
+ET_TZ = ZoneInfo("America/New_York")
+SCHEDULE_WINDOWS = {
+    "5:00 AM ET": (5, 0),
+    "1:00 PM ET": (13, 0),
+    "5:30 PM ET": (17, 30),
+}
 
 # -----------------------------
-# MODEL 1: PROJECTION MODEL
+# Helpers
 # -----------------------------
-def model_projection(row):
-    proj = row.get("projection", 0)
-    line = row.get("line", 0)
-    edge = proj - line
-    return edge
+def safe_float(v, default=np.nan):
+    try:
+        if pd.isna(v):
+            return default
+        return float(v)
+    except Exception:
+        return default
+
+def clamp01(x):
+    return max(0.0, min(1.0, x))
+
+def normalize_score(x, min_val, max_val):
+    x = safe_float(x, np.nan)
+    if pd.isna(x):
+        return 0.0
+    if max_val == min_val:
+        return 50.0
+    val = (x - min_val) / (max_val - min_val) * 100.0
+    return round(max(0.0, min(100.0, val)), 1)
+
+def american_to_decimal(odds):
+    odds = safe_float(odds)
+    if pd.isna(odds):
+        return np.nan
+    return 1 + (odds / 100) if odds > 0 else 1 + (100 / abs(odds))
+
+def american_to_implied_prob(odds):
+    odds = safe_float(odds)
+    if pd.isna(odds):
+        return np.nan
+    return 100 / (odds + 100) if odds > 0 else abs(odds) / (abs(odds) + 100)
+
+def decimal_to_american(dec):
+    dec = safe_float(dec)
+    if pd.isna(dec) or dec <= 1:
+        return np.nan
+    if dec >= 2:
+        return round((dec - 1) * 100)
+    return round(-100 / (dec - 1))
+
+def normal_cdf(x):
+    return 0.5 * (1 + math.erf(x / math.sqrt(2)))
+
+def fmt_american(v):
+    if pd.isna(v):
+        return "—"
+    v = int(round(v))
+    return f"+{v}" if v > 0 else str(v)
+
+def et_now():
+    return datetime.now(ET_TZ)
+
+def today_et_str():
+    return et_now().strftime("%Y-%m-%d")
+
+def current_et_label():
+    return et_now().strftime("%Y-%m-%d %I:%M %p ET")
 
 # -----------------------------
-# MODEL 2: MARKET MODEL
+# Styles
 # -----------------------------
-def model_market(row):
-    open_odds = row.get("open_odds", row.get("odds"))
-    current_odds = row.get("odds")
-    if open_odds is None or current_odds is None:
+st.markdown("""
+<style>
+.block-container {padding-top: 1rem; padding-bottom: 4rem; max-width: 1180px;}
+.banner {
+    border:1px solid rgba(148,163,184,.24);
+    border-radius:22px;
+    padding:16px;
+    background: linear-gradient(135deg, #f8fafc 0%, #eff6ff 100%);
+    margin-bottom: 14px;
+}
+.metric-box {
+    border:1px solid rgba(148,163,184,.22);
+    border-radius:18px;
+    background: rgba(255,255,255,.98);
+    padding:12px 14px;
+    min-height: 86px;
+    margin-bottom:10px;
+}
+.metric-label {font-size:.88rem; color:#6b7280; margin-bottom:6px;}
+.metric-value {font-size:1.65rem; line-height:1.05; font-weight:800;}
+.alert-box {
+    border:1px solid rgba(245,158,11,.35);
+    border-radius:18px;
+    padding:14px;
+    background: #fff7ed;
+    margin-bottom: 12px;
+}
+.watch-box {
+    border:1px solid rgba(59,130,246,.28);
+    border-radius:18px;
+    padding:14px;
+    background: #eff6ff;
+    margin-bottom: 12px;
+}
+.good-box {
+    border:1px solid rgba(34,197,94,.28);
+    border-radius:18px;
+    padding:14px;
+    background: #f0fdf4;
+    margin-bottom: 12px;
+}
+.pass-box {
+    border:1px solid rgba(239,68,68,.20);
+    border-radius:18px;
+    padding:14px;
+    background: #fef2f2;
+    margin-bottom: 12px;
+}
+.small-muted {color:#6b7280; font-size:.94rem;}
+</style>
+""", unsafe_allow_html=True)
+
+# -----------------------------
+# Persistence
+# -----------------------------
+def load_csv_file(path, columns):
+    if os.path.exists(path):
+        try:
+            return pd.read_csv(path)
+        except Exception:
+            pass
+    return pd.DataFrame(columns=columns)
+
+def save_df(df, path):
+    df.to_csv(path, index=False)
+
+def load_call_log():
+    return load_csv_file(CALL_LOG_FILE, ["timestamp_et", "date_et", "window", "reason", "call_count"])
+
+def load_bet_log():
+    return load_csv_file(BET_LOG_FILE, [
+        "timestamp", "player", "market", "bet_side", "line", "book", "best_book",
+        "placed_odds", "best_odds", "stake_u", "stake_$", "edge_pct", "ev_pct",
+        "tier", "bet_decision", "predicted_clv_pct", "agreement_count", "ensemble_score",
+        "result", "profit_u", "closing_odds", "clv_placed_vs_close_pct", "notes"
+    ])
+
+def load_alert_log():
+    return load_csv_file(ALERT_LOG_FILE, ["timestamp_et", "date_et", "window", "play_key", "alert_type", "message"])
+
+def load_snapshot():
+    return load_csv_file(SNAPSHOT_FILE, [
+        "play_key", "player", "market", "bet_side", "line", "best_book", "best_display_odds",
+        "true_edge", "realistic_ev_pct", "movement_note", "tier", "qualified", "predicted_clv_pct",
+        "ensemble_score", "agreement_count"
+    ])
+
+def load_model_perf():
+    return load_csv_file(MODEL_PERF_FILE, [
+        "model", "weight", "bets_tracked", "wins", "losses", "win_rate_pct", "avg_clv_pct", "suggested_weight"
+    ])
+
+def log_api_call(reason, call_count=1, window=""):
+    log = load_call_log()
+    row = {
+        "timestamp_et": current_et_label(),
+        "date_et": today_et_str(),
+        "window": window,
+        "reason": reason,
+        "call_count": call_count,
+    }
+    log = pd.concat([log, pd.DataFrame([row])], ignore_index=True)
+    save_df(log, CALL_LOG_FILE)
+
+def log_alert(window, play_key, alert_type, message):
+    log = load_alert_log()
+    row = {
+        "timestamp_et": current_et_label(),
+        "date_et": today_et_str(),
+        "window": window,
+        "play_key": play_key,
+        "alert_type": alert_type,
+        "message": message,
+    }
+    log = pd.concat([log, pd.DataFrame([row])], ignore_index=True)
+    save_df(log, ALERT_LOG_FILE)
+
+def get_today_calls():
+    log = load_call_log()
+    if log.empty:
         return 0
-    move = current_odds - open_odds
-    return -move  # better if odds shorten
+    return int(pd.to_numeric(log.loc[log["date_et"] == today_et_str(), "call_count"], errors="coerce").fillna(0).sum())
+
+def get_remaining_calls():
+    return max(0, MAX_DAILY_CALLS - get_today_calls())
+
+def call_status_label(used):
+    pct = used / MAX_DAILY_CALLS if MAX_DAILY_CALLS else 0
+    if pct >= 0.95:
+        return "🔴 Hard stop"
+    if pct >= 0.80:
+        return "🟠 Warning"
+    return "🟢 Safe"
+
+def was_window_run_today(window_name):
+    log = load_call_log()
+    if log.empty:
+        return False
+    return bool(((log["date_et"] == today_et_str()) & (log["window"] == window_name)).any())
+
+def should_run_window(window_name):
+    hour, minute = SCHEDULE_WINDOWS[window_name]
+    now = et_now()
+    if now.hour > hour or (now.hour == hour and now.minute >= minute):
+        return not was_window_run_today(window_name)
+    return False
 
 # -----------------------------
-# MODEL 3: CLV MODEL
+# Engine prep
 # -----------------------------
-def model_clv(row):
-    edge = model_projection(row)
-    return max(0, edge * 0.5)
+def ensure_columns(df):
+    df = df.copy()
+    defaults = {
+        "player": "", "team": "", "opponent": "", "matchup": "", "market": "",
+        "bet_side": "", "line": np.nan, "projection": np.nan, "odds": np.nan,
+        "book": "", "starter": False, "minutes": np.nan, "std_dev": np.nan,
+        "spread": np.nan, "pace": np.nan, "usage": np.nan, "open_odds": np.nan,
+        "last5_avg": np.nan, "defense_rank": np.nan, "minutes_volatility": np.nan,
+        "odds_fanduel": np.nan, "odds_draftkings": np.nan, "odds_betmgm": np.nan, "odds_caesars": np.nan
+    }
+    for col, val in defaults.items():
+        if col not in df.columns:
+            df[col] = val
+    for c in ["player", "team", "opponent", "matchup", "market", "bet_side", "book"]:
+        df[c] = df[c].fillna("").astype(str).str.strip()
+    num_cols = ["line", "projection", "odds", "minutes", "std_dev", "spread", "pace", "usage",
+                "open_odds", "last5_avg", "defense_rank", "minutes_volatility",
+                "odds_fanduel", "odds_draftkings", "odds_betmgm", "odds_caesars"]
+    for c in num_cols:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    df["starter"] = df["starter"].fillna(False).astype(bool)
+    if (df["matchup"] == "").any():
+        auto_match = df["team"].fillna("") + np.where(df["opponent"].fillna("") != "", " vs " + df["opponent"].fillna(""), "")
+        df.loc[df["matchup"] == "", "matchup"] = auto_match[df["matchup"] == ""]
+    return df
+
+def infer_market_std(row):
+    supplied = row.get("std_dev")
+    if pd.notna(supplied) and supplied > 0:
+        return float(supplied)
+    market = str(row.get("market", "")).lower()
+    defaults = {"points": 8.5, "rebounds": 4.0, "assists": 3.6, "pra": 9.0, "threes": 2.4, "3pm": 2.4}
+    for k, v in defaults.items():
+        if k in market:
+            return v
+    return 7.5
+
+def infer_bet_side(row):
+    side = str(row.get("bet_side", "")).title()
+    if side in {"Over", "Under"}:
+        return side
+    p, l = row.get("projection"), row.get("line")
+    if pd.isna(p) or pd.isna(l):
+        return "Over"
+    return "Over" if p >= l else "Under"
+
+def calculate_hit_probability(row):
+    p, l = row.get("projection"), row.get("line")
+    if pd.isna(p) or pd.isna(l):
+        return np.nan
+    std = infer_market_std(row)
+    z = (p - l) / std if std > 0 else 0
+    p_over = normal_cdf(z)
+    return clamp01(1 - p_over if infer_bet_side(row) == "Under" else p_over)
+
+def best_book_and_odds(row):
+    books = {
+        "FanDuel": safe_float(row.get("odds_fanduel"), np.nan),
+        "DraftKings": safe_float(row.get("odds_draftkings"), np.nan),
+        "BetMGM": safe_float(row.get("odds_betmgm"), np.nan),
+        "Caesars": safe_float(row.get("odds_caesars"), np.nan),
+    }
+    valid = {k: v for k, v in books.items() if not pd.isna(v)}
+    if not valid:
+        return (str(row.get("book", "")).strip() or "Current Book", safe_float(row.get("odds"), np.nan))
+    best_book, best_prob, best_odds = None, None, np.nan
+    for bk, od in valid.items():
+        ip = american_to_implied_prob(od)
+        if pd.isna(ip):
+            continue
+        if best_prob is None or ip < best_prob:
+            best_prob = ip
+            best_book = bk
+            best_odds = od
+    return best_book, best_odds
+
+def movement_label(delta_implied_pct):
+    if pd.isna(delta_implied_pct):
+        return "No move"
+    if delta_implied_pct >= 4:
+        return "🔥 Strong steam"
+    if delta_implied_pct >= 2:
+        return "📈 Steam"
+    if delta_implied_pct <= -4:
+        return "🧊 Reverse move"
+    if delta_implied_pct <= -2:
+        return "↩️ Soft reverse"
+    return "⏳ Stable"
 
 # -----------------------------
-# MODEL 4: GAME SCRIPT MODEL
+# Raw models
 # -----------------------------
-def model_gamescript(row):
-    spread = row.get("spread", 0)
-    usage = row.get("usage", 0)
-    return (usage * 0.1) + (abs(spread) * 0.05)
+def raw_projection_edge(row):
+    proj = safe_float(row.get("projection"), np.nan)
+    line = safe_float(row.get("line"), np.nan)
+    if pd.isna(proj) or pd.isna(line):
+        return 0.0
+    return proj - line
+
+def raw_market_intel(row):
+    best_odds = safe_float(row.get("best_display_odds"), np.nan)
+    open_odds = safe_float(row.get("open_odds"), np.nan)
+    if pd.isna(best_odds):
+        return 0.0
+    best_ip = american_to_implied_prob(best_odds)
+    open_ip = american_to_implied_prob(open_odds) if not pd.isna(open_odds) else best_ip
+    move = (open_ip - best_ip) * 100
+    if "Steam" in str(row.get("movement_note", "")):
+        move += 1.5
+    return move
+
+def raw_clv_predictor(row):
+    move = safe_float(row.get("line_move_pct"), 0.0)
+    edge = safe_float(row.get("true_edge"), 0.0) * 100
+    return move * 0.8 + edge * 0.5
+
+def raw_game_script(row):
+    pace = safe_float(row.get("pace"), 98.0)
+    usage = safe_float(row.get("usage"), 22.0)
+    spread = abs(safe_float(row.get("spread"), 0.0))
+    market = str(row.get("market", "")).lower()
+    raw = 0.0
+    raw += (pace - 98) * 0.8
+    raw += max(usage - 22, 0) * 0.45
+    raw += 2.5 if spread <= 5 else (-2.5 if spread >= 10 else 0.0)
+    raw += 1.5 if ("points" in market or "pra" in market) else 0.0
+    return raw
+
+def raw_variance_risk(row):
+    starter = bool(row.get("starter", False))
+    minutes = safe_float(row.get("minutes"), 0.0)
+    mv = safe_float(row.get("minutes_volatility"), 3.0)
+    market = str(row.get("market", "")).lower()
+    raw = 0.0
+    raw += 3.0 if starter else -4.0
+    raw += max(minutes - 28, 0) * 0.30
+    raw -= mv * 1.0
+    raw -= 2.0 if ("threes" in market or "3pm" in market) else 0.0
+    return raw
+
+def predicted_clv_pct_from_score(model_clv_score):
+    return round(max(0.0, (safe_float(model_clv_score, 0) - 50) / 12), 2)
 
 # -----------------------------
-# MODEL 5: VARIANCE MODEL
+# Decision layers
 # -----------------------------
-def model_variance(row):
-    minutes = row.get("minutes", 0)
-    volatility = row.get("minutes_volatility", 2)
-    return max(0, (minutes / 36) - (volatility * 0.2))
+def agreement_count(row):
+    vals = [
+        safe_float(row.get("model_projection"), 0),
+        safe_float(row.get("model_market"), 0),
+        safe_float(row.get("model_clv"), 0),
+        safe_float(row.get("model_script"), 0),
+        safe_float(row.get("model_variance"), 0),
+    ]
+    return int(sum(v >= 60 for v in vals))
+
+def confidence_grade_from_ensemble(ensemble):
+    if ensemble >= 82:
+        return "A+ ELITE"
+    if ensemble >= 74:
+        return "A STRONG"
+    if ensemble >= 66:
+        return "B+ VALUE"
+    if ensemble >= 58:
+        return "B LEAN"
+    return "C PASS"
+
+def tier_and_decision(row):
+    ensemble = safe_float(row.get("ensemble_score"), 0.0)
+    edge = safe_float(row.get("true_edge"), 0.0) * 100
+    ev = safe_float(row.get("realistic_ev_pct"), 0.0)
+    clv = safe_float(row.get("predicted_clv_pct"), 0.0)
+    agree = int(row.get("agreement_count", 0))
+    starter = bool(row.get("starter", False))
+
+    if ensemble >= 76 and agree >= 4 and edge >= 3.5 and ev >= 2:
+        return "Qualified", "Auto Bet"
+    if ensemble >= 68 and agree >= 3 and starter and edge >= 8 and ev >= 10:
+        return "Near threshold", "Strong Bet"
+    if ensemble >= 58 and agree >= 3 and ev >= 7 and clv >= 0.8:
+        return "Monitor", "Lean"
+    return "Needs line movement", "Pass"
+
+def stake_multiplier_by_tier(tier):
+    return {
+        "Qualified": 1.00,
+        "Near threshold": 0.65,
+        "Monitor": 0.35,
+        "Needs line movement": 0.00,
+    }.get(tier, 0.00)
+
+def apply_aggression_mode(df, mode):
+    out = df.copy()
+    if mode == "Conservative":
+        return out
+    if mode == "Balanced":
+        out["ensemble_score"] = (out["ensemble_score"] + 2).clip(upper=100)
+        out["realistic_ev_pct"] = out["realistic_ev_pct"] + 0.5
+        return out
+    if mode == "Aggressive":
+        out["ensemble_score"] = (out["ensemble_score"] + 4).clip(upper=100)
+        out["realistic_ev_pct"] = out["realistic_ev_pct"] + 1.0
+        out["true_edge"] = out["true_edge"] + 0.003
+        return out
+    return out
 
 # -----------------------------
-# CONSENSUS ENGINE
+# Self-learning supervised weights
 # -----------------------------
-def multi_ai_score(row):
-    scores = {
-        "projection": model_projection(row),
-        "market": model_market(row),
-        "clv": model_clv(row),
-        "gamescript": model_gamescript(row),
-        "variance": model_variance(row),
+def build_model_perf_table(base_weights):
+    bet_log = load_bet_log()
+    models = ["projection", "market", "clv", "script", "variance"]
+    rows = []
+    tracked = len(bet_log)
+    for m in models:
+        wins = int((bet_log["result"] == "Win").sum()) if not bet_log.empty else 0
+        losses = int((bet_log["result"] == "Loss").sum()) if not bet_log.empty else 0
+        settled = wins + losses
+        win_rate = (wins / settled * 100) if settled > 0 else np.nan
+        avg_clv = pd.to_numeric(bet_log["clv_placed_vs_close_pct"], errors="coerce").dropna().mean() if not bet_log.empty else np.nan
+        avg_clv = np.nan if pd.isna(avg_clv) else float(avg_clv)
+
+        current_w = base_weights[m]
+        suggested = current_w
+        if tracked >= 50 and settled >= 20:
+            adj = 0.0
+            if not pd.isna(win_rate):
+                if win_rate >= 56:
+                    adj += 0.02
+                elif win_rate <= 47:
+                    adj -= 0.02
+            if not pd.isna(avg_clv):
+                if avg_clv >= 1.0:
+                    adj += 0.01
+                elif avg_clv <= -1.0:
+                    adj -= 0.01
+            suggested = max(0.05, min(0.50, current_w + adj))
+
+        rows.append({
+            "model": m,
+            "weight": round(current_w, 3),
+            "bets_tracked": tracked,
+            "wins": wins,
+            "losses": losses,
+            "win_rate_pct": round(win_rate, 1) if not pd.isna(win_rate) else np.nan,
+            "avg_clv_pct": round(avg_clv, 2) if not pd.isna(avg_clv) else np.nan,
+            "suggested_weight": round(suggested, 3),
+        })
+    perf = pd.DataFrame(rows)
+    save_df(perf, MODEL_PERF_FILE)
+    return perf
+
+def get_effective_weights(base_weights, use_suggested):
+    perf = build_model_perf_table(base_weights)
+    if not use_suggested or perf.empty:
+        return base_weights, perf
+    eff = {row["model"]: float(row["suggested_weight"]) for _, row in perf.iterrows()}
+    total = sum(eff.values())
+    eff = {k: v / total for k, v in eff.items()}
+    return eff, perf
+
+# -----------------------------
+# Main scoring
+# -----------------------------
+def compute_scores(df, bankroll=1000, max_single_pct=0.0125, model_weights=None):
+    if model_weights is None:
+        model_weights = {
+            "projection": 0.28,
+            "market": 0.20,
+            "clv": 0.18,
+            "script": 0.18,
+            "variance": 0.16,
+        }
+
+    out = df.copy()
+    out["bet_side"] = out.apply(infer_bet_side, axis=1)
+    out["hit_prob"] = out.apply(calculate_hit_probability, axis=1)
+
+    bests = out.apply(best_book_and_odds, axis=1)
+    out["best_book"] = [x[0] for x in bests]
+    out["best_display_odds"] = [x[1] for x in bests]
+    out["implied_prob"] = out["best_display_odds"].apply(american_to_implied_prob)
+    out["true_edge"] = (out["hit_prob"] - out["implied_prob"]).round(4)
+
+    dec = out["best_display_odds"].apply(american_to_decimal)
+    out["realistic_hit_prob"] = (
+        out["hit_prob"]
+        - np.where(out["true_edge"] > 0.08, 0.03, 0.0)
+        - np.where(out["true_edge"] > 0.12, 0.03, 0.0)
+        - np.where(out["starter"], 0.0, 0.02)
+    ).clip(0.01, 0.95)
+
+    open_ip = out["open_odds"].apply(american_to_implied_prob)
+    curr_ip = out["odds"].apply(american_to_implied_prob)
+    out["line_move_pct"] = ((curr_ip - open_ip) * 100).round(2)
+    out["movement_note"] = out["line_move_pct"].apply(movement_label)
+    out["realistic_ev"] = (out["realistic_hit_prob"] * (dec - 1)) - (1 - out["realistic_hit_prob"])
+    out["realistic_ev_pct"] = (out["realistic_ev"] * 100).clip(-10, 45).round(2)
+
+    out["raw_projection"] = out.apply(raw_projection_edge, axis=1)
+    out["raw_market"] = out.apply(raw_market_intel, axis=1)
+    out["raw_clv"] = out.apply(raw_clv_predictor, axis=1)
+    out["raw_script"] = out.apply(raw_game_script, axis=1)
+    out["raw_variance"] = out.apply(raw_variance_risk, axis=1)
+
+    out["model_projection"] = out["raw_projection"].apply(lambda x: normalize_score(x, -5, 8))
+    out["model_market"] = out["raw_market"].apply(lambda x: normalize_score(x, -6, 6))
+    out["model_clv"] = out["raw_clv"].apply(lambda x: normalize_score(x, -3, 8))
+    out["model_script"] = out["raw_script"].apply(lambda x: normalize_score(x, -6, 12))
+    out["model_variance"] = out["raw_variance"].apply(lambda x: normalize_score(x, -6, 8))
+
+    out["ensemble_score"] = (
+        out["model_projection"] * model_weights["projection"]
+        + out["model_market"] * model_weights["market"]
+        + out["model_clv"] * model_weights["clv"]
+        + out["model_script"] * model_weights["script"]
+        + out["model_variance"] * model_weights["variance"]
+    ).round(1)
+
+    out["agreement_count"] = out.apply(agreement_count, axis=1)
+    out["confidence_grade"] = out["ensemble_score"].apply(confidence_grade_from_ensemble)
+    out["consensus_action"] = np.select(
+        [out["agreement_count"] >= 5, out["agreement_count"] >= 4, out["agreement_count"] >= 3],
+        ["Auto Bet", "Strong Bet", "Lean"],
+        default="Pass"
+    )
+    out["predicted_clv_pct"] = out["model_clv"].apply(predicted_clv_pct_from_score)
+
+    b = dec - 1
+    q = 1 - out["realistic_hit_prob"]
+    raw_kelly = np.where((b > 0) & out["realistic_hit_prob"].between(0.001, 0.999), np.maximum(0, (b * out["realistic_hit_prob"] - q) / b), 0)
+    mult = np.where(out["ensemble_score"] >= 76, 0.42, np.where(out["ensemble_score"] >= 66, 0.30, 0.18))
+    frac = np.minimum(raw_kelly * mult, max_single_pct)
+
+    out["base_stake_$"] = bankroll * frac
+    out["base_stake_u"] = np.where(bankroll > 0, out["base_stake_$"] / (bankroll * 0.01), 0)
+
+    tier_decisions = out.apply(tier_and_decision, axis=1)
+    out["tier"] = [x[0] for x in tier_decisions]
+    out["bet_decision"] = [x[1] for x in tier_decisions]
+    out["stake_mult"] = out["tier"].apply(stake_multiplier_by_tier)
+    out["single_stake_$"] = (out["base_stake_$"] * out["stake_mult"]).round(2)
+    out["single_stake_u"] = (out["base_stake_u"] * out["stake_mult"]).round(2)
+
+    out["rank_score"] = (
+        out["ensemble_score"] * 0.55
+        + out["realistic_ev_pct"] * 0.75
+        + (out["true_edge"] * 100) * 0.80
+        + out["predicted_clv_pct"] * 2.0
+        + out["agreement_count"] * 2.0
+    ).round(2)
+
+    out["play_key"] = out["player"].astype(str) + "|" + out["market"].astype(str) + "|" + out["bet_side"].astype(str) + "|" + out["line"].astype(str)
+    return out
+
+def approved_pool(df):
+    return df[df["tier"] == "Qualified"].copy()
+
+def apply_game_exposure_limit(df, max_per_game=2):
+    if df.empty:
+        return df
+    counts, rows = {}, []
+    for _, row in df.sort_values(["rank_score", "realistic_ev_pct"], ascending=False).iterrows():
+        matchup = str(row.get("matchup", ""))
+        counts.setdefault(matchup, 0)
+        if counts[matchup] < max_per_game:
+            rows.append(row)
+            counts[matchup] += 1
+    return pd.DataFrame(rows).reset_index(drop=True)
+
+def unique_top_plays(df):
+    if df.empty:
+        return {"best": pd.Series(dtype=object), "safe": pd.Series(dtype=object), "edge": pd.Series(dtype=object)}
+    return {
+        "best": df.sort_values(["rank_score", "realistic_ev_pct"], ascending=False).iloc[0],
+        "safe": df.sort_values(["realistic_hit_prob", "ensemble_score"], ascending=False).iloc[0],
+        "edge": df.sort_values(["true_edge", "realistic_ev_pct"], ascending=False).iloc[0],
     }
 
-    weights = {
-        "projection": 0.30,
-        "market": 0.20,
-        "clv": 0.20,
-        "gamescript": 0.15,
-        "variance": 0.15,
-    }
+def combo_corr_penalty(rows):
+    total = 0.0
+    for i in range(len(rows)):
+        for j in range(i + 1, len(rows)):
+            total += 0.12 if str(rows[i].get("matchup", "")) == str(rows[j].get("matchup", "")) else 0.0
+    return total
 
-    final_score = sum(scores[k] * weights[k] for k in scores)
-    return final_score, scores
+def build_best_parlay(df, leg_size=2):
+    if len(df) < leg_size:
+        return {}
+    top_rows = [r[1] for r in df.head(min(8, len(df))).iterrows()]
+    best = None
+    for combo in itertools.combinations(top_rows, leg_size):
+        decs = [american_to_decimal(r["best_display_odds"]) for r in combo]
+        probs = [r["realistic_hit_prob"] for r in combo]
+        if any(pd.isna(x) for x in decs) or any(pd.isna(x) for x in probs):
+            continue
+        combined_dec = float(np.prod(decs))
+        corr_pen = combo_corr_penalty(list(combo))
+        hit_prob = clamp01(float(np.prod(probs)) * (1 - corr_pen))
+        ev = hit_prob * (combined_dec - 1) - (1 - hit_prob)
+        score = min(ev * 100, 55) + hit_prob * 25 - corr_pen * 20
+        candidate = {"legs": list(combo), "odds": decimal_to_american(combined_dec), "hit_prob": hit_prob, "ev_pct": min(ev * 100, 60), "corr_pen": corr_pen, "score": score}
+        if best is None or candidate["score"] > best["score"]:
+            best = candidate
+    return best or {}
+
+def simulate_live_refresh(df, top_n, edge_threshold_pct, model_weights):
+    refreshed = df.copy()
+    pre = compute_scores(refreshed, model_weights=model_weights)
+    eligible = pre[(pre["true_edge"] * 100 >= edge_threshold_pct)].sort_values(["rank_score", "realistic_ev_pct"], ascending=False).head(top_n)
+    count = len(eligible)
+    for idx in eligible.index:
+        for col in ["odds_fanduel", "odds_draftkings", "odds_betmgm", "odds_caesars"]:
+            val = safe_float(refreshed.loc[idx, col], np.nan)
+            if not pd.isna(val):
+                refreshed.loc[idx, col] = val + np.random.choice([-2, -1, 0, 1, 2])
+        curr = safe_float(refreshed.loc[idx, "odds"], np.nan)
+        if not pd.isna(curr):
+            refreshed.loc[idx, "odds"] = curr + np.random.choice([-2, -1, 0, 1, 2])
+    return refreshed, max(1, count) if count > 0 else 0
+
+def create_alerts(previous_snapshot, current_all, current_qualified, window_name):
+    alerts = []
+    prev_map = {row["play_key"]: row for _, row in previous_snapshot.iterrows()} if not previous_snapshot.empty else {}
+    curr_all_map = {row["play_key"]: row for _, row in current_all.iterrows()} if not current_all.empty else {}
+    curr_qual_keys = set(current_qualified["play_key"].tolist()) if not current_qualified.empty else set()
+
+    for key, row in curr_all_map.items():
+        prev_row = prev_map.get(key)
+        player = row["player"]
+
+        if prev_row is None and row["tier"] == "Qualified":
+            msg = f"{player}: new qualified play entered pool."
+            alerts.append(msg); log_alert(window_name, key, "new_qualified", msg)
+            continue
+
+        if prev_row is not None:
+            prev_tier = str(prev_row.get("tier", ""))
+            prev_ens = safe_float(prev_row.get("ensemble_score"), np.nan)
+            curr_ens = safe_float(row.get("ensemble_score"), np.nan)
+            prev_book = str(prev_row.get("best_book", ""))
+            curr_book = str(row.get("best_book", ""))
+            prev_clv = safe_float(prev_row.get("predicted_clv_pct"), 0.0)
+            curr_clv = safe_float(row.get("predicted_clv_pct"), 0.0)
+
+            if prev_tier != "Qualified" and row["tier"] == "Qualified":
+                msg = f"{player}: upgraded from {prev_tier or 'watch'} to Qualified."
+                alerts.append(msg); log_alert(window_name, key, "upgrade_to_qualified", msg)
+            if not pd.isna(prev_ens) and not pd.isna(curr_ens) and curr_ens - prev_ens >= 4.0:
+                msg = f"{player}: ensemble score improved to {curr_ens:.1f}."
+                alerts.append(msg); log_alert(window_name, key, "ensemble_improved", msg)
+            if prev_book != curr_book:
+                msg = f"{player}: best book changed to {curr_book}."
+                alerts.append(msg); log_alert(window_name, key, "best_book_changed", msg)
+            if curr_clv - prev_clv >= 1.0:
+                msg = f"{player}: predicted CLV improved to {curr_clv:.2f}%."
+                alerts.append(msg); log_alert(window_name, key, "clv_improved", msg)
+
+    for key, row in prev_map.items():
+        if str(row.get("tier", "")) == "Qualified" and key not in curr_qual_keys:
+            msg = f"{row['player']}: dropped out of qualified pool."
+            alerts.append(msg); log_alert(window_name, key, "dropped_out", msg)
+    return alerts
+
+def save_snapshot_from_df(df):
+    if df.empty:
+        save_df(pd.DataFrame(columns=[
+            "play_key", "player", "market", "bet_side", "line", "best_book", "best_display_odds",
+            "true_edge", "realistic_ev_pct", "movement_note", "tier", "qualified", "predicted_clv_pct",
+            "ensemble_score", "agreement_count"
+        ]), SNAPSHOT_FILE)
+        return
+    snap = df[[
+        "play_key", "player", "market", "bet_side", "line", "best_book", "best_display_odds",
+        "true_edge", "realistic_ev_pct", "movement_note", "tier", "predicted_clv_pct",
+        "ensemble_score", "agreement_count"
+    ]].copy()
+    snap["qualified"] = snap["tier"].eq("Qualified")
+    save_df(snap, SNAPSHOT_FILE)
 
 # -----------------------------
-# SAMPLE DATA
+# Portfolio optimizer
+# -----------------------------
+def portfolio_bucket_score(row):
+    edge = safe_float(row.get("true_edge"), 0.0) * 100
+    ev = safe_float(row.get("realistic_ev_pct"), 0.0)
+    clv = safe_float(row.get("predicted_clv_pct"), 0.0)
+    ensemble = safe_float(row.get("ensemble_score"), 0.0)
+    agree = safe_float(row.get("agreement_count"), 0.0)
+    score = edge * 1.0 + ev * 0.8 + clv * 2.0 + ensemble * 0.5 + agree * 3.0
+    if str(row.get("tier", "")) == "Qualified":
+        score += 12
+    elif str(row.get("tier", "")) == "Near threshold":
+        score += 6
+    return max(score, 0.0)
+
+def allocate_portfolio(df, bankroll, max_total_u, max_per_game=2):
+    if df.empty:
+        return pd.DataFrame(columns=list(df.columns) + ["alloc_u", "alloc_$", "portfolio_weight"])
+    work = df.copy().sort_values(["rank_score", "realistic_ev_pct"], ascending=False)
+    counts, kept_rows = {}, []
+    for _, row in work.iterrows():
+        matchup = str(row.get("matchup", ""))
+        counts.setdefault(matchup, 0)
+        if counts[matchup] < max_per_game and safe_float(row.get("single_stake_u"), 0) > 0:
+            kept_rows.append(row)
+            counts[matchup] += 1
+    if not kept_rows:
+        return pd.DataFrame(columns=list(df.columns) + ["alloc_u", "alloc_$", "portfolio_weight"])
+    port = pd.DataFrame(kept_rows).reset_index(drop=True)
+    port["portfolio_raw"] = port.apply(portfolio_bucket_score, axis=1)
+    total_raw = port["portfolio_raw"].sum()
+    port["portfolio_weight"] = 0.0 if total_raw <= 0 else port["portfolio_raw"] / total_raw
+    port["alloc_u"] = (port["portfolio_weight"] * max_total_u).round(2)
+    port["alloc_u"] = np.minimum(port["alloc_u"], port["single_stake_u"])
+    port["alloc_$"] = (port["alloc_u"] * (bankroll * 0.01)).round(2)
+    return port.sort_values(["alloc_u", "rank_score"], ascending=[False, False]).reset_index(drop=True)
+
+# -----------------------------
+# Bet log helpers
+# -----------------------------
+def add_bet_to_log(row):
+    log = load_bet_log()
+    new_row = {
+        "timestamp": current_et_label(),
+        "player": row["player"],
+        "market": row["market"],
+        "bet_side": row["bet_side"],
+        "line": row["line"],
+        "book": row["book"],
+        "best_book": row["best_book"],
+        "placed_odds": row["odds"],
+        "best_odds": row["best_display_odds"],
+        "stake_u": row.get("alloc_u", row.get("single_stake_u", 0)),
+        "stake_$": row.get("alloc_$", row.get("single_stake_$", 0)),
+        "edge_pct": row["true_edge"] * 100,
+        "ev_pct": row["realistic_ev_pct"],
+        "tier": row["tier"],
+        "bet_decision": row["bet_decision"],
+        "predicted_clv_pct": row["predicted_clv_pct"],
+        "agreement_count": row["agreement_count"],
+        "ensemble_score": row["ensemble_score"],
+        "result": "Pending",
+        "profit_u": 0.0,
+        "closing_odds": np.nan,
+        "clv_placed_vs_close_pct": np.nan,
+        "notes": ""
+    }
+    log = pd.concat([log, pd.DataFrame([new_row])], ignore_index=True)
+    save_df(log, BET_LOG_FILE)
+
+def settle_bet(result, placed_odds, stake_u):
+    dec = american_to_decimal(placed_odds)
+    if pd.isna(dec):
+        return 0.0
+    if result == "Win":
+        return round((dec - 1) * stake_u, 2)
+    if result == "Loss":
+        return round(-1.0 * stake_u, 2)
+    return 0.0
+
+def tracker_summary(log):
+    if log.empty:
+        return {"bets": 0, "wins": 0, "losses": 0, "pushes": 0, "profit_u": 0.0, "roi_pct": 0.0, "win_rate": 0.0, "avg_clv": 0.0}
+    wins = int((log["result"] == "Win").sum())
+    losses = int((log["result"] == "Loss").sum())
+    pushes = int((log["result"] == "Push").sum())
+    total_staked = pd.to_numeric(log["stake_u"], errors="coerce").fillna(0).sum()
+    profit_u = pd.to_numeric(log["profit_u"], errors="coerce").fillna(0).sum()
+    roi_pct = (profit_u / total_staked * 100) if total_staked > 0 else 0.0
+    win_rate = (wins / (wins + losses) * 100) if (wins + losses) > 0 else 0.0
+    avg_clv = pd.to_numeric(log["clv_placed_vs_close_pct"], errors="coerce").dropna().mean()
+    avg_clv = 0.0 if pd.isna(avg_clv) else avg_clv
+    return {"bets": int(len(log)), "wins": wins, "losses": losses, "pushes": pushes, "profit_u": round(profit_u, 2), "roi_pct": round(roi_pct, 1), "win_rate": round(win_rate, 1), "avg_clv": round(avg_clv, 2)}
+
+# -----------------------------
+# UI helpers
+# -----------------------------
+def render_metric_box(label, value):
+    st.markdown(f'<div class="metric-box"><div class="metric-label">{label}</div><div class="metric-value">{value}</div></div>', unsafe_allow_html=True)
+
+def render_best_bet(row):
+    st.markdown("## 🔥 Best Bet")
+    st.markdown(f"### {row['player']} — {row['bet_side']} {row['line']} {row['market']}")
+    st.markdown(
+        f"**Current Odds:** {fmt_american(row['odds'])} | "
+        f"**Best Odds:** {fmt_american(row['best_display_odds'])} ({row['best_book']}) | "
+        f"**EV:** {row['realistic_ev_pct']:.1f}% | "
+        f"**Predicted CLV:** {row['predicted_clv_pct']:.2f}%"
+    )
+    c1, c2, c3, c4, c5 = st.columns(5)
+    with c1: render_metric_box("Hit %", f"{row['realistic_hit_prob']*100:.0f}%")
+    with c2: render_metric_box("Edge", f"{row['true_edge']*100:.1f}%")
+    with c3: render_metric_box("Stake", f"{row.get('alloc_u', row['single_stake_u']):.2f}u")
+    with c4: render_metric_box("Ensemble", f"{row['ensemble_score']:.1f}")
+    with c5: render_metric_box("Agreement", f"{int(row['agreement_count'])}/5")
+    st.progress(float(row["realistic_hit_prob"]))
+
+def render_compact_play(row):
+    tier = row["tier"]
+    if tier == "Qualified":
+        box_class = "good-box"
+    elif tier in ["Near threshold", "Monitor"]:
+        box_class = "watch-box"
+    else:
+        box_class = "pass-box"
+    stake_u = row.get("alloc_u", row.get("single_stake_u", 0))
+    st.markdown(
+        f'<div class="{box_class}"><b>{row["tier"]}</b> • {row["bet_decision"]} • {int(row["agreement_count"])}/5 agree<br>'
+        f'{row["player"]} — {row["bet_side"]} {row["line"]} {row["market"]}<br>'
+        f'Best {fmt_american(row["best_display_odds"])} ({row["best_book"]}) | '
+        f'EV {row["realistic_ev_pct"]:.1f}% | Edge {row["true_edge"]*100:.1f}% | '
+        f'Stake {stake_u:.2f}u | Pred. CLV {row["predicted_clv_pct"]:.2f}% | Ensemble {row["ensemble_score"]:.1f}</div>',
+        unsafe_allow_html=True
+    )
+
+# -----------------------------
+# Sample data
 # -----------------------------
 def sample_data():
     return pd.DataFrame([
-        {"player": "Stephen Curry", "market": "points", "line": 27, "projection": 32.2, "odds": -110, "open_odds": -102, "spread": -2.5, "usage": 31, "minutes": 35, "minutes_volatility": 2.1},
-        {"player": "LeBron James", "market": "pra", "line": 38, "projection": 43.8, "odds": -115, "open_odds": -105, "spread": 2.5, "usage": 30, "minutes": 36, "minutes_volatility": 2.2},
-        {"player": "Anthony Davis", "market": "rebounds", "line": 11.5, "projection": 13.1, "odds": -105, "open_odds": -104, "spread": 2.5, "usage": 27, "minutes": 35, "minutes_volatility": 2.6},
+        {"player": "Stephen Curry", "team": "GSW", "opponent": "LAL", "matchup": "Warriors vs Lakers", "market": "points", "bet_side": "Over", "line": 27.0, "projection": 32.2, "odds": -115, "open_odds": -102, "book": "DraftKings", "starter": True, "minutes": 35, "spread": -2.5, "pace": 102.4, "usage": 31.0, "last5_avg": 33.1, "defense_rank": 24, "minutes_volatility": 2.1, "odds_fanduel": -112, "odds_draftkings": -115, "odds_betmgm": -108, "odds_caesars": -110},
+        {"player": "LeBron James", "team": "LAL", "opponent": "GSW", "matchup": "Lakers vs Warriors", "market": "pra", "bet_side": "Over", "line": 38.0, "projection": 43.8, "odds": -115, "open_odds": -105, "book": "DraftKings", "starter": True, "minutes": 36, "spread": 2.5, "pace": 101.9, "usage": 30.5, "last5_avg": 45.2, "defense_rank": 23, "minutes_volatility": 2.2, "odds_fanduel": -112, "odds_draftkings": -115, "odds_betmgm": -110, "odds_caesars": -111},
+        {"player": "Anthony Davis", "team": "LAL", "opponent": "GSW", "matchup": "Lakers vs Warriors", "market": "rebounds", "bet_side": "Over", "line": 11.5, "projection": 13.1, "odds": -105, "open_odds": -104, "book": "FanDuel", "starter": True, "minutes": 35, "spread": 2.5, "pace": 101.9, "usage": 27.0, "last5_avg": 12.8, "defense_rank": 19, "minutes_volatility": 2.6, "odds_fanduel": -105, "odds_draftkings": -102, "odds_betmgm": 100, "odds_caesars": -101},
+        {"player": "Jordan Poole", "team": "WAS", "opponent": "BKN", "matchup": "Wizards vs Nets", "market": "points", "bet_side": "Over", "line": 21.5, "projection": 24.4, "odds": 102, "open_odds": 108, "book": "Caesars", "starter": True, "minutes": 33, "spread": 5.0, "pace": 99.6, "usage": 30.0, "last5_avg": 25.8, "defense_rank": 25, "minutes_volatility": 4.2, "odds_fanduel": 100, "odds_draftkings": 101, "odds_betmgm": 103, "odds_caesars": 102},
+        {"player": "Jalen Brunson", "team": "NYK", "opponent": "MIA", "matchup": "Knicks vs Heat", "market": "points", "bet_side": "Over", "line": 26.5, "projection": 29.7, "odds": -110, "open_odds": -101, "book": "FanDuel", "starter": True, "minutes": 36, "spread": -3.0, "pace": 98.7, "usage": 30.6, "last5_avg": 30.9, "defense_rank": 9, "minutes_volatility": 1.8, "odds_fanduel": -110, "odds_draftkings": -106, "odds_betmgm": -104, "odds_caesars": -108},
+        {"player": "Jimmy Butler", "team": "MIA", "opponent": "NYK", "matchup": "Heat vs Knicks", "market": "assists", "bet_side": "Over", "line": 5.5, "projection": 6.9, "odds": -102, "open_odds": -100, "book": "BetMGM", "starter": True, "minutes": 34, "spread": 3.0, "pace": 98.7, "usage": 25.5, "last5_avg": 7.0, "defense_rank": 11, "minutes_volatility": 2.0, "odds_fanduel": -105, "odds_draftkings": -104, "odds_betmgm": -102, "odds_caesars": -103},
     ])
 
-df = sample_data()
+@st.cache_data(show_spinner=False)
+def load_uploaded_csv(file):
+    return pd.read_csv(file)
 
 # -----------------------------
-# RUN MODELS
+# App
 # -----------------------------
-results = []
-for _, row in df.iterrows():
-    score, breakdown = multi_ai_score(row)
-    results.append({
-        "player": row["player"],
-        "market": row["market"],
-        "score": round(score, 2),
-        **{f"{k}_model": round(v,2) for k,v in breakdown.items()}
-    })
+st.title("🏀 Sports AI Betting Dashboard V11.1 PRO FUSION")
+st.caption("PRO MODE: normalized multi-AI, agreement engine, portfolio optimizer, and supervised self-learning weights.")
 
-results_df = pd.DataFrame(results).sort_values("score", ascending=False)
+with st.sidebar:
+    st.markdown("### Data")
+    uploaded = st.file_uploader("Upload CSV", type=["csv"])
+    use_sample = st.toggle("Use sample data", value=uploaded is None)
 
-# -----------------------------
-# UI
-# -----------------------------
-st.title("🧠 V11 Multi-AI Prediction Engine")
+    st.markdown("### Live Control")
+    live_mode = st.selectbox("Live mode", ["OFF", "Manual Only", "Scheduled (3x daily)"])
+    scheduled_windows = st.multiselect("Scheduled windows", list(SCHEDULE_WINDOWS.keys()), default=["5:00 AM ET", "1:00 PM ET", "5:30 PM ET"])
+    top_live_checks = st.slider("Top plays to live-check", 1, 5, 3)
+    min_live_edge = st.slider("Minimum edge % for live-check", 0.0, 10.0, 5.0, 0.5)
+    manual_refresh = st.button("Refresh Top Plays Only")
 
-st.markdown("### 🏆 Final Rankings")
-st.dataframe(results_df, use_container_width=True)
+    st.markdown("### Portfolio")
+    bankroll = st.number_input("Bankroll ($)", min_value=100, max_value=100000, value=1000, step=50)
+    max_single_pct = st.slider("Max bankroll % per single", 0.25, 3.0, 1.25, 0.25) / 100.0
+    max_total_portfolio_u = st.slider("Max total portfolio units", 0.5, 5.0, 2.5, 0.25)
+    aggression_mode = st.selectbox("Aggression mode", ["Conservative", "Balanced", "Aggressive"], index=1)
 
-top = results_df.iloc[0]
-st.markdown(f"## 🔥 Best AI Play: {top['player']} ({top['market']})")
+    st.markdown("### Base Model Weights")
+    projection_w = st.slider("Projection model", 0.05, 0.50, 0.28, 0.01)
+    market_w = st.slider("Market model", 0.05, 0.50, 0.20, 0.01)
+    clv_w = st.slider("CLV model", 0.05, 0.50, 0.18, 0.01)
+    script_w = st.slider("Game script model", 0.05, 0.50, 0.18, 0.01)
+    variance_w = st.slider("Variance model", 0.05, 0.50, 0.16, 0.01)
+    use_suggested_weights = st.toggle("Use supervised suggested weights", value=False)
 
-st.markdown("### 📊 Model Breakdown")
-st.write(top)
+    st.markdown("### PRO Filters")
+    min_ensemble = st.slider("Min ensemble score", 55, 90, 72)
+    min_agreement = st.slider("Min model agreement", 1, 5, 4)
+    min_edge = st.slider("Min true edge %", 0.0, 15.0, 2.0, 0.5)
+    min_ev = st.slider("Min EV %", 0.0, 25.0, 2.0, 0.5)
+    sharp_mode = st.toggle("Sharp Mode", value=True)
+    max_per_game = st.slider("Max plays per game", 1, 3, 2)
+
+weights_sum = projection_w + market_w + clv_w + script_w + variance_w
+if weights_sum <= 0:
+    weights_sum = 1.0
+base_weights = {
+    "projection": projection_w / weights_sum,
+    "market": market_w / weights_sum,
+    "clv": clv_w / weights_sum,
+    "script": script_w / weights_sum,
+    "variance": variance_w / weights_sum,
+}
+effective_weights, perf_table = get_effective_weights(base_weights, use_suggested_weights)
+
+used_calls = get_today_calls()
+remaining_calls = get_remaining_calls()
+status = call_status_label(used_calls)
+st.markdown(
+    f'<div class="banner"><div><b>API Calls Used Today:</b> {used_calls} / {MAX_DAILY_CALLS}</div>'
+    f'<div><b>Remaining:</b> {remaining_calls}</div><div><b>Status:</b> {status}</div>'
+    f'<div><b>Eastern Time:</b> {current_et_label()}</div><div><b>Aggression Mode:</b> {aggression_mode}</div></div>',
+    unsafe_allow_html=True
+)
+st.progress(min(used_calls / MAX_DAILY_CALLS, 1.0))
+
+base_df = ensure_columns(load_uploaded_csv(uploaded) if (uploaded and not use_sample) else sample_data())
+
+refresh_reason, refresh_window = None, ""
+if remaining_calls <= int(MAX_DAILY_CALLS * 0.05):
+    st.warning("Daily call protection is active. Live refresh disabled because you are above 95% of limit.")
+elif live_mode == "Manual Only" and manual_refresh:
+    refresh_reason, refresh_window = "manual_top_plays_refresh", "manual"
+elif live_mode == "Scheduled (3x daily)":
+    for win in scheduled_windows:
+        if should_run_window(win):
+            refresh_reason, refresh_window = "scheduled_window_refresh", win
+            break
+    if manual_refresh:
+        refresh_reason, refresh_window = "manual_top_plays_refresh", "manual"
+
+previous_snapshot = load_snapshot()
+alerts_to_show = []
+if refresh_reason:
+    base_df, call_cost = simulate_live_refresh(base_df, top_n=top_live_checks, edge_threshold_pct=min_live_edge, model_weights=effective_weights)
+    log_api_call(refresh_reason, call_count=max(1, call_cost), window=refresh_window)
+    st.success(f"Live check completed for top plays. Logged {max(1, call_cost)} call(s).")
+
+scored = compute_scores(base_df, bankroll=float(bankroll), max_single_pct=float(max_single_pct), model_weights=effective_weights)
+scored = apply_aggression_mode(scored, aggression_mode)
+
+tier_decisions = scored.apply(tier_and_decision, axis=1)
+scored["tier"] = [x[0] for x in tier_decisions]
+scored["bet_decision"] = [x[1] for x in tier_decisions]
+scored["stake_mult"] = scored["tier"].apply(stake_multiplier_by_tier)
+scored["single_stake_$"] = (scored["base_stake_$"] * scored["stake_mult"]).round(2)
+scored["single_stake_u"] = (scored["base_stake_u"] * scored["stake_mult"]).round(2)
+
+with st.expander("⚙️ Filters", expanded=False):
+    c1, c2 = st.columns(2)
+    with c1:
+        starters_only = st.toggle("Starters only", value=True)
+    with c2:
+        min_minutes = st.slider("Min minutes", 0, 40, 0)
+    odds_preset = st.selectbox("Odds Range", ["All", "-300 to +200", "-200 to +150", "Plus Money Only"])
+
+filtered = scored.copy()
+if starters_only:
+    filtered = filtered[filtered["starter"] == True]
+filtered = filtered[filtered["minutes"].fillna(0) >= min_minutes]
+if odds_preset == "-300 to +200":
+    filtered = filtered[filtered["best_display_odds"].between(-300, 200)]
+elif odds_preset == "-200 to +150":
+    filtered = filtered[filtered["best_display_odds"].between(-200, 150)]
+elif odds_preset == "Plus Money Only":
+    filtered = filtered[filtered["best_display_odds"] > 0]
+
+qualified = approved_pool(filtered)
+qualified = qualified[
+    (qualified["ensemble_score"] >= min_ensemble)
+    & (qualified["agreement_count"] >= min_agreement)
+    & ((qualified["true_edge"] * 100) >= min_edge)
+    & (qualified["realistic_ev_pct"] >= min_ev)
+].copy()
+qualified = apply_game_exposure_limit(qualified, max_per_game=max_per_game)
+
+if sharp_mode:
+    qualified = qualified[(qualified["confidence_grade"].isin(["A+ ELITE", "A STRONG"])) & (qualified["consensus_action"].isin(["Auto Bet", "Strong Bet"]))].copy()
+
+all_ranked = filtered.sort_values(["rank_score", "realistic_ev_pct", "true_edge"], ascending=False).reset_index(drop=True)
+qualified = qualified.sort_values(["rank_score", "realistic_ev_pct", "true_edge"], ascending=False).reset_index(drop=True)
+
+portfolio_source = pd.concat([qualified, all_ranked[all_ranked["tier"] != "Needs line movement"].head(6)], ignore_index=True).drop_duplicates(subset=["play_key"])
+portfolio = allocate_portfolio(portfolio_source, bankroll=float(bankroll), max_total_u=float(max_total_portfolio_u), max_per_game=max_per_game)
+
+if refresh_reason:
+    alerts_to_show = create_alerts(previous_snapshot, all_ranked.head(10), qualified, refresh_window)
+    save_snapshot_from_df(all_ranked.head(10))
+elif previous_snapshot.empty:
+    save_snapshot_from_df(all_ranked.head(10))
+
+if alerts_to_show:
+    st.markdown("## 🔔 Alerts")
+    for a in alerts_to_show:
+        st.markdown(f'<div class="alert-box">{a}</div>', unsafe_allow_html=True)
+
+fallback_pool = all_ranked[all_ranked["tier"] != "Qualified"].head(4).copy()
+
+st.markdown(
+    f'<div class="banner"><div><b>Qualified Plays:</b> {len(qualified)}</div>'
+    f'<div><b>Fallback Plays:</b> {len(fallback_pool)}</div>'
+    f'<div><b>Top Ensemble:</b> {all_ranked.iloc[0]["player"] if not all_ranked.empty else "—"} ({all_ranked.iloc[0]["ensemble_score"]:.1f})</div>'
+    f'<div><b>Portfolio Size:</b> {portfolio["alloc_u"].sum():.2f}u</div></div>',
+    unsafe_allow_html=True
+)
+
+if qualified.empty:
+    st.warning("No qualified plays under the current V11.1 PRO FUSION filters.")
+    st.markdown("## 🔎 Fallback Plays")
+    for _, row in fallback_pool.iterrows():
+        render_compact_play(row)
+
+    st.markdown("## 💰 Suggested Fallback Stakes")
+    fallback_alloc = allocate_portfolio(fallback_pool, bankroll=float(bankroll), max_total_u=float(max_total_portfolio_u), max_per_game=max_per_game)
+    if fallback_alloc.empty:
+        st.info("No fallback allocations available.")
+    else:
+        for _, row in fallback_alloc.iterrows():
+            st.write(f"**{row['player']}** — {row['tier']} • {row['bet_decision']} • Stake {row['alloc_u']:.2f}u • CLV {row['predicted_clv_pct']:.2f}% • Ensemble {row['ensemble_score']:.1f} • Agreement {int(row['agreement_count'])}/5")
+
+    st.markdown("## 🤖 PRO MODE Engine Output")
+    engine_show = all_ranked[[
+        "player", "market", "bet_side", "model_projection", "model_market", "model_clv",
+        "model_script", "model_variance", "ensemble_score", "agreement_count",
+        "tier", "bet_decision"
+    ]].head(8)
+    st.dataframe(engine_show, use_container_width=True, hide_index=True)
+
+    st.markdown("## 🧠 Supervised Weight Table")
+    st.dataframe(perf_table, use_container_width=True, hide_index=True)
+    st.stop()
+
+tops = unique_top_plays(qualified)
+best_play, safe_play, edge_play = tops["best"], tops["safe"], tops["edge"]
+best_parlay = build_best_parlay(qualified, leg_size=2)
+
+best_play_port = portfolio[portfolio["play_key"] == best_play["play_key"]]
+if not best_play_port.empty:
+    best_play = best_play.copy()
+    best_play["alloc_u"] = float(best_play_port.iloc[0]["alloc_u"])
+    best_play["alloc_$"] = float(best_play_port.iloc[0]["alloc_$"])
+
+render_best_bet(best_play)
+
+st.markdown("## 🤖 PRO MODE Model Panel")
+m1, m2, m3, m4, m5, m6 = st.columns(6)
+with m1: render_metric_box("Projection", f"{best_play['model_projection']:.1f}")
+with m2: render_metric_box("Market", f"{best_play['model_market']:.1f}")
+with m3: render_metric_box("CLV", f"{best_play['model_clv']:.1f}")
+with m4: render_metric_box("Script", f"{best_play['model_script']:.1f}")
+with m5: render_metric_box("Variance", f"{best_play['model_variance']:.1f}")
+with m6: render_metric_box("Agreement", f"{int(best_play['agreement_count'])}/5")
+
+st.markdown("## ✅ Qualified Plays")
+for _, row in qualified.iterrows():
+    row_copy = row.copy()
+    port_match = portfolio[portfolio["play_key"] == row["play_key"]]
+    if not port_match.empty:
+        row_copy["alloc_u"] = float(port_match.iloc[0]["alloc_u"])
+    render_compact_play(row_copy)
+
+if not fallback_pool.empty:
+    st.markdown("## 🔎 Fallback Plays")
+    for _, row in fallback_pool.iterrows():
+        row_copy = row.copy()
+        port_match = portfolio[portfolio["play_key"] == row["play_key"]]
+        if not port_match.empty:
+            row_copy["alloc_u"] = float(port_match.iloc[0]["alloc_u"])
+        render_compact_play(row_copy)
+
+st.markdown("## 🤖 PRO MODE Engine Output")
+engine_show = all_ranked[[
+    "player", "market", "bet_side", "model_projection", "model_market", "model_clv",
+    "model_script", "model_variance", "ensemble_score", "agreement_count",
+    "tier", "bet_decision"
+]].head(10)
+st.dataframe(engine_show, use_container_width=True, hide_index=True)
+
+st.markdown("## 🧠 Auto Bet Allocation (Portfolio Optimizer)")
+if portfolio.empty:
+    st.info("No portfolio allocations available.")
+else:
+    portfolio_show = portfolio[[
+        "player", "market", "bet_side", "tier", "bet_decision",
+        "single_stake_u", "alloc_u", "alloc_$", "portfolio_weight",
+        "predicted_clv_pct", "ensemble_score", "agreement_count"
+    ]].copy()
+    portfolio_show["portfolio_weight"] = (portfolio_show["portfolio_weight"] * 100).round(1).astype(str) + "%"
+    st.dataframe(portfolio_show, use_container_width=True, hide_index=True)
+
+st.markdown("## 🧠 Supervised Weight Table")
+st.dataframe(perf_table, use_container_width=True, hide_index=True)
+
+st.markdown("## ✅ Add To Bet Log")
+track_rows = portfolio.head(5).copy()
+cols = st.columns(min(3, len(track_rows))) if len(track_rows) > 0 else []
+for i, (_, row) in enumerate(track_rows.iterrows()):
+    with cols[i % len(cols)]:
+        if st.button(f"Track {row['player']}", key=f"track_{i}"):
+            add_bet_to_log(row)
+            st.success(f"Added {row['player']} to bet log.")
+
+st.markdown("## 💰 Bankroll")
+c1, c2, c3, c4 = st.columns(4)
+with c1:
+    render_metric_box("Top Stake", f"{best_play.get('alloc_u', best_play['single_stake_u']):.2f}u")
+with c2:
+    parlay_units = 0.75 if not best_parlay else min(1.00, max(0.25, best_parlay["ev_pct"] / 20))
+    render_metric_box("Parlay Stake", f"{parlay_units:.2f}u")
+with c3:
+    roi_est = (best_play["realistic_ev_pct"] * 0.55) + ((best_parlay["ev_pct"] if best_parlay else 0) * 0.45)
+    render_metric_box("ROI", f"{min(roi_est, 42.0):.1f}%")
+with c4:
+    render_metric_box("Pred. CLV", f"{best_play['predicted_clv_pct']:.2f}%")
+
+if best_parlay:
+    legs_txt = " + ".join([f"{x['player']} {x['bet_side']} {x['line']}" for x in best_parlay["legs"]])
+    st.markdown("## 🧩 Best 2-Leg Parlay")
+    st.markdown(f"**Legs:** {legs_txt}")
+    st.markdown(f"**Odds:** {fmt_american(best_parlay['odds'])} | **Hit %:** {best_parlay['hit_prob']*100:.1f}% | **EV:** {best_parlay['ev_pct']:.1f}% | **Correlation Penalty:** {best_parlay['corr_pen']:.2f}")
+
+st.markdown("## 📒 Auto Tracker + CLV")
+bet_log = load_bet_log()
+if bet_log.empty:
+    st.info("No tracked bets yet.")
+else:
+    summary = tracker_summary(bet_log)
+    s1, s2, s3, s4 = st.columns(4)
+    with s1: render_metric_box("Tracked Bets", str(summary["bets"]))
+    with s2: render_metric_box("Profit", f"{summary['profit_u']:.2f}u")
+    with s3: render_metric_box("ROI", f"{summary['roi_pct']:.1f}%")
+    with s4: render_metric_box("Avg CLV", f"{summary['avg_clv']:.2f}%")
+
+    editable = bet_log.copy()
+    for idx in editable.index:
+        title = f'{editable.loc[idx, "player"]} • {editable.loc[idx, "market"]} • {editable.loc[idx, "bet_side"]} {editable.loc[idx, "line"]}'
+        with st.expander(title, expanded=False):
+            result = st.selectbox("Result", ["Pending", "Win", "Loss", "Push"], index=["Pending","Win","Loss","Push"].index(str(editable.loc[idx, "result"])), key=f"res_{idx}")
+            closing_odds = st.number_input("Closing odds", value=float(editable.loc[idx, "closing_odds"]) if pd.notna(editable.loc[idx, "closing_odds"]) else 0.0, step=1.0, key=f"close_{idx}")
+            notes = st.text_input("Notes", value=str(editable.loc[idx, "notes"]), key=f"note_{idx}")
+            if st.button("Save grading", key=f"save_{idx}"):
+                editable.loc[idx, "result"] = result
+                editable.loc[idx, "closing_odds"] = closing_odds if closing_odds != 0 else np.nan
+                editable.loc[idx, "notes"] = notes
+                editable.loc[idx, "profit_u"] = settle_bet(result, safe_float(editable.loc[idx, "placed_odds"], np.nan), safe_float(editable.loc[idx, "stake_u"], 0.0))
+                if pd.notna(editable.loc[idx, "closing_odds"]):
+                    placed_ip = american_to_implied_prob(safe_float(editable.loc[idx, "placed_odds"], np.nan))
+                    close_ip = american_to_implied_prob(safe_float(editable.loc[idx, "closing_odds"], np.nan))
+                    editable.loc[idx, "clv_placed_vs_close_pct"] = round((close_ip - placed_ip) * 100, 2)
+                else:
+                    editable.loc[idx, "clv_placed_vs_close_pct"] = np.nan
+                save_df(editable, BET_LOG_FILE)
+                st.success("Bet updated.")
+
+    display_log = load_bet_log().copy()
+    if not display_log.empty:
+        for col in ["placed_odds", "best_odds", "closing_odds"]:
+            display_log[col] = display_log[col].apply(lambda x: fmt_american(x) if pd.notna(x) else "—")
+        for col in ["edge_pct", "ev_pct", "predicted_clv_pct", "clv_placed_vs_close_pct"]:
+            display_log[col] = pd.to_numeric(display_log[col], errors="coerce").apply(lambda x: f"{x:.2f}%" if pd.notna(x) else "—")
+        display_log["stake_u"] = pd.to_numeric(display_log["stake_u"], errors="coerce").round(2).astype(str) + "u"
+        st.dataframe(display_log, use_container_width=True, hide_index=True)
+
+st.markdown("## 📢 Alert Log")
+alert_log = load_alert_log()
+if alert_log.empty:
+    st.info("No alerts yet. Alerts trigger only after scheduled windows or manual refresh.")
+else:
+    st.dataframe(alert_log.sort_index(ascending=False), use_container_width=True, hide_index=True)
+
+st.markdown("## 📒 Call Log")
+call_log = load_call_log()
+if call_log.empty:
+    st.info("No API calls logged yet.")
+else:
+    st.dataframe(call_log.sort_index(ascending=False), use_container_width=True, hide_index=True)
+
+st.caption("V11.1 PRO FUSION: normalized multi-AI, agreement engine, portfolio optimizer, and supervised self-learning weights active.")

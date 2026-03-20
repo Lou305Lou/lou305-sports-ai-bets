@@ -36,6 +36,18 @@ def safe_float(v, default=np.nan):
     except Exception:
         return default
 
+def safe_get(row, key, default=0):
+    try:
+        if hasattr(row, "get"):
+            val = row.get(key, default)
+        else:
+            val = default
+        if val is None:
+            return default
+        return val
+    except Exception:
+        return default
+
 def clamp01(x):
     return max(0.0, min(1.0, x))
 
@@ -63,10 +75,14 @@ def normal_cdf(x):
     return 0.5 * (1 + math.erf(x / math.sqrt(2)))
 
 def fmt_american(v):
-    if pd.isna(v):
+    try:
+        if pd.isna(v):
+            return "—"
+        v = float(v)
+        v = int(round(v))
+        return f"+{v}" if v > 0 else str(v)
+    except Exception:
         return "—"
-    v = int(round(v))
-    return f"+{v}" if v > 0 else str(v)
 
 def et_now():
     return datetime.now(ET_TZ)
@@ -676,8 +692,8 @@ def create_alerts(previous_snapshot, current_all, current_qualified, window_name
 
     for key, row in curr_all_map.items():
         prev_row = prev_map.get(key)
-        player = row["player"]
-        current_tier = row["tier"]
+        player = safe_get(row, "player", "—")
+        current_tier = safe_get(row, "tier", "")
         current_clv = safe_float(row.get("predicted_clv_pct"), 0.0)
         current_ensemble = safe_float(row.get("ensemble_score"), 0.0)
 
@@ -827,23 +843,23 @@ def add_bet_to_log(row):
     log = load_bet_log()
     new_row = {
         "timestamp": current_et_label(),
-        "player": row["player"],
-        "market": row["market"],
-        "bet_side": row["bet_side"],
-        "line": row["line"],
+        "player": safe_get(row, "player", "—"),
+        "market": safe_get(row, "market", "—"),
+        "bet_side": safe_get(row, "bet_side", "—"),
+        "line": safe_get(row, "line", "—"),
         "book": row["book"],
-        "best_book": row["best_book"],
+        "best_book": safe_get(row, "best_book", safe_get(row, "book", "—")),
         "placed_odds": row["odds"],
-        "best_odds": row["best_display_odds"],
+        "best_odds": safe_get(row, "best_display_odds", safe_get(row, "best_odds", safe_get(row, "odds", np.nan))),
         "stake_u": row.get("alloc_u", row.get("single_stake_u", 0)),
         "stake_$": row.get("alloc_$", row.get("single_stake_$", 0)),
-        "edge_pct": row["true_edge"] * 100,
-        "ev_pct": row["realistic_ev_pct"],
-        "tier": row["tier"],
-        "bet_decision": row["bet_decision"],
-        "predicted_clv_pct": row["predicted_clv_pct"],
-        "ensemble_score": row["ensemble_score"],
-        "agreement_count": row["agreement_count"],
+        "edge_pct": safe_get(row, "true_edge", 0.0) * 100,
+        "ev_pct": safe_get(row, "realistic_ev_pct", 0.0),
+        "tier": safe_get(row, "tier", ""),
+        "bet_decision": safe_get(row, "bet_decision", ""),
+        "predicted_clv_pct": safe_get(row, "predicted_clv_pct", 0.0),
+        "ensemble_score": safe_get(row, "ensemble_score", 0.0),
+        "agreement_count": safe_get(row, "agreement_count", 0),
         "model_projection": row["model_projection"],
         "model_market": row["model_market"],
         "model_clv": row["model_clv"],
@@ -913,7 +929,7 @@ def market_insight_banner(df, qualified, fallback):
 
 def why_this_play(row):
     reasons = []
-    proj_edge = safe_float(row.get("projection"), np.nan) - safe_float(row.get("line"), np.nan)
+    proj_edge = safe_float(safe_get(row, "projection", np.nan), np.nan) - safe_float(safe_get(row, "line", np.nan), np.nan)
     if not pd.isna(proj_edge):
         reasons.append(f"Projection edge: {proj_edge:+.1f} vs line")
     if safe_float(row.get("model_market"), 0) >= 60:
@@ -947,29 +963,29 @@ def render_best_bet(row):
     st.progress(float(row["realistic_hit_prob"]))
 
 def render_compact_play(row):
-    if row["tier"] == "Qualified":
+    if safe_get(row, "tier", "") == "Qualified":
         box_class = "good-box"
-    elif row["tier"] in ["Near threshold", "Monitor"]:
+    elif safe_get(row, "tier", "") in ["Near threshold", "Monitor"]:
         box_class = "watch-box"
     else:
         box_class = "pass-box"
-    trigger_odds = safe_float(row["best_display_odds"], np.nan)
+    trigger_odds = safe_float(safe_get(row, "best_display_odds", safe_get(row, "best_odds", safe_get(row, "odds", np.nan))), np.nan)
     target_odds = fmt_american(trigger_odds + 5) if not pd.isna(trigger_odds) else "—"
     trigger_clv = max(2.0, safe_float(row.get("predicted_clv_pct"), 0) + 0.5)
-    risk_txt = "Medium" if row["tier"] in ["Near threshold", "Monitor"] else "Low" if row["tier"] == "Qualified" else "Wait"
+    risk_txt = "Medium" if safe_get(row, "tier", "") in ["Near threshold", "Monitor"] else "Low" if safe_get(row, "tier", "") == "Qualified" else "Wait"
     stake_u = row.get("alloc_u", row.get("single_stake_u", 0))
     extra = ""
-    if row["tier"] != "Qualified":
+    if safe_get(row, "tier", "") != "Qualified":
         extra = (
             f"<div class='trigger-box'><b>Trigger:</b> Bet if price reaches {target_odds} or better • "
             f"Target CLV ≥ {trigger_clv:.1f}% • Confidence {risk_txt}</div>"
         )
     st.markdown(
-        f'<div class="{box_class}"><b>{row["tier"]}</b> • {row["bet_decision"]} • {int(row["agreement_count"])}/5 agree<br>'
-        f'{row["player"]} — {row["bet_side"]} {row["line"]} {row["market"]}<br>'
-        f'Best {fmt_american(row["best_display_odds"])} ({row["best_book"]}) | '
-        f'EV {row["realistic_ev_pct"]:.1f}% | Edge {row["true_edge"]*100:.1f}% | '
-        f'Stake {stake_u:.2f}u | Pred. CLV {row["predicted_clv_pct"]:.2f}% | Ensemble {row["ensemble_score"]:.1f}'
+        f'<div class="{box_class}"><b>{safe_get(row, "tier", "")}</b> • {safe_get(row, "bet_decision", "")} • {int(safe_get(row, "agreement_count", 0))}/5 agree<br>'
+        f'{safe_get(row, "player", "—")} — {safe_get(row, "bet_side", "—")} {safe_get(row, "line", "—")} {safe_get(row, "market", "—")}<br>'
+        f'Best {fmt_american(safe_get(row, "best_display_odds", safe_get(row, "best_odds", safe_get(row, "odds", np.nan))))} ({safe_get(row, "best_book", safe_get(row, "book", "—"))}) | '
+        f'EV {safe_get(row, "realistic_ev_pct", 0.0):.1f}% | Edge {safe_get(row, "true_edge", 0.0)*100:.1f}% | '
+        f'Stake {stake_u:.2f}u | Pred. CLV {safe_get(row, "predicted_clv_pct", 0.0):.2f}% | Ensemble {safe_get(row, "ensemble_score", 0.0):.1f}'
         f'{extra}</div>',
         unsafe_allow_html=True
     )
@@ -1202,7 +1218,15 @@ if not best_play_port.empty:
 
 render_best_bet(best_play)
 
-st.markdown(f'<div class="insight-box"><b>🎯 Execution Signal:</b> {execution_signal(best_play)} • Confidence {urgency_level(best_play)} • Best book {best_play["best_book"]} {fmt_american(best_play["best_display_odds"])}</div>', unsafe_allow_html=True)
+st.markdown(
+    f'<div class="insight-box"><b>🎯 Execution Signal:</b> '
+    f'{execution_signal(best_play)} • '
+    f'Confidence {urgency_level(best_play)} • '
+    f'Best book {safe_get(best_play, "best_book", "—")} '
+    f'{fmt_american(safe_get(best_play, "best_display_odds", safe_get(best_play, "best_odds", safe_get(best_play, "odds", np.nan))))}'
+    f'</div>',
+    unsafe_allow_html=True
+)
 
 st.markdown("## 🤖 PRO MODE Model Panel")
 st.markdown(f'<span class="conf-pill {best_play["confidence_css"]}">{best_play["confidence_label"]}</span>', unsafe_allow_html=True)
@@ -1362,4 +1386,4 @@ if call_log.empty:
 else:
     st.dataframe(call_log.sort_index(ascending=False), use_container_width=True, hide_index=True)
 
-st.caption("V12 AUTOMATION ENGINE: scheduled scans, alert routing, execution signals, automation queue, fallback triggers, confidence tiers, and polished mobile spacing.")
+st.caption("V12 AUTOMATION ENGINE: corrected full build with scheduled scans, alert routing, execution signals, automation queue, fallback triggers, confidence tiers, and stability-safe data guards.")

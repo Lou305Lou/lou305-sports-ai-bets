@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Sports AI Betting Dashboard V10", layout="wide")
+st.set_page_config(page_title="Sports AI Betting Dashboard V10.1", layout="wide")
 
 CALL_LOG_FILE = "api_call_log.csv"
 BET_LOG_FILE = "bet_log.csv"
@@ -340,6 +340,21 @@ def stake_multiplier_by_tier(tier):
         "Needs line movement": 0.00,
     }.get(tier, 0.00)
 
+def apply_aggression_mode(df, mode):
+    out = df.copy()
+    if mode == "Conservative":
+        return out
+    if mode == "Balanced":
+        out["consensus_score"] = (out["consensus_score"] + 2).clip(upper=100)
+        out["realistic_ev_pct"] = out["realistic_ev_pct"] + 0.5
+        return out
+    if mode == "Aggressive":
+        out["consensus_score"] = (out["consensus_score"] + 4).clip(upper=100)
+        out["realistic_ev_pct"] = out["realistic_ev_pct"] + 1.0
+        out["true_edge"] = out["true_edge"] + 0.003
+        return out
+    return out
+
 def compute_scores(df, bankroll=1000, max_single_pct=0.0125):
     out = df.copy()
     out["bet_side"] = out.apply(infer_bet_side, axis=1)
@@ -501,15 +516,12 @@ def create_alerts(previous_snapshot, current_all, current_qualified, window_name
             if prev_tier != "Qualified" and current_tier == "Qualified":
                 msg = f"{player}: upgraded from {prev_tier or 'watch'} to Qualified."
                 alerts.append(msg); log_alert(window_name, key, "upgrade_to_qualified", msg)
-
             if not pd.isna(prev_ev) and not pd.isna(curr_ev) and curr_ev - prev_ev >= 2.0:
                 msg = f"{player}: EV improved by {curr_ev - prev_ev:.1f}%."
                 alerts.append(msg); log_alert(window_name, key, "ev_improved", msg)
-
             if prev_book != curr_book:
                 msg = f"{player}: best book changed to {curr_book}."
                 alerts.append(msg); log_alert(window_name, key, "best_book_changed", msg)
-
             if current_clv - prev_clv >= 1.0:
                 msg = f"{player}: predicted CLV improved to {current_clv:.2f}%."
                 alerts.append(msg); log_alert(window_name, key, "clv_improved", msg)
@@ -536,6 +548,47 @@ def save_snapshot_from_df(df):
     save_df(snap, SNAPSHOT_FILE)
 
 # -----------------------------
+# Portfolio optimizer
+# -----------------------------
+def portfolio_bucket_score(row):
+    edge = safe_float(row.get("true_edge"), 0.0) * 100
+    ev = safe_float(row.get("realistic_ev_pct"), 0.0)
+    clv = safe_float(row.get("predicted_clv_pct"), 0.0)
+    score = edge * 1.0 + ev * 0.8 + clv * 2.0
+    if str(row.get("tier", "")) == "Qualified":
+        score += 12
+    elif str(row.get("tier", "")) == "Near threshold":
+        score += 6
+    return max(score, 0.0)
+
+def allocate_portfolio(df, bankroll, max_total_u, max_per_game=2):
+    if df.empty:
+        return pd.DataFrame(columns=list(df.columns) + ["alloc_u", "alloc_$", "portfolio_weight"])
+    work = df.copy()
+    work = work.sort_values(["rank_score", "realistic_ev_pct"], ascending=False)
+    counts = {}
+    kept_rows = []
+    for _, row in work.iterrows():
+        matchup = str(row.get("matchup", ""))
+        counts.setdefault(matchup, 0)
+        if counts[matchup] < max_per_game and safe_float(row.get("single_stake_u"), 0) > 0:
+            kept_rows.append(row)
+            counts[matchup] += 1
+    if not kept_rows:
+        return pd.DataFrame(columns=list(df.columns) + ["alloc_u", "alloc_$", "portfolio_weight"])
+    port = pd.DataFrame(kept_rows).reset_index(drop=True)
+    port["portfolio_raw"] = port.apply(portfolio_bucket_score, axis=1)
+    total_raw = port["portfolio_raw"].sum()
+    if total_raw <= 0:
+        port["portfolio_weight"] = 0.0
+    else:
+        port["portfolio_weight"] = port["portfolio_raw"] / total_raw
+    port["alloc_u"] = (port["portfolio_weight"] * max_total_u).round(2)
+    port["alloc_u"] = np.minimum(port["alloc_u"], port["single_stake_u"])
+    port["alloc_$"] = (port["alloc_u"] * (bankroll * 0.01)).round(2)
+    return port.sort_values(["alloc_u", "rank_score"], ascending=[False, False]).reset_index(drop=True)
+
+# -----------------------------
 # Bet log helpers
 # -----------------------------
 def add_bet_to_log(row):
@@ -550,8 +603,8 @@ def add_bet_to_log(row):
         "best_book": row["best_book"],
         "placed_odds": row["odds"],
         "best_odds": row["best_display_odds"],
-        "stake_u": row["single_stake_u"],
-        "stake_$": row["single_stake_$"],
+        "stake_u": row.get("alloc_u", row.get("single_stake_u", 0)),
+        "stake_$": row.get("alloc_$", row.get("single_stake_$", 0)),
         "edge_pct": row["true_edge"] * 100,
         "ev_pct": row["realistic_ev_pct"],
         "tier": row["tier"],
@@ -608,18 +661,19 @@ def render_best_bet(row):
     c1, c2, c3, c4 = st.columns(4)
     with c1: render_metric_box("Hit %", f"{row['realistic_hit_prob']*100:.0f}%")
     with c2: render_metric_box("Edge", f"{row['true_edge']*100:.1f}%")
-    with c3: render_metric_box("Stake", f"{row['single_stake_u']:.2f}u")
+    with c3: render_metric_box("Stake", f"{row.get('alloc_u', row['single_stake_u']):.2f}u")
     with c4: render_metric_box("Decision", row["bet_decision"])
     st.progress(float(row["realistic_hit_prob"]))
 
 def render_compact_play(row):
     box_class = "good-box" if row["tier"] == "Qualified" else "watch-box"
+    stake_u = row.get("alloc_u", row.get("single_stake_u", 0))
     st.markdown(
         f'<div class="{box_class}"><b>{row["tier"]}</b> • {row["bet_decision"]}<br>'
         f'{row["player"]} — {row["bet_side"]} {row["line"]} {row["market"]}<br>'
         f'Best {fmt_american(row["best_display_odds"])} ({row["best_book"]}) | '
         f'EV {row["realistic_ev_pct"]:.1f}% | Edge {row["true_edge"]*100:.1f}% | '
-        f'Stake {row["single_stake_u"]:.2f}u | Pred. CLV {row["predicted_clv_pct"]:.2f}%</div>',
+        f'Stake {stake_u:.2f}u | Pred. CLV {row["predicted_clv_pct"]:.2f}%</div>',
         unsafe_allow_html=True
     )
 
@@ -642,8 +696,8 @@ def load_uploaded_csv(file):
 # -----------------------------
 # App
 # -----------------------------
-st.title("🏀 Sports AI Betting Dashboard V10")
-st.caption("Auto-sized fallback tiers, predicted CLV, and upgrade alerts only after scheduled windows or manual refresh.")
+st.title("🏀 Sports AI Betting Dashboard V10.1")
+st.caption("Aggression mode + auto bet allocation portfolio optimizer.")
 
 with st.sidebar:
     st.markdown("### Data")
@@ -657,9 +711,11 @@ with st.sidebar:
     min_live_edge = st.slider("Minimum edge % for live-check", 0.0, 10.0, 5.0, 0.5)
     manual_refresh = st.button("Refresh Top Plays Only")
 
-    st.markdown("### Bankroll")
+    st.markdown("### Portfolio")
     bankroll = st.number_input("Bankroll ($)", min_value=100, max_value=100000, value=1000, step=50)
     max_single_pct = st.slider("Max bankroll % per single", 0.25, 3.0, 1.25, 0.25) / 100.0
+    max_total_portfolio_u = st.slider("Max total portfolio units", 0.5, 5.0, 2.5, 0.25)
+    aggression_mode = st.selectbox("Aggression mode", ["Conservative", "Balanced", "Aggressive"], index=1)
 
     st.markdown("### Engine")
     min_score = st.slider("Min approval score", 55, 90, 64)
@@ -674,7 +730,7 @@ status = call_status_label(used_calls)
 st.markdown(
     f'<div class="banner"><div><b>API Calls Used Today:</b> {used_calls} / {MAX_DAILY_CALLS}</div>'
     f'<div><b>Remaining:</b> {remaining_calls}</div><div><b>Status:</b> {status}</div>'
-    f'<div><b>Eastern Time:</b> {current_et_label()}</div></div>',
+    f'<div><b>Eastern Time:</b> {current_et_label()}</div><div><b>Aggression Mode:</b> {aggression_mode}</div></div>',
     unsafe_allow_html=True
 )
 st.progress(min(used_calls / MAX_DAILY_CALLS, 1.0))
@@ -702,6 +758,15 @@ if refresh_reason:
     st.success(f"Live check completed for top plays. Logged {max(1, call_cost)} call(s).")
 
 scored = compute_scores(base_df, bankroll=float(bankroll), max_single_pct=float(max_single_pct))
+scored = apply_aggression_mode(scored, aggression_mode)
+# recompute tier/decision after aggression adjustments
+tier_decisions = scored.apply(tier_and_decision, axis=1)
+scored["tier"] = [x[0] for x in tier_decisions]
+scored["bet_decision"] = [x[1] for x in tier_decisions]
+scored["stake_mult"] = scored["tier"].apply(stake_multiplier_by_tier)
+scored["single_stake_$"] = (scored["base_stake_$"] * scored["stake_mult"]).round(2)
+scored["single_stake_u"] = (scored["base_stake_u"] * scored["stake_mult"]).round(2)
+scored["predicted_clv_pct"] = scored.apply(predicted_clv_pct, axis=1)
 
 with st.expander("⚙️ Filters", expanded=False):
     c1, c2 = st.columns(2)
@@ -728,9 +793,13 @@ qualified = apply_game_exposure_limit(qualified, max_per_game=max_per_game)
 
 if sharp_mode:
     qualified = qualified[(qualified["confidence_grade"].isin(["A+ ELITE", "A STRONG"])) & (qualified["consensus_action"] == "Bet")].copy()
-    qualified = qualified.sort_values(["rank_score", "realistic_ev_pct"], ascending=False).head(3)
 
 all_ranked = filtered.sort_values(["rank_score", "realistic_ev_pct", "true_edge"], ascending=False).reset_index(drop=True)
+qualified = qualified.sort_values(["rank_score", "realistic_ev_pct", "true_edge"], ascending=False).reset_index(drop=True)
+
+portfolio_source = pd.concat([qualified, all_ranked[all_ranked["tier"] != "Needs line movement"].head(5)], ignore_index=True)
+portfolio_source = portfolio_source.drop_duplicates(subset=["play_key"])
+portfolio = allocate_portfolio(portfolio_source, bankroll=float(bankroll), max_total_u=float(max_total_portfolio_u), max_per_game=max_per_game)
 
 if refresh_reason:
     alerts_to_show = create_alerts(previous_snapshot, all_ranked.head(8), qualified, refresh_window)
@@ -746,19 +815,26 @@ if alerts_to_show:
 fallback_pool = all_ranked[all_ranked["tier"] != "Qualified"].head(3).copy()
 
 if qualified.empty:
-    st.warning("No qualified plays under the current V10 filters.")
+    st.warning("No qualified plays under the current V10.1 filters.")
 
     st.markdown("## 🔎 Fallback Plays")
     for _, row in fallback_pool.iterrows():
         render_compact_play(row)
 
     st.markdown("## 💰 Suggested Fallback Stakes")
-    for _, row in fallback_pool.iterrows():
-        st.write(f"**{row['player']}** — {row['tier']} • {row['bet_decision']} • Stake {row['single_stake_u']:.2f}u • Pred. CLV {row['predicted_clv_pct']:.2f}%")
+    fallback_alloc = allocate_portfolio(fallback_pool, bankroll=float(bankroll), max_total_u=float(max_total_portfolio_u), max_per_game=max_per_game)
+    if fallback_alloc.empty:
+        st.info("No fallback allocations available.")
+    else:
+        for _, row in fallback_alloc.iterrows():
+            st.write(f"**{row['player']}** — {row['tier']} • {row['bet_decision']} • Stake {row['alloc_u']:.2f}u • Pred. CLV {row['predicted_clv_pct']:.2f}%")
 
+    st.markdown("## 🧠 Portfolio Optimizer")
+    if not fallback_alloc.empty:
+        show_port = fallback_alloc[["player", "market", "bet_side", "tier", "bet_decision", "single_stake_u", "alloc_u", "alloc_$", "predicted_clv_pct"]].copy()
+        st.dataframe(show_port, use_container_width=True, hide_index=True)
     st.stop()
 
-qualified = qualified.sort_values(["rank_score", "realistic_ev_pct", "true_edge"], ascending=False).reset_index(drop=True)
 tops = unique_top_plays(qualified)
 best_play, safe_play, edge_play = tops["best"], tops["safe"], tops["edge"]
 best_parlay = build_best_parlay(qualified, leg_size=2)
@@ -772,19 +848,44 @@ st.markdown(
     unsafe_allow_html=True
 )
 
+best_play_port = portfolio[portfolio["play_key"] == best_play["play_key"]]
+if not best_play_port.empty:
+    best_play = best_play.copy()
+    best_play["alloc_u"] = float(best_play_port.iloc[0]["alloc_u"])
+    best_play["alloc_$"] = float(best_play_port.iloc[0]["alloc_$"])
+
 render_best_bet(best_play)
 
 st.markdown("## ✅ Qualified Plays")
 for _, row in qualified.iterrows():
-    render_compact_play(row)
+    row_copy = row.copy()
+    port_match = portfolio[portfolio["play_key"] == row["play_key"]]
+    if not port_match.empty:
+        row_copy["alloc_u"] = float(port_match.iloc[0]["alloc_u"])
+    render_compact_play(row_copy)
 
 if not fallback_pool.empty:
     st.markdown("## 🔎 Fallback Plays")
     for _, row in fallback_pool.iterrows():
-        render_compact_play(row)
+        row_copy = row.copy()
+        port_match = portfolio[portfolio["play_key"] == row["play_key"]]
+        if not port_match.empty:
+            row_copy["alloc_u"] = float(port_match.iloc[0]["alloc_u"])
+        render_compact_play(row_copy)
+
+st.markdown("## 🧠 Auto Bet Allocation (Portfolio Optimizer)")
+if portfolio.empty:
+    st.info("No portfolio allocations available.")
+else:
+    portfolio_show = portfolio[[
+        "player", "market", "bet_side", "tier", "bet_decision",
+        "single_stake_u", "alloc_u", "alloc_$", "portfolio_weight", "predicted_clv_pct"
+    ]].copy()
+    portfolio_show["portfolio_weight"] = (portfolio_show["portfolio_weight"] * 100).round(1).astype(str) + "%"
+    st.dataframe(portfolio_show, use_container_width=True, hide_index=True)
 
 st.markdown("## ✅ Add To Bet Log")
-track_rows = pd.concat([qualified.head(3), fallback_pool.head(2)], ignore_index=True).drop_duplicates(subset=["play_key"])
+track_rows = portfolio.head(5).copy()
 cols = st.columns(min(3, len(track_rows))) if len(track_rows) > 0 else []
 for i, (_, row) in enumerate(track_rows.iterrows()):
     with cols[i % len(cols)]:
@@ -795,7 +896,7 @@ for i, (_, row) in enumerate(track_rows.iterrows()):
 st.markdown("## 💰 Bankroll")
 c1, c2, c3, c4 = st.columns(4)
 with c1:
-    render_metric_box("Top Stake", f"{best_play['single_stake_u']:.2f}u")
+    render_metric_box("Top Stake", f"{best_play.get('alloc_u', best_play['single_stake_u']):.2f}u")
 with c2:
     parlay_units = 0.75 if not best_parlay else min(1.00, max(0.25, best_parlay["ev_pct"] / 20))
     render_metric_box("Parlay Stake", f"{parlay_units:.2f}u")
@@ -867,4 +968,4 @@ if call_log.empty:
 else:
     st.dataframe(call_log.sort_index(ascending=False), use_container_width=True, hide_index=True)
 
-st.caption("V10: auto-sized fallback tiers, CLV prediction, and upgrade alerts active.")
+st.caption("V10.1: aggression mode and auto bet allocation portfolio optimizer active.")

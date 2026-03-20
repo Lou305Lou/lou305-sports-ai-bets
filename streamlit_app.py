@@ -8,7 +8,7 @@ import streamlit as st
 
 # ============================================================
 # Sports AI Betting Dashboard — Clean Rebuild
-# Version: Full App with NBA Player Props V2 (Starters Only)
+# Version: Full App with NBA Player Props V2 + Scoring Fix
 # ============================================================
 
 st.set_page_config(page_title="Sports AI Betting Dashboard", layout="wide")
@@ -35,18 +35,6 @@ def american_to_implied_prob(odds: float) -> float:
     if odds > 0:
         return 100 / (odds + 100)
     return abs(odds) / (abs(odds) + 100)
-
-
-def decimal_to_american(decimal_odds: float) -> Optional[int]:
-    try:
-        decimal_odds = float(decimal_odds)
-    except Exception:
-        return None
-    if decimal_odds <= 1:
-        return None
-    if decimal_odds >= 2:
-        return int(round((decimal_odds - 1) * 100))
-    return int(round(-100 / (decimal_odds - 1)))
 
 
 def normal_cdf(x: float) -> float:
@@ -132,17 +120,14 @@ def ensure_columns(df: pd.DataFrame) -> pd.DataFrame:
         if col not in df.columns:
             df[col] = val
 
-    # Normalize strings
     for c in ["player", "team", "opponent", "matchup", "market", "bet_side", "book", "game_time"]:
         df[c] = df[c].fillna("").astype(str).str.strip()
 
-    # Normalize numeric fields
     for c in ["line", "projection", "odds", "minutes", "std_dev", "game_total", "spread"]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
 
     df["starter"] = df["starter"].apply(safe_bool)
 
-    # Fill matchup if missing
     if (df["matchup"] == "").any():
         auto_matchup = df["team"].fillna("") + np.where(df["opponent"].fillna("") != "", " vs " + df["opponent"].fillna(""), "")
         df.loc[df["matchup"] == "", "matchup"] = auto_matchup[df["matchup"] == ""]
@@ -156,7 +141,6 @@ def infer_market_std(row: pd.Series) -> float:
     if not np.isnan(supplied) and supplied > 0:
         return supplied
 
-    # Sensible defaults by market
     defaults = {
         "points": 8.0,
         "rebounds": 3.6,
@@ -201,34 +185,43 @@ def calculate_hit_probability(row: pd.Series) -> float:
     return clamp01(p_over)
 
 
+def bounded_component(x: pd.Series, low: float, high: float, max_points: float) -> pd.Series:
+    clipped = x.clip(lower=low, upper=high)
+    return ((clipped - low) / (high - low) * max_points).clip(lower=0, upper=max_points)
+
+
 def grade_from_score(score: float) -> str:
     if score >= 85:
         return "🟢 A"
-    if score >= 75:
+    if score >= 77:
         return "🟢 B"
-    if score >= 65:
+    if score >= 69:
         return "🟡 C"
-    if score >= 55:
+    if score >= 60:
         return "🟠 D"
     return "🔴 F"
 
 
 def tier_from_score(score: float) -> str:
-    if score >= 82:
+    if score >= 85:
         return "🟢 Tier 1"
-    if score >= 70:
+    if score >= 75:
         return "🟡 Tier 2"
-    return "⚪ Tier 3"
+    if score >= 65:
+        return "⚪ Tier 3"
+    return "⚫ Pass"
 
 
 def unit_size_from_score(score: float) -> float:
-    if score >= 85:
+    if score >= 87:
         return 1.00
-    if score >= 77:
+    if score >= 80:
         return 0.75
-    if score >= 68:
+    if score >= 72:
         return 0.50
-    return 0.25
+    if score >= 65:
+        return 0.25
+    return 0.00
 
 
 def variance_label(std_dev: float, market: str) -> str:
@@ -257,7 +250,7 @@ def matchup_label(row: pd.Series) -> str:
 
 
 def portfolio_flag(score: float, ev_edge: float, hit_pct: float) -> str:
-    if score >= 68 and ev_edge >= 5 and hit_pct >= 57:
+    if score >= 72 and ev_edge >= 3 and hit_pct >= 56:
         return "Selected"
     return "Pass"
 
@@ -279,34 +272,43 @@ def compute_edges(df: pd.DataFrame) -> pd.DataFrame:
     out["ev"] = (out["hit_prob"] * (dec - 1)) - (1 - out["hit_prob"])
     out["ev_edge_pct"] = (out["ev"] * 100).round(2)
 
-    # Score model
-    hit_component = (out["hit_pct"] - 50).clip(lower=0) * 1.25
-    ev_component = out["ev_edge_pct"].clip(lower=0) * 1.5
-    edge_component = out["projection_edge"].clip(lower=0) * 2.25
+    # -----------------------------
+    # SCORING FIX
+    # -----------------------------
+    # Designed to create actual separation instead of everything scoring 99.9.
+    hit_component = bounded_component(out["hit_pct"], 52, 70, 28)
+    ev_component = bounded_component(out["ev_edge_pct"], 0, 20, 22)
+    edge_component = bounded_component(out["projection_edge"], 0.5, 5.0, 18)
 
-    starter_bonus = np.where(out["starter"], 5, 0)
-    minutes_bonus = ((out["minutes"].fillna(0) - 24).clip(lower=0, upper=14) * 0.8)
+    starter_bonus = np.where(out["starter"], 4.0, 0.0)
+    minutes_bonus = bounded_component(out["minutes"].fillna(0), 28, 36, 8)
+    matchup_bonus = np.where(out["game_total"].fillna(0) >= 235, 3.0, np.where(out["game_total"].fillna(0) >= 228, 1.5, 0.0))
+    price_bonus = np.where((out["odds"] >= -135) & (out["odds"] <= 125), 2.0, 0.0)
 
-    total_bonus = np.where(out["game_total"].fillna(0) >= 232, 3, 0)
-    spread_penalty = np.where(abs(out["spread"].fillna(0)) >= 12, 4, 0)
+    blowout_penalty = np.where(abs(out["spread"].fillna(0)) >= 12, 5.0, np.where(abs(out["spread"].fillna(0)) >= 9, 2.5, 0.0))
+    nonstarter_penalty = np.where(~out["starter"], 8.0, 0.0)
+    low_minutes_penalty = np.where(out["minutes"].fillna(0) < 28, 6.0, 0.0)
 
     out["score"] = (
-        35
+        28
         + hit_component
         + ev_component
         + edge_component
         + starter_bonus
         + minutes_bonus
-        + total_bonus
-        - spread_penalty
+        + matchup_bonus
+        + price_bonus
+        - blowout_penalty
+        - nonstarter_penalty
+        - low_minutes_penalty
     ).clip(lower=0, upper=99.9).round(1)
 
     out["grade"] = out["score"].apply(grade_from_score)
     out["tier"] = out["score"].apply(tier_from_score)
     out["model_size_u"] = out["score"].apply(unit_size_from_score)
     out["portfolio_size_u"] = np.where(
-        out["score"] >= 78, out["model_size_u"] + 0.10,
-        np.where(out["score"] >= 68, out["model_size_u"] + 0.10, out["model_size_u"])
+        out["score"] >= 85, out["model_size_u"] + 0.10,
+        np.where(out["score"] >= 75, out["model_size_u"] + 0.05, out["model_size_u"])
     ).round(2)
     out["matchup_note"] = out.apply(matchup_label, axis=1)
     out["variance_note"] = out.apply(lambda r: variance_label(r["std_dev_used"], r["market"]), axis=1)
@@ -316,11 +318,6 @@ def compute_edges(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def find_arbitrage_and_middles(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Very simple scan:
-    - Arbitrage: same event/market/player/line, opposite sides with combined implied prob < 1
-    - Middle: same event/market/player, Over line lower than Under line higher
-    """
     if df.empty:
         return pd.DataFrame(), pd.DataFrame()
 
@@ -334,7 +331,6 @@ def find_arbitrage_and_middles(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataF
     arb_rows = []
     mid_rows = []
 
-    # Arbitrage
     arb_group = work.groupby(["key", "line"], dropna=False)
     for (key, line), g in arb_group:
         overs = g[g["bet_side"].str.lower() == "over"]
@@ -357,7 +353,6 @@ def find_arbitrage_and_middles(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataF
                         "arb_margin_pct": round((1 - total_implied) * 100, 2),
                     })
 
-    # Middles
     mid_group = work.groupby(["key"], dropna=False)
     for key, g in mid_group:
         overs = g[g["bet_side"].str.lower() == "over"].copy()
@@ -449,16 +444,12 @@ def load_csv(file) -> pd.DataFrame:
     return pd.read_csv(file)
 
 
-# -----------------------------
-# Sidebar
-# -----------------------------
 st.title("🏀 Sports AI Betting Dashboard")
-st.caption("Clean rebuild with Best Bets, NBA Player Props V2 (Starters Only), Arbitrage/Middles, and Portfolio views.")
+st.caption("Scoring fix applied: sharper separation between elite, strong, playable, and pass-level bets.")
 
 with st.sidebar:
     st.header("Data")
     uploaded = st.file_uploader("Upload your bets CSV", type=["csv"])
-
     use_sample = st.toggle("Use sample data", value=uploaded is None)
 
     st.markdown("### Expected CSV columns")
@@ -467,15 +458,6 @@ with st.sidebar:
         language="text"
     )
 
-    st.markdown("### Notes")
-    st.write("- `starter` can be True/False, yes/no, 1/0")
-    st.write("- If `bet_side` is missing, app infers Over/Under from projection vs line")
-    st.write("- If `std_dev` is missing, app uses market-based defaults")
-
-
-# -----------------------------
-# Load data
-# -----------------------------
 if uploaded is not None:
     try:
         raw_df = load_csv(uploaded)
@@ -493,9 +475,6 @@ else:
 df = ensure_columns(raw_df)
 model_df = compute_edges(df)
 
-# -----------------------------
-# Global filters
-# -----------------------------
 st.success(f"Loaded source: {source_label}")
 
 c1, c2, c3, c4 = st.columns(4)
@@ -519,10 +498,6 @@ if only_starters_global:
     filtered = filtered[filtered["starter"] == True]
 filtered = filtered[filtered["score"] >= min_score].copy()
 
-
-# -----------------------------
-# Summary metrics
-# -----------------------------
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("Bets Loaded", f"{len(model_df)}")
 m2.metric("Filtered Bets", f"{len(filtered)}")
@@ -531,10 +506,6 @@ m4.metric("Avg EV Edge", f"{filtered['ev_edge_pct'].mean():.2f}%" if not filtere
 
 tabs = st.tabs(["🔥 Best Bets", "🧠 NBA Player Props V2", "⚡ Arbitrage & Middles", "📦 Portfolio", "🗂️ Raw Data"])
 
-
-# -----------------------------
-# Tab 1 — Best Bets
-# -----------------------------
 with tabs[0]:
     st.subheader("Top Best Bets")
     left, right = st.columns([1, 2])
@@ -566,10 +537,6 @@ with tabs[0]:
     st.markdown("### Card View")
     format_best_bet_cards(display_df, top_n=top_n)
 
-
-# -----------------------------
-# Tab 2 — NBA Player Props V2 (Starters Only)
-# -----------------------------
 with tabs[1]:
     st.subheader("NBA Player Props V2 — Starters Only")
 
@@ -615,13 +582,8 @@ with tabs[1]:
     st.markdown("### Featured Props")
     format_best_bet_cards(prop_df, top_n=8)
 
-
-# -----------------------------
-# Tab 3 — Arbitrage & Middles
-# -----------------------------
 with tabs[2]:
     st.subheader("Arbitrage & Middles Scanner")
-
     arb_df, mid_df = find_arbitrage_and_middles(model_df)
 
     a1, a2 = st.columns(2)
@@ -639,18 +601,14 @@ with tabs[2]:
         else:
             st.dataframe(mid_df.sort_values("gap", ascending=False), use_container_width=True, hide_index=True)
 
-
-# -----------------------------
-# Tab 4 — Portfolio
-# -----------------------------
 with tabs[3]:
     st.subheader("Portfolio Engine Snapshot")
 
     port = filtered.copy()
     port = port[
         (port["portfolio_status"] == "Selected") &
-        (port["score"] >= 68) &
-        (port["ev_edge_pct"] >= 4)
+        (port["score"] >= 72) &
+        (port["ev_edge_pct"] >= 3)
     ].sort_values(["score", "ev_edge_pct"], ascending=False)
 
     bankroll = st.number_input("Bankroll ($)", min_value=50, max_value=100000, value=1000, step=50)
@@ -673,10 +631,6 @@ with tabs[3]:
         hide_index=True,
     )
 
-
-# -----------------------------
-# Tab 5 — Raw Data
-# -----------------------------
 with tabs[4]:
     st.subheader("Model Data")
     st.dataframe(model_df, use_container_width=True, hide_index=True)
@@ -690,4 +644,4 @@ with tabs[4]:
     )
 
 st.markdown("---")
-st.caption("This rebuild is meant to be stable and easy to paste into Streamlit Cloud as a full replacement file.")
+st.caption("Scoring V2 is live. Elite scores should now be rare instead of every bet showing as 99.9.")

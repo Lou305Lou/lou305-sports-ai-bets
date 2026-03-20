@@ -7,7 +7,8 @@ import streamlit as st
 
 
 # ============================================================
-# Sports AI Betting Dashboard — V6.1 Dashboard UI Upgrade
+# Sports AI Betting Dashboard — V7 Step 1
+# Multi-AI Consensus Engine
 # ============================================================
 
 st.set_page_config(page_title="Sports AI Betting Dashboard", layout="wide")
@@ -411,6 +412,175 @@ def realism_penalty_from_ev(ev_pct: float) -> float:
     return 13.0
 
 
+# -----------------------------
+# Multi-AI model scores
+# -----------------------------
+def projection_model_score(row: pd.Series) -> float:
+    score = 40.0
+    edge = safe_float(row.get("projection_edge"), 0)
+    edge_z = safe_float(row.get("edge_z"), 0)
+    market = str(row.get("market", "")).lower()
+
+    score += min(edge * 8.5, 22)
+    score += min(edge_z * 16, 18)
+
+    if any(k in market for k in ["points", "pra", "assists"]):
+        score -= max(edge - 4.5, 0) * 2.5
+    else:
+        score -= max(edge - 3.0, 0) * 2.0
+
+    return round(float(np.clip(score, 0, 100)), 1)
+
+
+def script_model_score(row: pd.Series) -> float:
+    score = 48.0
+    score += safe_float(row.get("game_script_boost"), 0) * 4.5
+    score += (safe_float(row.get("script_confidence"), 50) - 50) * 0.45
+
+    blowout = str(row.get("blowout_risk", ""))
+    if blowout == "High":
+        score -= 10
+    elif blowout == "Medium":
+        score -= 4
+    else:
+        score += 2
+
+    return round(float(np.clip(score, 0, 100)), 1)
+
+
+def risk_model_score(row: pd.Series) -> float:
+    score = 55.0
+    minutes = safe_float(row.get("minutes"), 0)
+    starter = safe_bool(row.get("starter"))
+    corr_pen = safe_float(row.get("correlation_penalty"), 0)
+    variance = str(row.get("variance_note", ""))
+
+    if starter:
+        score += 12
+    else:
+        score -= 15
+
+    if minutes >= 36:
+        score += 12
+    elif minutes >= 33:
+        score += 9
+    elif minutes >= 30:
+        score += 5
+    elif minutes >= 27:
+        score += 1
+    else:
+        score -= 10
+
+    if variance == "High-upside profile":
+        score -= 5
+    elif variance == "High variance":
+        score -= 7
+    elif variance == "Lower variance":
+        score += 5
+
+    score -= corr_pen * 3
+
+    return round(float(np.clip(score, 0, 100)), 1)
+
+
+def market_model_score(row: pd.Series) -> float:
+    score = 52.0
+    ev = safe_float(row.get("ev_edge_pct"), 0)
+    hit = safe_float(row.get("hit_pct"), 0)
+    realism = str(row.get("realism_flag", ""))
+
+    score += min(ev, 15) * 1.8
+    score += max(min(hit, 68) - 55, 0) * 1.25
+
+    if realism == "Review":
+        score -= 12
+    else:
+        score += 4
+
+    score -= max(ev - 20, 0) * 1.3
+    score -= max(hit - 70, 0) * 1.5
+
+    return round(float(np.clip(score, 0, 100)), 1)
+
+
+def portfolio_model_score(row: pd.Series) -> float:
+    score = 56.0
+    corr_pen = safe_float(row.get("correlation_penalty"), 0)
+    status = str(row.get("portfolio_status", ""))
+    blowout = str(row.get("blowout_risk", ""))
+
+    if status == "Selected":
+        score += 14
+    else:
+        score -= 12
+
+    score -= corr_pen * 5
+
+    if blowout == "High":
+        score -= 8
+    elif blowout == "Medium":
+        score -= 3
+    else:
+        score += 2
+
+    return round(float(np.clip(score, 0, 100)), 1)
+
+
+def consensus_tier(score: float) -> str:
+    if score >= 84:
+        return "🟢 Strong Buy"
+    if score >= 75:
+        return "🟡 Buy"
+    if score >= 66:
+        return "⚪ Lean"
+    return "🔴 Pass"
+
+
+def consensus_action(score: float, agreement: float, review_flag: str) -> str:
+    if review_flag == "Review" and score < 78:
+        return "Pass"
+    if score >= 84 and agreement >= 80:
+        return "Bet"
+    if score >= 75 and agreement >= 65:
+        return "Bet"
+    if score >= 66:
+        return "Lean"
+    return "Pass"
+
+
+def add_multi_ai_consensus(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+
+    out["projection_model"] = out.apply(projection_model_score, axis=1)
+    out["script_model"] = out.apply(script_model_score, axis=1)
+    out["risk_model"] = out.apply(risk_model_score, axis=1)
+    out["market_model"] = out.apply(market_model_score, axis=1)
+    out["portfolio_model"] = out.apply(portfolio_model_score, axis=1)
+
+    model_cols = ["projection_model", "script_model", "risk_model", "market_model", "portfolio_model"]
+    out["consensus_score"] = (
+        out["projection_model"] * 0.25
+        + out["script_model"] * 0.18
+        + out["risk_model"] * 0.20
+        + out["market_model"] * 0.22
+        + out["portfolio_model"] * 0.15
+    ).round(1)
+
+    out["model_agreement_pct"] = (
+        (out[model_cols] >= 70).sum(axis=1) / len(model_cols) * 100
+    ).round(0)
+
+    out["consensus_tier"] = out["consensus_score"].apply(consensus_tier)
+    out["consensus_action"] = out.apply(
+        lambda r: consensus_action(r["consensus_score"], r["model_agreement_pct"], str(r["realism_flag"])),
+        axis=1,
+    )
+
+    out["consensus_rank"] = out["consensus_score"].rank(method="dense", ascending=False).astype(int)
+
+    return out
+
+
 def compute_edges(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
 
@@ -539,135 +709,8 @@ def compute_edges(df: pd.DataFrame) -> pd.DataFrame:
         "Normal"
     )
 
+    out = add_multi_ai_consensus(out)
     return out
-
-
-def build_top_plays(df: pd.DataFrame, max_plays: int = 3, min_score: float = 76, min_hit: float = 56,
-                    min_ev: float = 3, min_script_conf: int = 60, avoid_review: bool = False) -> pd.DataFrame:
-    if df.empty:
-        return df.copy()
-
-    work = df.copy()
-    work = work[
-        (work["score"] >= min_score) &
-        (work["hit_pct"] >= min_hit) &
-        (work["ev_edge_pct"] >= min_ev) &
-        (work["portfolio_status"] == "Selected") &
-        (work["script_confidence"] >= min_script_conf)
-    ].copy()
-
-    if avoid_review:
-        work = work[work["realism_flag"] != "Review"].copy()
-
-    if work.empty:
-        return work
-
-    work["top_play_value"] = (
-        work["score"] * 0.48
-        + work["hit_pct"] * 0.18
-        + work["ev_edge_pct"].clip(upper=20) * 0.22
-        + work["script_confidence"] * 0.10
-        + work["game_script_boost"] * 1.25
-        - work["correlation_penalty"] * 3.2
-        + np.where(work["blowout_risk"] == "Low", 2.0, np.where(work["blowout_risk"] == "Medium", -1.5, -4.0))
-        + np.where(work["realism_flag"] == "Normal", 2.0, -1.0)
-    ).round(2)
-
-    work = work.sort_values(["top_play_value", "score", "ev_edge_pct"], ascending=False)
-
-    selected_rows = []
-    used_matchups = {}
-    used_groups = set()
-
-    for _, row in work.iterrows():
-        matchup = str(row["matchup"])
-        corr_group = str(row["correlation_group"])
-        group_key = f"{matchup}|{corr_group}"
-
-        if used_matchups.get(matchup, 0) >= 2:
-            continue
-        if group_key in used_groups:
-            continue
-
-        selected_rows.append(row)
-        used_matchups[matchup] = used_matchups.get(matchup, 0) + 1
-        used_groups.add(group_key)
-
-        if len(selected_rows) >= max_plays:
-            break
-
-    if not selected_rows:
-        return work.head(max_plays).copy()
-
-    result = pd.DataFrame(selected_rows).copy().reset_index(drop=True)
-    result["top_play_rank"] = np.arange(1, len(result) + 1)
-    result["bet_this"] = "✅ Bet This"
-    return result
-
-
-def find_arbitrage_and_middles(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    if df.empty:
-        return pd.DataFrame(), pd.DataFrame()
-
-    work = df.copy()
-    work["key"] = (
-        work["matchup"].astype(str) + " | " +
-        work["player"].astype(str) + " | " +
-        work["market"].astype(str)
-    )
-
-    arb_rows = []
-    mid_rows = []
-
-    arb_group = work.groupby(["key", "line"], dropna=False)
-    for (_, line), g in arb_group:
-        overs = g[g["bet_side"].str.lower() == "over"]
-        unders = g[g["bet_side"].str.lower() == "under"]
-
-        for _, o in overs.iterrows():
-            for _, u in unders.iterrows():
-                total_implied = american_to_implied_prob(o["odds"]) + american_to_implied_prob(u["odds"])
-                if total_implied < 1:
-                    arb_rows.append({
-                        "matchup": o["matchup"],
-                        "player": o["player"],
-                        "market": o["market"],
-                        "line": line,
-                        "over_book": o["book"],
-                        "over_odds": o["odds"],
-                        "under_book": u["book"],
-                        "under_odds": u["odds"],
-                        "combined_implied_pct": round(total_implied * 100, 2),
-                        "arb_margin_pct": round((1 - total_implied) * 100, 2),
-                    })
-
-    mid_group = work.groupby(["key"], dropna=False)
-    for _, g in mid_group:
-        overs = g[g["bet_side"].str.lower() == "over"].copy()
-        unders = g[g["bet_side"].str.lower() == "under"].copy()
-        if overs.empty or unders.empty:
-            continue
-
-        for _, o in overs.iterrows():
-            for _, u in unders.iterrows():
-                if pd.notna(o["line"]) and pd.notna(u["line"]) and o["line"] < u["line"]:
-                    gap = u["line"] - o["line"]
-                    if gap >= 1:
-                        mid_rows.append({
-                            "matchup": o["matchup"],
-                            "player": o["player"],
-                            "market": o["market"],
-                            "over_line": o["line"],
-                            "over_book": o["book"],
-                            "over_odds": o["odds"],
-                            "under_line": u["line"],
-                            "under_book": u["book"],
-                            "under_odds": u["odds"],
-                            "middle_window": f"{o['line']} to {u['line']}",
-                            "gap": round(gap, 2),
-                        })
-
-    return pd.DataFrame(arb_rows).drop_duplicates(), pd.DataFrame(mid_rows).drop_duplicates()
 
 
 def inject_ui_css():
@@ -700,55 +743,34 @@ def inject_ui_css():
             margin-bottom: 6px;
         }
         .metric-value {
-            font-size: 1.4rem;
+            font-size: 1.35rem;
             font-weight: 700;
             line-height: 1.05;
         }
-
-        .bet-card {
-            border: 1px solid rgba(128,128,128,0.25);
+        .consensus-card {
+            border: 1px solid rgba(128,128,128,0.22);
             border-radius: 16px;
-            padding: 14px 14px 10px 14px;
-            margin: 0 0 12px 0;
-            background: rgba(250,250,250,0.65);
-            box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+            padding: 14px;
+            margin-bottom: 12px;
+            background: rgba(250,250,250,0.78);
         }
-        .bet-card.top-play {
-            border: 2px solid rgba(230, 180, 20, 0.55);
-            background: rgba(255,248,225,0.95);
-            box-shadow: 0 3px 10px rgba(220,170,20,0.10);
-        }
-        .bet-card-title {
-            font-size: 1.03rem;
+        .consensus-title {
+            font-size: 1rem;
             font-weight: 700;
-            line-height: 1.2;
-            margin-bottom: 4px;
+            margin-bottom: 5px;
         }
-        .bet-card-sub {
-            font-size: 0.78rem;
-            opacity: 0.80;
-            margin-bottom: 10px;
-        }
-        .bet-grid {
+        .mini-grid {
             display: grid;
-            grid-template-columns: repeat(2, minmax(0,1fr));
-            gap: 6px 10px;
-            margin-bottom: 8px;
+            grid-template-columns: repeat(3, minmax(0,1fr));
+            gap: 8px;
+            margin-top: 8px;
         }
-        .bet-stat {
-            font-size: 0.77rem;
-            line-height: 1.25;
-            padding: 6px 8px;
+        .mini-stat {
             border-radius: 10px;
+            padding: 7px 8px;
             background: rgba(0,0,0,0.035);
-        }
-        .bet-footer {
-            font-size: 0.75rem;
-            line-height: 1.35;
-            margin-top: 4px;
-        }
-        .pill-wrap {
-            margin-bottom: 6px;
+            font-size: 0.74rem;
+            line-height: 1.25;
         }
         .pill {
             display: inline-block;
@@ -761,23 +783,13 @@ def inject_ui_css():
             border: 1px solid rgba(128,128,128,0.25);
             background: rgba(0,0,0,0.03);
         }
-        .section-caption {
-            font-size: 0.80rem;
-            opacity: 0.72;
-            margin-top: -4px;
-            margin-bottom: 10px;
-        }
         @media (max-width: 768px) {
-            .metric-grid, .metric-grid.three {
+            .metric-grid, .metric-grid.three, .mini-grid {
                 grid-template-columns: repeat(2, minmax(0,1fr));
             }
             .metric-value {
-                font-size: 1.2rem;
+                font-size: 1.15rem;
             }
-            .bet-card-title { font-size: 0.95rem; }
-            .bet-card-sub { font-size: 0.74rem; }
-            .bet-stat { font-size: 0.73rem; }
-            .bet-footer { font-size: 0.72rem; }
         }
         </style>
         """,
@@ -786,73 +798,49 @@ def inject_ui_css():
 
 
 def render_metric_boxes(items, three=False):
-    cls = "metric-grid three" if three else "metric-grid"
-    html = f'<div class="{cls}">'
-    for label, value in items:
-        html += f"""
-        <div class="metric-card">
-            <div class="metric-label">{label}</div>
-            <div class="metric-value">{value}</div>
-        </div>
-        """
-    html += "</div>"
-    st.markdown(html, unsafe_allow_html=True)
+    cols = 3 if three else 4
+    grid = st.columns(cols)
+    for i, (label, value) in enumerate(items):
+        with grid[i % cols]:
+            st.markdown(
+                f"""
+                <div style="
+                    border:1px solid rgba(128,128,128,0.22);
+                    border-radius:14px;
+                    padding:12px;
+                    background:rgba(250,250,250,0.75);
+                ">
+                    <div style="font-size:12px; opacity:0.72;">{label}</div>
+                    <div style="font-size:22px; font-weight:700; line-height:1.05;">{value}</div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
 
 
-def format_bet_cards(df: pd.DataFrame, top_n: int = 10, top_play_mode: bool = False):
+def render_consensus_cards(df: pd.DataFrame, top_n: int = 6):
     if df.empty:
-        st.info("No bets match the current filters.")
+        st.info("No plays match the current filters.")
         return
 
-    top = df.sort_values(["score", "ev_edge_pct", "hit_pct"], ascending=False).head(top_n).reset_index(drop=True)
-
-    for idx, row in top.iterrows():
-        tier = row.get("tier", "")
-        realism = row.get("realism_flag", "")
-        selected = row.get("portfolio_status", "")
-        script = row.get("script_type", "")
-        conf = int(row["script_confidence"]) if pd.notna(row.get("script_confidence", np.nan)) else "N/A"
-        extra_rank = f"🏆 Top Play #{int(row['top_play_rank'])}" if top_play_mode and "top_play_rank" in row else f"#{idx + 1}"
-        card_class = "bet-card top-play" if top_play_mode else "bet-card"
-
-        pill_html = f"""
-        <div class="pill-wrap">
-            <span class="pill">{tier}</span>
-            <span class="pill">{selected}</span>
-            <span class="pill">{realism}</span>
-        """
-        if top_play_mode and "bet_this" in row:
-            pill_html += f"""
-            <span class="pill">{row['bet_this']}</span>
-            <span class="pill">Value {row['top_play_value']:.1f}</span>
-            """
-        pill_html += "</div>"
-
+    show = df.sort_values(["consensus_score", "model_agreement_pct"], ascending=False).head(top_n).reset_index(drop=True)
+    for _, row in show.iterrows():
         html = f"""
-        <div class="{card_class}">
-            <div class="bet-card-title">{extra_rank} {row['player']} — {row['bet_side']} {row['line']} {str(row['market']).title()}</div>
-            <div class="bet-card-sub">{row['matchup']} • FULL_GAME • {row['book'] if row['book'] else 'Book N/A'}</div>
-
-            {pill_html}
-
-            <div class="bet-grid">
-                <div class="bet-stat"><b>Projection</b><br>{row['projection']:.2f}</div>
-                <div class="bet-stat"><b>Edge</b><br>{row['projection_edge']:.2f}</div>
-                <div class="bet-stat"><b>Odds</b><br>{int(row['odds']) if pd.notna(row['odds']) else 'N/A'}</div>
-                <div class="bet-stat"><b>Hit %</b><br>{row['hit_pct']:.1f}%</div>
-                <div class="bet-stat"><b>EV Edge</b><br>{row['ev_edge_pct']:.2f}%</div>
-                <div class="bet-stat"><b>Score</b><br>{row['score']:.1f} ({row['grade']})</div>
-                <div class="bet-stat"><b>Model Size</b><br>{row['model_size_u']:.2f}u</div>
-                <div class="bet-stat"><b>Portfolio Size</b><br>{row['portfolio_size_u']:.2f}u</div>
+        <div class="consensus-card">
+            <div class="consensus-title">#{int(row['consensus_rank'])} {row['player']} — {row['bet_side']} {row['line']} {str(row['market']).title()}</div>
+            <div style="font-size:0.78rem; opacity:0.8; margin-bottom:6px;">{row['matchup']} • {row['book']}</div>
+            <div>
+                <span class="pill">{row['consensus_tier']}</span>
+                <span class="pill">{row['consensus_action']}</span>
+                <span class="pill">{int(row['model_agreement_pct'])}% Agreement</span>
             </div>
-
-            <div class="bet-footer">
-                <b>Matchup:</b> {row['matchup_note']} &nbsp;|&nbsp;
-                <b>Script:</b> {script} ({conf}) &nbsp;|&nbsp;
-                <b>Blowout:</b> {row['blowout_risk']}<br>
-                <b>Variance:</b> {row['variance_note']} &nbsp;|&nbsp;
-                <b>Corr Penalty:</b> {row['correlation_penalty']:.1f} &nbsp;|&nbsp;
-                <b>Realism:</b> {realism}
+            <div class="mini-grid">
+                <div class="mini-stat"><b>Projection AI</b><br>{row['projection_model']:.1f}</div>
+                <div class="mini-stat"><b>Script AI</b><br>{row['script_model']:.1f}</div>
+                <div class="mini-stat"><b>Risk AI</b><br>{row['risk_model']:.1f}</div>
+                <div class="mini-stat"><b>Market AI</b><br>{row['market_model']:.1f}</div>
+                <div class="mini-stat"><b>Portfolio AI</b><br>{row['portfolio_model']:.1f}</div>
+                <div class="mini-stat"><b>Consensus</b><br>{row['consensus_score']:.1f}</div>
             </div>
         </div>
         """
@@ -905,18 +893,12 @@ def load_csv(file) -> pd.DataFrame:
 inject_ui_css()
 
 st.title("🏀 Sports AI Betting Dashboard")
-st.caption("V6.1 Dashboard UI upgrade: boxed metric bars, fixed Bet This cards, and cleaner mobile spacing.")
+st.caption("V7 Step 1: Multi-AI Consensus Engine added before the parlay optimizer layer.")
 
 with st.sidebar:
     st.header("Data")
     uploaded = st.file_uploader("Upload your bets CSV", type=["csv"])
     use_sample = st.toggle("Use sample data", value=uploaded is None)
-
-    st.markdown("### Expected CSV columns")
-    st.code(
-        "player, team, opponent, matchup, market, bet_side, line, projection, odds, book, starter, minutes, std_dev, game_total, spread",
-        language="text"
-    )
 
 if uploaded is not None:
     try:
@@ -947,7 +929,7 @@ with c2:
 with c3:
     only_starters_global = st.toggle("Starters only (global)", value=False)
 with c4:
-    min_score = st.slider("Minimum score", 0, 95, 60)
+    min_consensus = st.slider("Minimum consensus", 0, 95, 60)
 
 filtered = model_df.copy()
 if selected_books:
@@ -956,219 +938,83 @@ if selected_markets:
     filtered = filtered[filtered["market"].isin(selected_markets)]
 if only_starters_global:
     filtered = filtered[filtered["starter"] == True]
-filtered = filtered[filtered["score"] >= min_score].copy()
+filtered = filtered[filtered["consensus_score"] >= min_consensus].copy()
 
 render_metric_boxes([
     ("Bets Loaded", f"{len(model_df)}"),
     ("Filtered Bets", f"{len(filtered)}"),
-    ("Avg Hit %", f"{filtered['hit_pct'].mean():.1f}%" if not filtered.empty else "N/A"),
-    ("Avg EV Edge", f"{filtered['ev_edge_pct'].mean():.2f}%" if not filtered.empty else "N/A"),
+    ("Avg Consensus", f"{filtered['consensus_score'].mean():.1f}" if not filtered.empty else "N/A"),
+    ("Avg Agreement", f"{filtered['model_agreement_pct'].mean():.0f}%" if not filtered.empty else "N/A"),
 ])
 
-tabs = st.tabs(["⭐ Top Plays Engine", "🔥 Best Bets", "🧠 NBA Player Props V2", "🎮 Game Script AI", "⚡ Arbitrage & Middles", "📦 Portfolio", "🗂️ Raw Data"])
+tabs = st.tabs(["🤖 Multi-AI Consensus", "🔥 Best Consensus Plays", "🎮 Model Breakdown", "🗂️ Raw Data"])
 
 with tabs[0]:
-    st.subheader("Top Plays Engine")
-    st.markdown('<div class="section-caption">Auto-select the cleanest portfolio-safe bets for the slate.</div>', unsafe_allow_html=True)
-
-    t1, t2, t3, t4, t5 = st.columns(5)
-    with t1:
-        max_top_plays = st.slider("Max top plays", 1, 5, 3)
-    with t2:
-        top_min_score = st.slider("Min score", 60, 90, 76)
-    with t3:
-        top_min_hit = st.slider("Min hit %", 50, 75, 56)
-    with t4:
-        top_min_ev = st.slider("Min EV %", 0, 20, 3)
-    with t5:
-        top_min_script = st.slider("Min script confidence", 40, 95, 60)
-
-    avoid_review = st.toggle("Avoid realism-review plays", value=False)
-
-    top_df = build_top_plays(
-        filtered,
-        max_plays=max_top_plays,
-        min_score=top_min_score,
-        min_hit=top_min_hit,
-        min_ev=top_min_ev,
-        min_script_conf=top_min_script,
-        avoid_review=avoid_review,
-    )
-
-    render_metric_boxes([
-        ("Top Plays Found", f"{len(top_df)}"),
-        ("Avg Top Play Score", f"{top_df['score'].mean():.1f}" if not top_df.empty else "N/A"),
-        ("Total Suggested Units", f"{top_df['portfolio_size_u'].sum():.2f}u" if not top_df.empty else "0.00u"),
-    ], three=True)
-
-    if top_df.empty:
-        st.info("No top plays match the current auto-selector rules. Lower the thresholds a bit.")
-    else:
-        st.dataframe(
-            top_df[[
-                "top_play_rank", "bet_this", "player", "matchup", "market", "bet_side", "line",
-                "odds", "hit_pct", "ev_edge_pct", "score", "tier", "script_type",
-                "script_confidence", "correlation_penalty", "realism_flag", "top_play_value"
-            ]],
-            use_container_width=True,
-            hide_index=True,
-        )
-
-        st.markdown("### Bet This")
-        format_bet_cards(top_df, top_n=len(top_df), top_play_mode=True)
-
-with tabs[1]:
-    st.subheader("Top Best Bets")
-    st.markdown('<div class="section-caption">Sharper scores with cleaner mobile cards.</div>', unsafe_allow_html=True)
+    st.subheader("Multi-AI Consensus")
     left, right = st.columns([1, 2])
 
     with left:
-        top_n = st.slider("Show top N bets", 5, 25, 10)
-        min_hit = st.slider("Minimum hit %", 50, 80, 56)
-        min_ev = st.slider("Minimum EV edge %", -10, 30, 3)
-        display_df = filtered[
-            (filtered["hit_pct"] >= min_hit) &
-            (filtered["ev_edge_pct"] >= min_ev)
+        min_agreement = st.slider("Minimum agreement %", 0, 100, 60)
+        action_filter = st.multiselect(
+            "Consensus action",
+            ["Bet", "Lean", "Pass"],
+            default=["Bet", "Lean", "Pass"],
+        )
+        consensus_df = filtered[
+            (filtered["model_agreement_pct"] >= min_agreement) &
+            (filtered["consensus_action"].isin(action_filter))
         ].copy()
 
     with right:
-        if not display_df.empty:
-            ranked = display_df.sort_values(["score", "ev_edge_pct", "hit_pct"], ascending=False)
+        if consensus_df.empty:
+            st.info("No plays match the current consensus filters.")
+        else:
+            ranked = consensus_df.sort_values(["consensus_score", "model_agreement_pct"], ascending=False)
             st.dataframe(
                 ranked[[
-                    "player", "matchup", "market", "bet_side", "line", "projection", "projection_edge",
-                    "odds", "hit_pct", "ev_edge_pct", "score", "grade", "tier", "script_type",
-                    "game_script_boost", "correlation_penalty", "realism_flag", "book"
+                    "consensus_rank", "player", "matchup", "market", "bet_side", "line", "odds",
+                    "projection_model", "script_model", "risk_model", "market_model", "portfolio_model",
+                    "consensus_score", "model_agreement_pct", "consensus_tier", "consensus_action"
                 ]],
                 use_container_width=True,
                 hide_index=True,
             )
-        else:
-            st.info("No bets meet the Best Bets filters.")
 
-    st.markdown("### Card View")
-    format_bet_cards(display_df, top_n=top_n)
+    st.markdown("### Consensus Cards")
+    render_consensus_cards(consensus_df if 'consensus_df' in locals() else filtered)
+
+with tabs[1]:
+    st.subheader("Best Consensus Plays")
+    best = filtered.sort_values(["consensus_score", "model_agreement_pct"], ascending=False).copy()
+    st.dataframe(
+        best[[
+            "player", "matchup", "market", "bet_side", "line", "odds", "score",
+            "consensus_score", "model_agreement_pct", "consensus_tier", "consensus_action",
+            "script_type", "realism_flag"
+        ]],
+        use_container_width=True,
+        hide_index=True,
+    )
 
 with tabs[2]:
-    st.subheader("NBA Player Props V2 — Starters Only")
+    st.subheader("Model Breakdown")
+    render_metric_boxes([
+        ("Avg Projection AI", f"{filtered['projection_model'].mean():.1f}" if not filtered.empty else "N/A"),
+        ("Avg Script AI", f"{filtered['script_model'].mean():.1f}" if not filtered.empty else "N/A"),
+        ("Avg Risk AI", f"{filtered['risk_model'].mean():.1f}" if not filtered.empty else "N/A"),
+        ("Avg Market AI", f"{filtered['market_model'].mean():.1f}" if not filtered.empty else "N/A"),
+    ])
 
-    prop_df = filtered.copy()
-
-    l1, l2, l3, l4 = st.columns(4)
-    with l1:
-        starters_only = st.toggle("Only starters", value=True)
-    with l2:
-        odds_min, odds_max = st.slider("Odds range", -300, 200, (-300, 200))
-    with l3:
-        prop_markets = st.multiselect(
-            "Prop markets",
-            options=sorted(prop_df["market"].dropna().astype(str).unique().tolist()),
-            default=[m for m in sorted(prop_df["market"].dropna().astype(str).unique().tolist()) if m.lower() in {"points", "pra", "rebounds", "assists"}] or sorted(prop_df["market"].dropna().astype(str).unique().tolist())
-        )
-    with l4:
-        min_minutes = st.slider("Minimum minutes", 0, 40, 28)
-
-    if starters_only:
-        prop_df = prop_df[prop_df["starter"] == True]
-    prop_df = prop_df[
-        (prop_df["odds"] >= odds_min) &
-        (prop_df["odds"] <= odds_max) &
-        (prop_df["minutes"].fillna(0) >= min_minutes)
-    ]
-    if prop_markets:
-        prop_df = prop_df[prop_df["market"].isin(prop_markets)]
-
-    prop_df = prop_df.sort_values(["score", "ev_edge_pct", "hit_pct"], ascending=False).copy()
-
-    st.markdown("### Top Prop Targets")
     st.dataframe(
-        prop_df[[
-            "player", "team", "matchup", "market", "bet_side", "line", "projection",
-            "projection_edge", "odds", "hit_pct", "ev_edge_pct", "score", "grade",
-            "tier", "minutes", "script_type", "script_confidence", "game_script_boost",
-            "correlation_penalty", "book", "portfolio_status"
-        ]],
+        filtered[[
+            "player", "projection_model", "script_model", "risk_model", "market_model",
+            "portfolio_model", "consensus_score", "model_agreement_pct", "consensus_action"
+        ]].sort_values(["consensus_score"], ascending=False),
         use_container_width=True,
         hide_index=True,
     )
-
-    st.markdown("### Featured Props")
-    format_bet_cards(prop_df, top_n=8)
 
 with tabs[3]:
-    st.subheader("Game Script AI (V5)")
-
-    gs = filtered.copy()
-    gs = gs.sort_values(["script_confidence", "score"], ascending=[False, False])
-
-    st.dataframe(
-        gs[[
-            "player", "matchup", "team", "market", "bet_side", "minutes", "game_total", "spread",
-            "script_type", "script_confidence", "blowout_risk", "game_script_boost",
-            "correlation_group", "correlation_penalty", "score", "tier", "realism_flag"
-        ]],
-        use_container_width=True,
-        hide_index=True,
-    )
-
-    render_metric_boxes([
-        ("Track Meet / Shootout", f"{int(gs['script_type'].isin(['Track meet', 'Competitive shootout']).sum())}"),
-        ("High Blowout Risk", f"{int((gs['blowout_risk'] == 'High').sum())}"),
-        ("Avg Script Boost", f"{gs['game_script_boost'].mean():.2f}" if not gs.empty else "N/A"),
-    ], three=True)
-
-with tabs[4]:
-    st.subheader("Arbitrage & Middles Scanner")
-    arb_df, mid_df = find_arbitrage_and_middles(model_df)
-
-    a1, a2 = st.columns(2)
-    with a1:
-        st.markdown("### Arbitrage Opportunities")
-        if arb_df.empty:
-            st.info("No arbitrage opportunity detected.")
-        else:
-            st.dataframe(arb_df.sort_values("arb_margin_pct", ascending=False), use_container_width=True, hide_index=True)
-
-    with a2:
-        st.markdown("### Middle Opportunities")
-        if mid_df.empty:
-            st.info("No middle found.")
-        else:
-            st.dataframe(mid_df.sort_values("gap", ascending=False), use_container_width=True, hide_index=True)
-
-with tabs[5]:
-    st.subheader("Portfolio Engine Snapshot")
-
-    port = filtered.copy()
-    port = port[
-        (port["portfolio_status"] == "Selected") &
-        (port["score"] >= 76) &
-        (port["ev_edge_pct"] >= 2.5)
-    ].sort_values(["score", "ev_edge_pct"], ascending=False)
-
-    bankroll = st.number_input("Bankroll ($)", min_value=50, max_value=100000, value=1000, step=50)
-    unit_pct = st.slider("1 unit as % of bankroll", 0.25, 5.0, 1.0, 0.25)
-
-    dollar_per_unit = bankroll * (unit_pct / 100.0)
-    port["stake_$"] = (port["portfolio_size_u"] * dollar_per_unit).round(2)
-
-    render_metric_boxes([
-        ("Selected Bets", f"{len(port)}"),
-        ("Total Units", f"{port['portfolio_size_u'].sum():.2f}u" if not port.empty else "0.00u"),
-        ("Total Stake", f"${port['stake_$'].sum():,.2f}" if not port.empty else "$0.00"),
-    ], three=True)
-
-    st.dataframe(
-        port[[
-            "player", "matchup", "market", "bet_side", "line", "odds", "hit_pct",
-            "ev_edge_pct", "score", "tier", "script_type", "game_script_boost",
-            "correlation_penalty", "model_size_u", "portfolio_size_u", "stake_$", "book"
-        ]],
-        use_container_width=True,
-        hide_index=True,
-    )
-
-with tabs[6]:
     st.subheader("Model Data")
     st.dataframe(model_df, use_container_width=True, hide_index=True)
 
@@ -1176,9 +1022,9 @@ with tabs[6]:
     st.download_button(
         "Download scored bets CSV",
         data=csv,
-        file_name="scored_bets_v6_1_dashboard_ui.csv",
+        file_name="scored_bets_v7_step1_multi_ai_consensus.csv",
         mime="text/csv",
     )
 
 st.markdown("---")
-st.caption("Dashboard UI upgraded: boxed metric summaries, fixed Bet This cards, and cleaner mobile layout.")
+st.caption("Next step after this: use the consensus-approved pool to build a parlay optimizer.")

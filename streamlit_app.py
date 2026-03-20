@@ -142,7 +142,6 @@ def compute_scores(df: pd.DataFrame) -> pd.DataFrame:
     out["ev"] = (out["hit_prob"] * (dec - 1)) - (1 - out["hit_prob"])
     out["ev_pct"] = (out["ev"] * 100).round(2)
 
-    # lightweight consensus proxy
     out["consensus_score"] = (
         out["hit_pct"] * 0.55
         + out["ev_pct"].clip(lower=-10, upper=20) * 1.1
@@ -214,9 +213,35 @@ def combo_corr_penalty(rows: List[pd.Series]) -> float:
 
 
 # ============================================================
+# Bankroll optimizer
+# ============================================================
+def kelly_fraction(prob: float, decimal_odds: float) -> float:
+    if decimal_odds <= 1 or prob <= 0 or prob >= 1:
+        return 0.0
+    b = decimal_odds - 1
+    q = 1 - prob
+    frac = (b * prob - q) / b
+    return max(0.0, frac)
+
+
+def stake_from_kelly(prob: float, decimal_odds: float, parlay_type: str, bankroll: float, max_fraction: float) -> Dict:
+    raw = kelly_fraction(prob, decimal_odds)
+    type_mult = {"Safe": 0.50, "Balanced": 0.35, "Aggressive": 0.20}.get(parlay_type, 0.25)
+    frac = min(raw * type_mult, max_fraction)
+    dollars = bankroll * frac
+    units = dollars / (bankroll * 0.01) if bankroll > 0 else 0
+    return {
+        "kelly_raw_pct": raw * 100,
+        "kelly_bet_pct": frac * 100,
+        "stake_$": dollars,
+        "stake_u": units,
+    }
+
+
+# ============================================================
 # Parlay optimizer
 # ============================================================
-def build_parlay_metrics(rows: List[pd.Series]) -> Dict:
+def build_parlay_metrics(rows: List[pd.Series], bankroll: float, max_fraction: float) -> Dict:
     decs = [american_to_decimal(r["odds"]) for r in rows]
     probs = [r["hit_prob"] for r in rows]
 
@@ -231,7 +256,7 @@ def build_parlay_metrics(rows: List[pd.Series]) -> Dict:
     p_adj = clamp01(p_ind * (1 - corr_pen))
     ev = p_adj * (combined_dec - 1) - (1 - p_adj)
 
-    return {
+    base = {
         "legs": rows,
         "combined_decimal": combined_dec,
         "combined_american": combined_amer,
@@ -241,6 +266,9 @@ def build_parlay_metrics(rows: List[pd.Series]) -> Dict:
         "ev_pct": ev * 100,
         "corr_pen": corr_pen,
     }
+    base["parlay_type"] = tag_parlay_type(base)
+    base.update(stake_from_kelly(base["hit_prob"], base["combined_decimal"], base["parlay_type"], bankroll, max_fraction))
+    return base
 
 
 def tag_parlay_type(metrics: Dict) -> str:
@@ -248,32 +276,22 @@ def tag_parlay_type(metrics: Dict) -> str:
     ev = metrics["ev_pct"]
     odds = metrics["combined_american"]
 
-    if hp >= 22 and ev >= 6:
+    if hp >= 45 and odds <= 300:
         return "Safe"
-    if hp >= 12 and ev >= 10:
+    if hp >= 30 and ev >= 10:
         return "Balanced"
-    if odds >= 400 or ev >= 18:
+    if odds >= 400 or hp < 30:
         return "Aggressive"
     return "Balanced"
 
 
-def suggested_stake(parlay_type: str) -> float:
-    if parlay_type == "Safe":
-        return 0.35
-    if parlay_type == "Balanced":
-        return 0.25
-    return 0.10
-
-
-def generate_parlays(df: pd.DataFrame, k: int = 2, max_results: int = 20) -> List[Dict]:
+def generate_parlays(df: pd.DataFrame, k: int, bankroll: float, max_fraction: float, max_results: int = 30) -> List[Dict]:
     rows = [r[1] for r in df.iterrows()]
     results = []
     for combo in itertools.combinations(rows, k):
-        metrics = build_parlay_metrics(list(combo))
+        metrics = build_parlay_metrics(list(combo), bankroll, max_fraction)
         if not metrics:
             continue
-        metrics["parlay_type"] = tag_parlay_type(metrics)
-        metrics["stake_u"] = suggested_stake(metrics["parlay_type"])
         results.append(metrics)
 
     results = sorted(results, key=lambda x: (x["ev_pct"], x["hit_pct"]), reverse=True)
@@ -285,7 +303,6 @@ def select_best_by_type(parlays: List[Dict]) -> Dict[str, Dict]:
     for t in buckets:
         subset = [p for p in parlays if p["parlay_type"] == t]
         if subset:
-            # Safe prioritize hit, Balanced EV+hit, Aggressive EV+odds
             if t == "Safe":
                 subset = sorted(subset, key=lambda x: (x["hit_pct"], x["ev_pct"]), reverse=True)
             elif t == "Balanced":
@@ -344,8 +361,14 @@ def render_parlay_card(p: Dict, title: str):
     metric_cards([
         ("Hit %", f"{p['hit_pct']:.1f}%"),
         ("EV %", f"{p['ev_pct']:.1f}%"),
+        ("Kelly Raw", f"{p['kelly_raw_pct']:.1f}%"),
+        ("Bet %", f"{p['kelly_bet_pct']:.2f}%"),
+    ])
+    metric_cards([
         ("Corr Penalty", f"{p['corr_pen']:.2f}"),
         ("Stake", f"{p['stake_u']:.2f}u"),
+        ("Stake $", f"${p['stake_$']:.2f}"),
+        ("Odds", f"{int(p['combined_american']) if not pd.isna(p['combined_american']) else '—'}"),
     ])
     st.write("**Legs**")
     for leg in p["legs"]:
@@ -376,13 +399,15 @@ def load_csv(file) -> pd.DataFrame:
 # App
 # ============================================================
 st.title("🏀 Sports AI Betting Dashboard")
-st.caption("V7.3: Smart Parlay Types — Safe, Balanced, and Aggressive.")
+st.caption("V7.4: Bankroll Optimizer added to Smart Parlay Types with Kelly-lite stake sizing.")
 
 with st.sidebar:
     uploaded = st.file_uploader("Upload CSV", type=["csv"])
     use_sample = st.toggle("Use sample data", value=uploaded is None)
     parlay_size = st.selectbox("Parlay size", [2, 3, 4], index=0)
     max_results = st.slider("Max parlay combos", 5, 40, 20)
+    bankroll = st.number_input("Bankroll ($)", min_value=100, max_value=100000, value=1000, step=50)
+    max_bet_pct = st.slider("Max bankroll % per parlay", 0.25, 5.0, 1.5, 0.25) / 100.0
 
 if uploaded:
     df = ensure_columns(load_csv(uploaded))
@@ -410,17 +435,16 @@ if len(pool) < 2:
     st.warning("Not enough approved plays to build parlays.")
     st.stop()
 
-parlays = generate_parlays(pool, k=parlay_size, max_results=max_results)
+parlays = generate_parlays(pool, k=parlay_size, bankroll=float(bankroll), max_fraction=float(max_bet_pct), max_results=max_results)
 best = select_best_by_type(parlays)
 
 st.markdown("---")
-st.markdown("## 🧠 Smart Parlay Types")
-
-available = sum(1 for v in best.values() if v is not None)
+st.markdown("## 💰 Bankroll Optimized Parlays")
 metric_cards([
     ("Approved Plays", f"{len(pool)}"),
     ("Parlay Size", f"{parlay_size}-leg"),
-    ("Parlay Types Found", f"{available}"),
+    ("Bankroll", f"${float(bankroll):,.0f}"),
+    ("Max Bet %", f"{max_bet_pct*100:.2f}%"),
 ])
 
 if not any(best.values()):
@@ -443,8 +467,11 @@ if parlays:
             "combined_odds": int(p["combined_american"]) if not pd.isna(p["combined_american"]) else np.nan,
             "hit_pct": round(p["hit_pct"], 1),
             "ev_pct": round(p["ev_pct"], 1),
-            "corr_penalty": round(p["corr_pen"], 2),
+            "kelly_raw_pct": round(p["kelly_raw_pct"], 2),
+            "bet_pct": round(p["kelly_bet_pct"], 2),
             "stake_u": round(p["stake_u"], 2),
+            "stake_$": round(p["stake_$"], 2),
+            "corr_penalty": round(p["corr_pen"], 2),
             "legs": " | ".join([f"{x['player']} {x['bet_side']} {x['line']}" for x in p["legs"]]),
         })
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
@@ -452,4 +479,4 @@ else:
     st.info("No parlays available.")
 
 st.markdown("---")
-st.caption("Next upgrade: bankroll optimizer + same-game parlay mode.")
+st.caption("Next upgrade: same-game parlay mode + bankroll exposure controls.")

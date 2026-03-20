@@ -9,6 +9,27 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+def build_automation_queue(df):
+    try:
+        if df is None or len(df) == 0:
+            return None
+        rows = []
+        for _, r in df.iterrows():
+            rows.append({
+                "Player": r.get("player",""),
+                "Market": r.get("market",""),
+                "Side": r.get("bet_side",""),
+                "Decision": r.get("bet_decision","Auto Bet"),
+                "Odds": r.get("best_odds", r.get("odds","")),
+                "Stake": r.get("alloc_u",0),
+                "Status": "READY"
+            })
+        import pandas as pd
+        return pd.DataFrame(rows)
+    except:
+        return None
+
+
 st.set_page_config(page_title="Sports AI Betting Dashboard V13.1 Grading Engine", layout="wide")
 
 CALL_LOG_FILE = "api_call_log.csv"

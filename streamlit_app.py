@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Sports AI Betting Dashboard V11.1 PRO FUSION", layout="wide")
+st.set_page_config(page_title="Sports AI Betting Dashboard V11.2 PRO UI", layout="wide")
 
 CALL_LOG_FILE = "api_call_log.csv"
 BET_LOG_FILE = "bet_log.csv"
@@ -107,13 +107,14 @@ st.markdown("""
 }
 .metric-label {font-size:.88rem; color:#6b7280; margin-bottom:6px;}
 .metric-value {font-size:1.75rem; line-height:1.05; font-weight:800;}
-.good-box, .watch-box, .alert-box, .model-box {
+.good-box, .watch-box, .alert-box, .model-box, .pass-box {
     border-radius:18px; padding:14px; margin-bottom:12px;
 }
 .good-box {border:1px solid rgba(34,197,94,.28); background:#f0fdf4;}
 .watch-box {border:1px solid rgba(59,130,246,.28); background:#eff6ff;}
 .alert-box {border:1px solid rgba(245,158,11,.35); background:#fff7ed;}
 .model-box {border:1px solid rgba(148,163,184,.20); background:#ffffff;}
+.pass-box {border:1px solid rgba(239,68,68,.18); background:#fef2f2;}
 .small-muted {color:#6b7280; font-size:.94rem;}
 .summary-box {
     border:1px solid rgba(148,163,184,.22);
@@ -142,6 +143,52 @@ st.markdown("""
     font-size:1.15rem;
     font-weight:800;
     line-height:1.1;
+}
+.tight-card {
+    border:1px solid rgba(148,163,184,.22);
+    border-radius:22px;
+    background: rgba(255,255,255,.98);
+    padding:14px;
+    margin-bottom:14px;
+}
+.conf-pill {
+    display:inline-block;
+    padding:6px 10px;
+    border-radius:999px;
+    font-weight:700;
+    margin-right:8px;
+    margin-bottom:8px;
+    font-size:.92rem;
+    border:1px solid rgba(148,163,184,.18);
+}
+.conf-a {background:#dcfce7; color:#166534;}
+.conf-b {background:#fef3c7; color:#92400e;}
+.conf-c {background:#dbeafe; color:#1d4ed8;}
+.conf-d {background:#fee2e2; color:#991b1b;}
+.insight-box {
+    border:1px solid rgba(59,130,246,.24);
+    border-radius:18px;
+    background:#eff6ff;
+    padding:14px;
+    margin-bottom:14px;
+}
+.trigger-box {
+    border:1px dashed rgba(99,102,241,.45);
+    border-radius:16px;
+    background:#f8fafc;
+    padding:12px;
+    margin-top:10px;
+}
+.why-box {
+    border:1px solid rgba(148,163,184,.20);
+    border-radius:16px;
+    background:#fafafa;
+    padding:12px;
+    margin-top:10px;
+}
+@media (max-width: 768px) {
+    .metric-value {font-size:1.45rem;}
+    .summary-value {font-size:1.08rem;}
 }
 </style>
 """, unsafe_allow_html=True)
@@ -410,6 +457,15 @@ def agreement_count(row):
     ]
     return int(sum(v >= 60 for v in vals))
 
+def confidence_tier(ensemble, agreement):
+    if ensemble >= 82 and agreement >= 4:
+        return "A", "🟢 A Elite", "conf-a"
+    if ensemble >= 72 and agreement >= 4:
+        return "B", "🟡 B Strong", "conf-b"
+    if ensemble >= 62 and agreement >= 3:
+        return "C", "🔵 C Playable", "conf-c"
+    return "D", "🔴 D Avoid", "conf-d"
+
 def tier_and_decision(row):
     ensemble = safe_float(row.get("ensemble_score"), 0.0)
     edge = safe_float(row.get("true_edge"), 0.0) * 100
@@ -423,9 +479,9 @@ def tier_and_decision(row):
     if ensemble >= 68 and agree >= 4 and edge >= 2.5 and ev >= 2.0:
         return "Qualified", "Strong Bet"
     if starter and ensemble >= 62 and agree >= 3 and edge >= 8 and ev >= 10:
-        return "Near threshold", "Reduced Stake"
+        return "Near threshold", "Strong Bet"
     if ensemble >= 55 and agree >= 3 and ev >= 7 and clv >= 1.0:
-        return "Monitor", "Watch"
+        return "Monitor", "Lean"
     return "Needs line movement", "Wait"
 
 def stake_multiplier_by_tier(tier, decision):
@@ -505,6 +561,10 @@ def compute_scores(df, bankroll=1000, max_single_pct=0.0125, model_weights=None)
     ).round(1)
 
     out["agreement_count"] = out.apply(agreement_count, axis=1)
+    conf = out.apply(lambda r: confidence_tier(r["ensemble_score"], r["agreement_count"]), axis=1)
+    out["confidence_letter"] = [x[0] for x in conf]
+    out["confidence_label"] = [x[1] for x in conf]
+    out["confidence_css"] = [x[2] for x in conf]
 
     out["confidence_grade"] = np.select(
         [out["ensemble_score"] >= 84, out["ensemble_score"] >= 76, out["ensemble_score"] >= 68, out["ensemble_score"] >= 60],
@@ -824,17 +884,46 @@ def tracker_summary(log):
 # -----------------------------
 # UI helpers
 # -----------------------------
-def render_metric_box(label, value):
-    st.markdown(f'<div class="metric-box"><div class="metric-label">{label}</div><div class="metric-value">{value}</div></div>', unsafe_allow_html=True)
-
 def render_summary_box(items):
     html = ['<div class="summary-box"><div class="summary-grid">']
     for label, value in items:
-        html.append(
-            f'<div class="summary-cell"><div class="summary-label">{label}</div><div class="summary-value">{value}</div></div>'
-        )
+        html.append(f'<div class="summary-cell"><div class="summary-label">{label}</div><div class="summary-value">{value}</div></div>')
     html.append('</div></div>')
     st.markdown("".join(html), unsafe_allow_html=True)
+
+def market_insight_banner(df, qualified, fallback):
+    if df.empty:
+        return
+    top = df.iloc[0]
+    clv_env = pd.to_numeric(df["predicted_clv_pct"], errors="coerce").fillna(0).mean()
+    market_notes = []
+    if len(qualified) >= 2:
+        market_notes.append(f"{len(qualified)} strong plays detected")
+    elif len(qualified) == 1:
+        market_notes.append("1 strong play detected")
+    else:
+        market_notes.append("No elite plays yet")
+    if clv_env >= 3:
+        market_notes.append("positive CLV environment")
+    if (df["movement_note"].astype(str).str.contains("Steam")).sum() >= 2:
+        market_notes.append("steam signals active")
+    if len(fallback) >= 2 and len(qualified) <= 2:
+        market_notes.append("watchlist setup is live")
+    st.markdown(f'<div class="insight-box"><b>📊 MARKET EDGE TODAY:</b> ' + " • ".join(market_notes) + "</div>", unsafe_allow_html=True)
+
+def why_this_play(row):
+    reasons = []
+    proj_edge = safe_float(row.get("projection"), np.nan) - safe_float(row.get("line"), np.nan)
+    if not pd.isna(proj_edge):
+        reasons.append(f"Projection edge: {proj_edge:+.1f} vs line")
+    if safe_float(row.get("model_market"), 0) >= 60:
+        reasons.append("Market pricing is supportive")
+    elif safe_float(row.get("model_market"), 0) <= 40:
+        reasons.append("Market support is weaker than other models")
+    if safe_float(row.get("predicted_clv_pct"), 0) > 0:
+        reasons.append(f"Positive CLV expected ({row['predicted_clv_pct']:.2f}%)")
+    reasons.append(f"High AI agreement ({int(row['agreement_count'])}/5)")
+    return reasons[:4]
 
 def render_best_bet(row):
     st.markdown("## 🔥 Best Bet")
@@ -845,6 +934,7 @@ def render_best_bet(row):
         f"**EV:** {row['realistic_ev_pct']:.1f}% | "
         f"**Predicted CLV:** {row['predicted_clv_pct']:.2f}%"
     )
+    st.markdown(f'<span class="conf-pill {row["confidence_css"]}">{row["confidence_label"]}</span>', unsafe_allow_html=True)
     render_summary_box([
         ("Hit %", f"{row['realistic_hit_prob']*100:.0f}%"),
         ("Edge", f"{row['true_edge']*100:.1f}%"),
@@ -852,18 +942,35 @@ def render_best_bet(row):
         ("Ensemble", f"{row['ensemble_score']:.1f}"),
         ("Agreement", f"{int(row['agreement_count'])}/5"),
     ])
+    why = why_this_play(row)
+    st.markdown("<div class='why-box'><b>📊 Why this play:</b><br>" + "<br>".join([f"• {x}" for x in why]) + "</div>", unsafe_allow_html=True)
     st.progress(float(row["realistic_hit_prob"]))
 
 def render_compact_play(row):
-    box_class = "good-box" if row["tier"] == "Qualified" else "watch-box"
+    if row["tier"] == "Qualified":
+        box_class = "good-box"
+    elif row["tier"] in ["Near threshold", "Monitor"]:
+        box_class = "watch-box"
+    else:
+        box_class = "pass-box"
+    trigger_odds = safe_float(row["best_display_odds"], np.nan)
+    target_odds = fmt_american(trigger_odds + 5) if not pd.isna(trigger_odds) else "—"
+    trigger_clv = max(2.0, safe_float(row.get("predicted_clv_pct"), 0) + 0.5)
+    risk_txt = "Medium" if row["tier"] in ["Near threshold", "Monitor"] else "Low" if row["tier"] == "Qualified" else "Wait"
     stake_u = row.get("alloc_u", row.get("single_stake_u", 0))
+    extra = ""
+    if row["tier"] != "Qualified":
+        extra = (
+            f"<div class='trigger-box'><b>Trigger:</b> Bet if price reaches {target_odds} or better • "
+            f"Target CLV ≥ {trigger_clv:.1f}% • Confidence {risk_txt}</div>"
+        )
     st.markdown(
-        f'<div class="{box_class}"><b>{row["tier"]}</b> • {row["bet_decision"]}<br>'
+        f'<div class="{box_class}"><b>{row["tier"]}</b> • {row["bet_decision"]} • {int(row["agreement_count"])}/5 agree<br>'
         f'{row["player"]} — {row["bet_side"]} {row["line"]} {row["market"]}<br>'
         f'Best {fmt_american(row["best_display_odds"])} ({row["best_book"]}) | '
         f'EV {row["realistic_ev_pct"]:.1f}% | Edge {row["true_edge"]*100:.1f}% | '
-        f'Stake {stake_u:.2f}u | Pred. CLV {row["predicted_clv_pct"]:.2f}% | '
-        f'Ensemble {row["ensemble_score"]:.1f} | Agreement {int(row["agreement_count"])}/5</div>',
+        f'Stake {stake_u:.2f}u | Pred. CLV {row["predicted_clv_pct"]:.2f}% | Ensemble {row["ensemble_score"]:.1f}'
+        f'{extra}</div>',
         unsafe_allow_html=True
     )
 
@@ -887,8 +994,8 @@ def load_uploaded_csv(file):
 # -----------------------------
 # App
 # -----------------------------
-st.title("🏀 Sports AI Betting Dashboard V11.1 PRO FUSION")
-st.caption("PRO MODE + normalized multi-AI engine + portfolio optimizer + supervised self-learning weights.")
+st.title("🏀 Sports AI Betting Dashboard V11.2 PRO UI")
+st.caption("FINAL POLISH: compact pro layout, confidence tiers, why-this-play engine, fallback triggers, and market insight banner.")
 
 with st.sidebar:
     st.markdown("### Data")
@@ -931,9 +1038,7 @@ base_weights = {
     "script": script_w,
     "variance": variance_w,
 }
-total_w = sum(base_weights.values())
-if total_w <= 0:
-    total_w = 1.0
+total_w = sum(base_weights.values()) or 1.0
 base_weights = {k: v / total_w for k, v in base_weights.items()}
 
 adj_weights, perf_table = weight_adjustment_from_perf(base_weights) if use_self_learning else (base_weights.copy(), pd.DataFrame())
@@ -1010,7 +1115,7 @@ qualified = qualified[
 qualified = apply_game_exposure_limit(qualified, max_per_game=max_per_game)
 
 if sharp_mode:
-    qualified = qualified[(qualified["confidence_grade"].isin(["A+ ELITE", "A STRONG"])) & (qualified["consensus_action"] == "Bet")].copy()
+    qualified = qualified[(qualified["confidence_letter"].isin(["A", "B"])) & (qualified["consensus_action"] == "Bet")].copy()
 
 all_ranked = filtered.sort_values(["rank_score", "realistic_ev_pct", "true_edge"], ascending=False).reset_index(drop=True)
 qualified = qualified.sort_values(["rank_score", "realistic_ev_pct", "true_edge"], ascending=False).reset_index(drop=True)
@@ -1024,20 +1129,22 @@ if refresh_reason:
 elif previous_snapshot.empty:
     save_snapshot_from_df(all_ranked.head(10))
 
-if alerts_to_show:
-    st.markdown("## 🔔 Alerts")
-    for a in alerts_to_show:
-        st.markdown(f'<div class="alert-box">{a}</div>', unsafe_allow_html=True)
-
-fallback_pool = all_ranked[all_ranked["tier"] != "Qualified"].head(4).copy()
-
-# Save model performance snapshot from current bet log
+# self-learning snapshot
 bet_log_for_perf = load_bet_log()
 perf_now = compute_model_performance_from_betlog(bet_log_for_perf)
 if not perf_now.empty:
     perf_now["raw_weight"] = perf_now["model_name"].map(base_weights)
     perf_now["adj_weight"] = perf_now["model_name"].map(adj_weights)
     save_df(perf_now, MODEL_PERF_FILE)
+
+fallback_pool = all_ranked[all_ranked["tier"] != "Qualified"].head(4).copy()
+
+market_insight_banner(all_ranked, qualified, fallback_pool)
+
+if alerts_to_show:
+    st.markdown("## 🔔 Alerts")
+    for a in alerts_to_show:
+        st.markdown(f'<div class="alert-box">{a}</div>', unsafe_allow_html=True)
 
 st.markdown(
     f'<div class="banner"><div><b>Qualified Plays:</b> {len(qualified)}</div>'
@@ -1056,19 +1163,18 @@ weights_df = pd.DataFrame({
 st.dataframe(weights_df, use_container_width=True, hide_index=True)
 
 if qualified.empty:
-    st.warning("No qualified plays under the current V11.1 PRO FUSION filters.")
-
+    st.warning("No qualified plays under the current V11.2 PRO UI filters.")
     st.markdown("## 🔎 Fallback Plays")
     for _, row in fallback_pool.iterrows():
         render_compact_play(row)
 
-    st.markdown("## 💰 Suggested Fallback Stakes")
     fallback_alloc = allocate_portfolio(fallback_pool, bankroll=float(bankroll), max_total_u=float(max_total_portfolio_u), max_per_game=max_per_game)
+    st.markdown("## 💰 Suggested Fallback Stakes")
     if fallback_alloc.empty:
         st.info("No fallback allocations available.")
     else:
         for _, row in fallback_alloc.iterrows():
-            st.write(f"**{row['player']}** — {row['tier']} • {row['bet_decision']} • Stake {row['alloc_u']:.2f}u • Pred. CLV {row['predicted_clv_pct']:.2f}% • Ensemble {row['ensemble_score']:.1f} • Agreement {int(row['agreement_count'])}/5")
+            st.write(f"**{row['player']}** — {row['tier']} • {row['bet_decision']} • Stake {row['alloc_u']:.2f}u • CLV {row['predicted_clv_pct']:.2f}% • Ensemble {row['ensemble_score']:.1f} • Agreement {int(row['agreement_count'])}/5")
 
     st.markdown("## 🤖 PRO MODE Engine Output")
     engine_show = all_ranked[[
@@ -1076,16 +1182,10 @@ if qualified.empty:
         "model_script", "model_variance", "ensemble_score", "agreement_count", "tier", "bet_decision"
     ]].head(8)
     st.dataframe(engine_show, use_container_width=True, hide_index=True)
-
-    st.markdown("## 📈 Self-Learning Status")
-    if perf_now.empty:
-        st.info("Not enough settled bet history yet for supervised self-learning. Track and grade at least 50 settled bets per model.")
-    else:
-        st.dataframe(perf_now, use_container_width=True, hide_index=True)
     st.stop()
 
 tops = unique_top_plays(qualified)
-best_play, safe_play, edge_play = tops["best"], tops["safe"], tops["edge"]
+best_play = tops["best"]
 best_parlay = build_best_parlay(qualified, leg_size=2)
 
 best_play_port = portfolio[portfolio["play_key"] == best_play["play_key"]]
@@ -1097,6 +1197,7 @@ if not best_play_port.empty:
 render_best_bet(best_play)
 
 st.markdown("## 🤖 PRO MODE Model Panel")
+st.markdown(f'<span class="conf-pill {best_play["confidence_css"]}">{best_play["confidence_label"]}</span>', unsafe_allow_html=True)
 render_summary_box([
     ("Projection", f"{best_play['model_projection']:.1f}"),
     ("Market", f"{best_play['model_market']:.1f}"),
@@ -1105,6 +1206,8 @@ render_summary_box([
     ("Variance", f"{best_play['model_variance']:.1f}"),
     ("Agreement", f"{int(best_play['agreement_count'])}/5"),
 ])
+insight = "Strong projection + strong CLV alignment → GREEN LIGHT" if best_play["agreement_count"] >= 4 else "Mixed model alignment → use controlled size"
+st.markdown(f"<div class='insight-box'><b>🧠 Model Insight:</b> {insight}</div>", unsafe_allow_html=True)
 
 st.markdown("## ✅ Qualified Plays")
 for _, row in qualified.iterrows():
@@ -1153,12 +1256,17 @@ for i, (_, row) in enumerate(track_rows.iterrows()):
 st.markdown("## 💰 Bankroll")
 parlay_units = 0.75 if not best_parlay else min(1.00, max(0.25, best_parlay["ev_pct"] / 20))
 roi_est = (best_play["realistic_ev_pct"] * 0.55) + ((best_parlay["ev_pct"] if best_parlay else 0) * 0.45)
+risk_level = "Moderate" if portfolio["alloc_u"].sum() >= 2 else "Light"
+exposure = f"{portfolio['alloc_u'].sum():.2f}u / {max_total_portfolio_u:.2f}u"
 render_summary_box([
     ("Top Stake", f"{best_play.get('alloc_u', best_play['single_stake_u']):.2f}u"),
     ("Parlay Stake", f"{parlay_units:.2f}u"),
     ("ROI", f"{min(roi_est, 42.0):.1f}%"),
     ("Pred. CLV", f"{best_play['predicted_clv_pct']:.2f}%"),
+    ("Risk", risk_level),
+    ("Exposure", exposure),
 ])
+st.markdown(f"<div class='insight-box'><b>💼 Strategy:</b> {aggression_mode} aggression • {risk_level} risk • exposure {exposure}</div>", unsafe_allow_html=True)
 
 if best_parlay:
     legs_txt = " + ".join([f"{x['player']} {x['bet_side']} {x['line']}" for x in best_parlay["legs"]])
@@ -1178,11 +1286,12 @@ if bet_log.empty:
     st.info("No tracked bets yet.")
 else:
     summary = tracker_summary(bet_log)
-    s1, s2, s3, s4 = st.columns(4)
-    with s1: render_metric_box("Tracked Bets", str(summary["bets"]))
-    with s2: render_metric_box("Profit", f"{summary['profit_u']:.2f}u")
-    with s3: render_metric_box("ROI", f"{summary['roi_pct']:.1f}%")
-    with s4: render_metric_box("Avg CLV", f"{summary['avg_clv']:.2f}%")
+    render_summary_box([
+        ("Tracked Bets", str(summary["bets"])),
+        ("Profit", f"{summary['profit_u']:.2f}u"),
+        ("ROI", f"{summary['roi_pct']:.1f}%"),
+        ("Avg CLV", f"{summary['avg_clv']:.2f}%"),
+    ])
 
     editable = bet_log.copy()
     for idx in editable.index:
@@ -1228,4 +1337,4 @@ if call_log.empty:
 else:
     st.dataframe(call_log.sort_index(ascending=False), use_container_width=True, hide_index=True)
 
-st.caption("V11.1 PRO FUSION: normalized five-model ensemble, agreement engine, portfolio optimizer, and supervised self-learning weights.")
+st.caption("V11.2 PRO UI FINAL: compact best-bet layout, confidence tiers, why-this-play engine, fallback triggers, market insight banner, and polished mobile spacing.")

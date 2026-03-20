@@ -1,4 +1,3 @@
-
 import math
 import itertools
 from typing import Dict, List, Tuple
@@ -7,7 +6,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Sports AI Betting Dashboard", layout="wide")
+st.set_page_config(page_title="Sports AI Betting Dashboard V8", layout="wide")
 
 # ============================================================
 # Helpers
@@ -51,15 +50,23 @@ def fmt_american(v: float) -> str:
     return f"+{v}" if v > 0 else str(v)
 
 
+def safe_float(v, default=0.0):
+    try:
+        if pd.isna(v):
+            return default
+        return float(v)
+    except Exception:
+        return default
+
+
 # ============================================================
 # Styling
 # ============================================================
 st.markdown("""
 <style>
-.block-container {padding-top: 1.15rem; padding-bottom: 4rem;}
-
+.block-container {padding-top: 1.05rem; padding-bottom: 4rem; max-width: 1450px;}
 .small-muted {color:#6b7280; font-size:0.96rem;}
-.rule {height:1px; background:#d1d5db; margin:1.2rem 0 1.4rem 0;}
+.rule {height:1px; background:#d1d5db; margin:1.0rem 0 1.2rem 0;}
 
 .banner {
     border:1px solid rgba(148,163,184,.28);
@@ -71,25 +78,25 @@ st.markdown("""
 .banner-title {font-size:1.35rem; font-weight:800; margin-bottom:10px;}
 
 .metric-box {
-    border:1px solid rgba(128,128,128,.22);
+    border:1px solid rgba(128,128,128,.18);
     border-radius:18px;
-    background: rgba(250,250,250,.90);
+    background: rgba(250,250,250,.95);
     padding:14px 16px;
     min-height: 90px;
     box-shadow: 0 6px 18px rgba(15,23,42,.04);
 }
 .metric-label {font-size:.92rem; color:#6b7280; margin-bottom:6px;}
-.metric-value {font-size:1.9rem; line-height:1.05; font-weight:800;}
+.metric-value {font-size:1.85rem; line-height:1.05; font-weight:800;}
 
 .card {
     border:1px solid rgba(128,128,128,.20);
     border-radius:22px;
-    background: linear-gradient(180deg, rgba(255,255,255,.92), rgba(248,250,252,.88));
+    background: linear-gradient(180deg, rgba(255,255,255,.96), rgba(248,250,252,.92));
     padding:16px;
     box-shadow: 0 10px 24px rgba(15,23,42,.05);
     margin-bottom: 16px;
 }
-.card-title {font-size:1.55rem; font-weight:800; margin-bottom:6px;}
+.card-title {font-size:1.50rem; font-weight:800; margin-bottom:6px;}
 .card-sub {font-size:1rem; color:#4b5563; margin-bottom:10px;}
 
 .pill {
@@ -100,12 +107,13 @@ st.markdown("""
     font-weight:700;
     margin-right:8px;
     margin-bottom:8px;
-    font-size:.98rem;
+    font-size:.95rem;
 }
 .pill-green {background:#16a34a; color:white; border:none;}
 .pill-yellow {background:#eab308; color:#111827; border:none;}
 .pill-red {background:#dc2626; color:white; border:none;}
 .pill-gray {background:#f3f4f6; color:#111827;}
+.pill-blue {background:#2563eb; color:white; border:none;}
 
 .confbar-wrap {
     height: 11px;
@@ -130,8 +138,8 @@ st.markdown("""
     border-radius:16px;
     padding:11px 12px;
 }
-.compact-label {font-size:.86rem; color:#6b7280;}
-.compact-value {font-size:1.28rem; font-weight:800; margin-top:4px;}
+.compact-label {font-size:.85rem; color:#6b7280;}
+.compact-value {font-size:1.20rem; font-weight:800; margin-top:4px;}
 
 .reason-box {
     border:1px solid rgba(128,128,128,.16);
@@ -154,12 +162,23 @@ st.markdown("""
     margin-bottom: 16px;
 }
 .legs-list li {margin-bottom:8px;}
-
 .table-note {font-size:.92rem; color:#6b7280; margin-top:4px;}
+.section-header {font-size:1.15rem; font-weight:800; margin-bottom:8px; margin-top:4px;}
+.rank-box {
+    border:1px solid rgba(128,128,128,.16);
+    border-radius:16px;
+    padding:12px 14px;
+    background:#ffffff;
+    margin-bottom:10px;
+}
+
+.ev-green {color:#16a34a;}
+.ev-yellow {color:#ca8a04;}
+.ev-red {color:#dc2626;}
 
 @media (max-width: 768px) {
-    .card-title {font-size:1.34rem;}
-    .metric-value {font-size:1.55rem;}
+    .card-title {font-size:1.30rem;}
+    .metric-value {font-size:1.45rem;}
 }
 </style>
 """, unsafe_allow_html=True)
@@ -202,7 +221,11 @@ def ensure_columns(df: pd.DataFrame) -> pd.DataFrame:
     df["starter"] = df["starter"].fillna(False).astype(bool)
 
     if (df["matchup"] == "").any():
-        auto_match = df["team"].fillna("") + np.where(df["opponent"].fillna("") != "", " vs " + df["opponent"].fillna(""), "")
+        auto_match = df["team"].fillna("") + np.where(
+            df["opponent"].fillna("") != "",
+            " vs " + df["opponent"].fillna(""),
+            ""
+        )
         df.loc[df["matchup"] == "", "matchup"] = auto_match[df["matchup"] == ""]
     return df
 
@@ -211,10 +234,18 @@ def infer_market_std(row: pd.Series) -> float:
     supplied = row.get("std_dev")
     if pd.notna(supplied) and supplied > 0:
         return float(supplied)
+
     market = str(row.get("market", "")).lower()
     defaults = {
-        "points": 8.5, "rebounds": 4.0, "assists": 3.6,
-        "pra": 9.0, "threes": 2.4, "3pm": 2.4
+        "points": 8.5,
+        "rebounds": 4.0,
+        "assists": 3.6,
+        "pra": 9.0,
+        "threes": 2.4,
+        "3pm": 2.4,
+        "steals": 1.3,
+        "blocks": 1.4,
+        "turnovers": 1.9,
     }
     for k, v in defaults.items():
         if k in market:
@@ -263,8 +294,14 @@ def script_note(row: pd.Series) -> Tuple[str, int]:
 
     if pd.notna(pace) and pace >= 101:
         score += 10
+    elif pd.notna(pace) and pace <= 96:
+        score -= 8
+
     if pd.notna(usage) and usage >= 29:
         score += 10
+    elif pd.notna(usage) and usage <= 18:
+        score -= 6
+
     if spread <= 5:
         score += 8
     elif spread >= 10:
@@ -316,8 +353,33 @@ def movement_note(edge_pct: float) -> str:
     return "⏳ Thin edge"
 
 
-def compute_scores(df: pd.DataFrame) -> pd.DataFrame:
+def single_stake_units(row: pd.Series, bankroll: float, max_single_pct: float) -> Dict:
+    prob = safe_float(row.get("realistic_hit_prob"), 0.0)
+    dec = american_to_decimal(row.get("odds"))
+    if pd.isna(dec) or dec <= 1 or prob <= 0 or prob >= 1:
+        return {"single_kelly_pct": 0.0, "single_bet_pct": 0.0, "single_stake_$": 0.0, "single_stake_u": 0.0}
+
+    b = dec - 1
+    q = 1 - prob
+    raw_kelly = max(0.0, (b * prob - q) / b)
+
+    grade = safe_float(row.get("consensus_score"), 0)
+    mult = 0.42 if grade >= 78 else (0.30 if grade >= 68 else 0.18)
+    frac = min(raw_kelly * mult, max_single_pct)
+    stake_dollars = bankroll * frac
+    stake_units = stake_dollars / (bankroll * 0.01) if bankroll > 0 else 0.0
+
+    return {
+        "single_kelly_pct": raw_kelly * 100,
+        "single_bet_pct": frac * 100,
+        "single_stake_$": stake_dollars,
+        "single_stake_u": stake_units,
+    }
+
+
+def compute_scores(df: pd.DataFrame, bankroll: float = 1000, max_single_pct: float = 0.015) -> pd.DataFrame:
     out = df.copy()
+
     out["bet_side"] = out.apply(infer_bet_side, axis=1)
     out["hit_prob"] = out.apply(calculate_hit_probability, axis=1)
     out["hit_pct"] = (out["hit_prob"] * 100).round(1)
@@ -363,6 +425,21 @@ def compute_scores(df: pd.DataFrame) -> pd.DataFrame:
     out["confidence_grade"] = [grade_tier(s)[0] for s in out["consensus_score"]]
     out["confidence_emoji"] = [grade_tier(s)[1] for s in out["consensus_score"]]
     out["movement_note"] = [movement_note(e * 100) for e in out["true_edge"]]
+
+    stake_rows = [
+        single_stake_units(row, bankroll=bankroll, max_single_pct=max_single_pct)
+        for _, row in out.iterrows()
+    ]
+    stake_df = pd.DataFrame(stake_rows)
+    out = pd.concat([out.reset_index(drop=True), stake_df.reset_index(drop=True)], axis=1)
+
+    out["rank_score"] = (
+        out["consensus_score"] * 0.42
+        + out["realistic_ev_pct"].clip(lower=-10, upper=25) * 1.05
+        + (out["true_edge"] * 100).clip(lower=-5, upper=18) * 1.10
+        + (out["realistic_hit_prob"] * 100) * 0.22
+    ).round(2)
+
     return out
 
 
@@ -394,21 +471,28 @@ def approved_pool(df: pd.DataFrame) -> pd.DataFrame:
 
 def unique_top_plays(df: pd.DataFrame) -> Dict[str, pd.Series]:
     if df.empty:
-        return {"ev": pd.Series(dtype=object), "safe": pd.Series(dtype=object), "edge": pd.Series(dtype=object)}
+        return {
+            "ev": pd.Series(dtype=object),
+            "safe": pd.Series(dtype=object),
+            "edge": pd.Series(dtype=object),
+            "balanced": pd.Series(dtype=object),
+        }
 
     used = set()
     modes = {
         "ev": ["realistic_ev_pct", "true_edge", "consensus_score"],
         "safe": ["realistic_hit_prob", "consensus_score", "true_edge"],
         "edge": ["true_edge", "realistic_ev_pct", "consensus_score"],
+        "balanced": ["rank_score", "consensus_score", "realistic_ev_pct"],
     }
     out = {}
     for key, cols in modes.items():
         choice = pd.Series(dtype=object)
         for _, row in df.sort_values(cols, ascending=False).iterrows():
-            if row["player"] not in used:
+            player_key = f"{row['player']}-{row['market']}"
+            if player_key not in used:
                 choice = row
-                used.add(row["player"])
+                used.add(player_key)
                 break
         if choice.empty:
             choice = df.sort_values(cols, ascending=False).iloc[0]
@@ -423,6 +507,7 @@ def why_this_play(row: pd.Series) -> List[str]:
         f"Market Inefficiency: true edge {row['true_edge']*100:.1f}%",
         f"Game Script: {row['script_type']} ({int(row['script_score'])})",
         f"Risk: {row['variance_note']}",
+        f"Recommended stake: {row['single_stake_u']:.2f}u",
     ]
     return notes
 
@@ -665,21 +750,28 @@ def render_play_card(row: pd.Series, title: str):
     bar_color, bar_pct = conf_fill(float(row["consensus_score"]))
     reasons = why_this_play(row)
 
-    st.markdown(f'<div class="card"><div class="card-title">{title}</div><div class="card-sub">{row["player"]} — {row["bet_side"]} {row["line"]} {row["market"]}</div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="card"><div class="card-title">{title}</div><div class="card-sub">{row["player"]} — {row["bet_side"]} {row["line"]} {row["market"]}</div>',
+        unsafe_allow_html=True,
+    )
     st.markdown(
         f'<span class="pill {badge_class_from_action(row["consensus_action"])}">{row["consensus_action"]}</span>'
         f'<span class="pill pill-gray">{row["confidence_emoji"]} {row["confidence_grade"]}</span>'
-        f'<span class="pill pill-gray">{int(row["model_agreement_pct"])}% Agreement</span>',
+        f'<span class="pill pill-gray">{int(row["model_agreement_pct"])}% Agreement</span>'
+        f'<span class="pill pill-blue">{row["single_stake_u"]:.2f}u</span>',
         unsafe_allow_html=True,
     )
-    st.markdown(f'<div class="confbar-wrap"><div class="confbar-fill" style="width:{bar_pct:.1f}%; background:{bar_color};"></div></div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="confbar-wrap"><div class="confbar-fill" style="width:{bar_pct:.1f}%; background:{bar_color};"></div></div>',
+        unsafe_allow_html=True,
+    )
     render_compact_metrics([
         ("Hit %", f'{row["realistic_hit_prob"]*100:.1f}%', ""),
         ("Realistic EV", f'{row["realistic_ev_pct"]:.1f}%', ev_color_class(float(row["realistic_ev_pct"]))),
         ("True Edge", f'{row["true_edge"]*100:.1f}%', ""),
         ("Odds", fmt_american(row["odds"]), ""),
         ("Score", f'{row["consensus_score"]:.1f}', ""),
-        ("Variance", row["variance_note"], ""),
+        ("Stake", f'{row["single_stake_$"]:.0f} / {row["single_stake_u"]:.2f}u', ""),
     ])
     st.markdown(
         "<div class='reason-box'><div style='font-weight:800; margin-bottom:6px;'>📊 WHY THIS PLAY</div>"
@@ -745,6 +837,8 @@ def sample_data() -> pd.DataFrame:
         {"player": "Anthony Davis", "team": "LAL", "opponent": "GSW", "matchup": "Lakers vs Warriors", "market": "rebounds", "bet_side": "Over", "line": 11.5, "projection": 13.1, "odds": -105, "book": "FanDuel", "starter": True, "minutes": 35, "spread": 2.5, "pace": 101.9, "usage": 27.0},
         {"player": "Austin Reaves", "team": "LAL", "opponent": "GSW", "matchup": "Lakers vs Warriors", "market": "assists", "bet_side": "Under", "line": 6.5, "projection": 5.2, "odds": -102, "book": "BetMGM", "starter": True, "minutes": 34, "spread": 2.5, "pace": 101.9, "usage": 21.0},
         {"player": "Jordan Poole", "team": "WAS", "opponent": "BKN", "matchup": "Wizards vs Nets", "market": "points", "bet_side": "Over", "line": 21.5, "projection": 24.4, "odds": 102, "book": "Caesars", "starter": True, "minutes": 33, "spread": 5.0, "pace": 99.6, "usage": 30.0},
+        {"player": "Jalen Brunson", "team": "NYK", "opponent": "MIA", "matchup": "Knicks vs Heat", "market": "points", "bet_side": "Over", "line": 26.5, "projection": 29.7, "odds": -110, "book": "FanDuel", "starter": True, "minutes": 36, "spread": -3.0, "pace": 98.7, "usage": 30.6},
+        {"player": "Jimmy Butler", "team": "MIA", "opponent": "NYK", "matchup": "Heat vs Knicks", "market": "assists", "bet_side": "Over", "line": 5.5, "projection": 6.7, "odds": 100, "book": "DraftKings", "starter": True, "minutes": 35, "spread": 3.0, "pace": 98.7, "usage": 25.1},
         {"player": "Bench Example", "team": "MIA", "opponent": "BOS", "matchup": "Heat vs Celtics", "market": "points", "bet_side": "Over", "line": 10.5, "projection": 13.2, "odds": -110, "book": "DraftKings", "starter": False, "minutes": 24, "spread": 9.5, "pace": 95.8, "usage": 18.0},
     ])
 
@@ -755,34 +849,106 @@ def load_csv(file) -> pd.DataFrame:
 
 
 # ============================================================
-# App
+# App header
 # ============================================================
 st.title("🏀 Sports AI Betting Dashboard")
-st.caption("V7.7 Elite: AI reasoning engine, confidence tiers, bet slip mode, correlation intelligence, and bankroll strategy panel.")
+st.caption("Build V8: enhanced filters, single-bet sizing, better ranking engine, upgraded parlay lab, and cleaner mobile-first workflow.")
 
+# ============================================================
+# Sidebar controls
+# ============================================================
 with st.sidebar:
+    st.markdown("### Data")
     uploaded = st.file_uploader("Upload CSV", type=["csv"])
     use_sample = st.toggle("Use sample data", value=uploaded is None)
+
+    st.markdown("### Parlay Controls")
     leg_size = st.selectbox("Parlay size", [2, 3], index=0)
     bankroll = st.number_input("Bankroll ($)", min_value=100, max_value=100000, value=1000, step=50)
     max_bet_pct = st.slider("Max bankroll % per parlay", 0.25, 3.0, 1.0, 0.25) / 100.0
+    max_single_pct = st.slider("Max bankroll % per single", 0.25, 3.0, 1.25, 0.25) / 100.0
     exposure_cap_pct = st.slider("Total parlay exposure cap %", 1.0, 10.0, 3.0, 0.5) / 100.0
-    max_parlays = st.slider("Max parlay combos", 5, 40, 20)
-    min_approval_score = st.slider("Min approval score", 60, 85, 64)
-    bet_slip_mode = st.toggle("Bet Slip Mode", value=False)
+    max_parlays = st.slider("Max parlay combos", 5, 50, 25)
 
+    st.markdown("### Approval Engine")
+    min_approval_score = st.slider("Min approval score", 60, 85, 64)
+    min_edge_pct = st.slider("Min true edge %", 0.0, 12.0, 2.0, 0.5)
+    min_ev_pct = st.slider("Min realistic EV %", 0.0, 20.0, 2.0, 0.5)
+
+    st.markdown("### UI")
+    bet_slip_mode = st.toggle("Enable Bet Slip Mode", value=True)
+    show_full_table = st.toggle("Show full raw model table", value=False)
+
+# ============================================================
+# Load and score data
+# ============================================================
 if uploaded and not use_sample:
     df = ensure_columns(load_csv(uploaded))
 else:
     df = ensure_columns(sample_data())
 
-df = compute_scores(df)
-pool = approved_pool(df)
-pool = pool[pool["consensus_score"] >= min_approval_score].copy()
+df = compute_scores(df, bankroll=float(bankroll), max_single_pct=float(max_single_pct))
+
+# ============================================================
+# Dynamic filters
+# ============================================================
+with st.expander("🎛️ Advanced Filters", expanded=True):
+    c1, c2, c3, c4 = st.columns(4)
+
+    with c1:
+        markets = sorted([x for x in df["market"].dropna().astype(str).unique().tolist() if x.strip() != ""])
+        selected_markets = st.multiselect("Market", markets, default=[])
+
+    with c2:
+        books = sorted([x for x in df["book"].dropna().astype(str).unique().tolist() if x.strip() != ""])
+        selected_books = st.multiselect("Sportsbook", books, default=[])
+
+    with c3:
+        teams = sorted([x for x in df["team"].dropna().astype(str).unique().tolist() if x.strip() != ""])
+        selected_teams = st.multiselect("Team", teams, default=[])
+
+    with c4:
+        side_filter = st.selectbox("Bet Side", ["All", "Over", "Under"], index=0)
+
+    c5, c6, c7, c8 = st.columns(4)
+    with c5:
+        starter_only = st.toggle("Starters only", value=False)
+    with c6:
+        min_minutes = st.slider("Min minutes", 0, 40, 0, 1)
+    with c7:
+        odds_min = st.number_input("Min American odds", value=-300, step=5)
+    with c8:
+        odds_max = st.number_input("Max American odds", value=200, step=5)
+
+filtered_df = df.copy()
+
+if selected_markets:
+    filtered_df = filtered_df[filtered_df["market"].isin(selected_markets)]
+if selected_books:
+    filtered_df = filtered_df[filtered_df["book"].isin(selected_books)]
+if selected_teams:
+    filtered_df = filtered_df[filtered_df["team"].isin(selected_teams)]
+if side_filter != "All":
+    filtered_df = filtered_df[filtered_df["bet_side"] == side_filter]
+if starter_only:
+    filtered_df = filtered_df[filtered_df["starter"] == True]
+filtered_df = filtered_df[filtered_df["minutes"].fillna(0) >= min_minutes]
+filtered_df = filtered_df[
+    filtered_df["odds"].fillna(0).between(min(odds_min, odds_max), max(odds_min, odds_max))
+]
+
+pool = approved_pool(filtered_df)
+pool = pool[
+    (pool["consensus_score"] >= min_approval_score)
+    & ((pool["true_edge"] * 100) >= min_edge_pct)
+    & (pool["realistic_ev_pct"] >= min_ev_pct)
+].copy()
 
 if pool.empty:
-    st.warning("No plays qualify at the current V7.7 filters.")
+    st.warning("No plays qualify under the current Build V8 filters.")
     st.stop()
+
+pool = pool.sort_values(["rank_score", "realistic_ev_pct", "consensus_score"], ascending=False).reset_index(drop=True)
 
 top = unique_top_plays(pool)
 all_parlays = generate_parlays(pool, leg_size=leg_size, bankroll=float(bankroll), max_fraction=float(max_bet_pct), max_results=max_parlays)
@@ -790,88 +956,206 @@ approved_parlays = apply_exposure_cap(all_parlays, float(bankroll), float(exposu
 best_by_type = select_best_by_type(approved_parlays)
 featured_parlay = best_by_type["Safe"] or best_by_type["Balanced"] or best_by_type["Aggressive"]
 
-st.markdown("## Approved Pool")
-pool_show = pool[[
-    "player", "matchup", "market", "bet_side", "line", "odds", "true_edge",
-    "realistic_ev_pct", "consensus_score", "model_agreement_pct", "consensus_action"
-]].copy()
-pool_show["true_edge"] = (pool_show["true_edge"] * 100).round(1).astype(str) + "%"
-pool_show["realistic_ev_pct"] = pool_show["realistic_ev_pct"].round(1).astype(str) + "%"
-pool_show["model_agreement_pct"] = pool_show["model_agreement_pct"].astype(int).astype(str) + "%"
-st.dataframe(pool_show, use_container_width=True, hide_index=True)
+# ============================================================
+# Overview metrics
+# ============================================================
+best_single = top["ev"]
+safest_play = top["safe"]
 
-render_summary_banner(top["ev"], top["safe"], featured_parlay)
-
-st.markdown("## 🔎 Top Plays Panel")
-t1, t2, t3 = st.tabs(["🔥 Best Single", "🔒 Safest Play", "⚡ Highest Edge"])
-with t1:
-    render_play_card(top["ev"], "Best Single (EV)")
-with t2:
-    render_play_card(top["safe"], "Safest Play")
-with t3:
-    render_play_card(top["edge"], "Highest Edge Play")
-
-st.markdown('<div class="rule"></div>', unsafe_allow_html=True)
-
-st.markdown("## 📊 Bankroll Strategy")
-today_single_units = 1.5 if not top["ev"].empty else 0
-today_parlay_units = featured_parlay["stake_u"] if featured_parlay else 0
-expected_roi = ((top["ev"]["realistic_ev_pct"] if not top["ev"].empty else 0) * 0.5) + ((featured_parlay["ev_pct"] if featured_parlay else 0) * 0.5)
+today_single_units = safe_float(best_single.get("single_stake_u"), 0.0) if not best_single.empty else 0.0
+today_parlay_units = featured_parlay["stake_u"] if featured_parlay else 0.0
+expected_roi = (
+    (safe_float(best_single.get("realistic_ev_pct"), 0.0) * 0.5)
+    + ((featured_parlay["ev_pct"] if featured_parlay else 0.0) * 0.5)
+)
 risk_label = "Moderate" if featured_parlay else "Light"
+
 render_metric_row([
-    ("Recommended Singles", f"{today_single_units:.1f}u"),
+    ("Approved Plays", str(len(pool))),
+    ("Recommended Singles", f"{today_single_units:.2f}u"),
     ("Recommended Parlays", f"{today_parlay_units:.2f}u"),
-    ("Risk Level", risk_label),
     ("Expected ROI", f"{expected_roi:.1f}%"),
 ])
 
-st.markdown('<div class="rule"></div>', unsafe_allow_html=True)
+render_summary_banner(best_single, safest_play, featured_parlay)
 
-st.markdown("## 🛡️ Best Parlay")
-if featured_parlay:
-    title = f"{featured_parlay['type']} Parlay"
-    render_parlay_card(featured_parlay, title)
-else:
-    st.info("No parlay survived V7.7 filters.")
+# ============================================================
+# Main tabs
+# ============================================================
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "🏠 Dashboard",
+    "🔥 Singles Lab",
+    "🧩 Parlay Lab",
+    "🎯 Bet Slip",
+    "📋 Data View",
+])
 
-if bet_slip_mode:
-    st.markdown("## 🎯 Bet Slip Mode")
-    st.markdown('<div class="bet-slip-wrap">Select your own plays and auto-build a custom parlay.</div>', unsafe_allow_html=True)
-    selections = []
-    for idx, row in pool.sort_values(["consensus_score", "realistic_ev_pct"], ascending=False).iterrows():
-        label = f"{row['player']} — {row['bet_side']} {row['line']} {row['market']} ({fmt_american(row['odds'])})"
-        if st.checkbox(label, key=f"sel_{idx}"):
-            selections.append(row)
+# ============================================================
+# Dashboard
+# ============================================================
+with tab1:
+    st.markdown("## Approved Pool")
+    pool_show = pool[[
+        "player", "team", "matchup", "market", "bet_side", "line", "odds", "true_edge",
+        "realistic_ev_pct", "realistic_hit_prob", "consensus_score",
+        "model_agreement_pct", "single_stake_u", "consensus_action"
+    ]].copy()
 
-    if len(selections) >= 2:
-        custom = build_parlay(selections[:leg_size], float(bankroll), float(max_bet_pct))
-        if custom:
-            render_parlay_card(custom, "Custom Bet Slip Parlay")
+    pool_show["odds"] = pool_show["odds"].apply(fmt_american)
+    pool_show["true_edge"] = (pool_show["true_edge"] * 100).round(1).astype(str) + "%"
+    pool_show["realistic_ev_pct"] = pool_show["realistic_ev_pct"].round(1).astype(str) + "%"
+    pool_show["realistic_hit_prob"] = (pool_show["realistic_hit_prob"] * 100).round(1).astype(str) + "%"
+    pool_show["model_agreement_pct"] = pool_show["model_agreement_pct"].astype(int).astype(str) + "%"
+    pool_show["single_stake_u"] = pool_show["single_stake_u"].round(2).astype(str) + "u"
+
+    st.dataframe(pool_show, use_container_width=True, hide_index=True)
+
+    st.markdown('<div class="rule"></div>', unsafe_allow_html=True)
+    st.markdown("## Top Plays Panel")
+
+    a, b, c, d = st.tabs(["🔥 Best Single", "🔒 Safest Play", "⚡ Highest Edge", "🎯 Best Balanced"])
+    with a:
+        render_play_card(top["ev"], "Best Single (Highest EV)")
+    with b:
+        render_play_card(top["safe"], "Safest Play")
+    with c:
+        render_play_card(top["edge"], "Highest Edge Play")
+    with d:
+        render_play_card(top["balanced"], "Best Balanced Play")
+
+    st.markdown('<div class="rule"></div>', unsafe_allow_html=True)
+    st.markdown("## Bankroll Strategy")
+    render_metric_row([
+        ("Singles Risk", risk_label),
+        ("Top Single Stake", f"{today_single_units:.2f}u"),
+        ("Top Parlay Stake", f"{today_parlay_units:.2f}u"),
+        ("Parlays Available", str(len(approved_parlays))),
+    ])
+
+# ============================================================
+# Singles Lab
+# ============================================================
+with tab2:
+    st.markdown("## 🔥 Singles Lab")
+    st.caption("Sorted by Build V8 ranking engine: score + EV + edge + realistic hit rate.")
+
+    singles_df = pool[[
+        "player", "team", "matchup", "market", "bet_side", "line", "projection",
+        "odds", "realistic_hit_prob", "true_edge", "realistic_ev_pct",
+        "consensus_score", "model_agreement_pct", "single_stake_u", "single_stake_$",
+        "confidence_grade", "consensus_action", "book", "movement_note"
+    ]].copy()
+
+    singles_df["odds_display"] = singles_df["odds"].apply(fmt_american)
+    singles_df["hit_display"] = (singles_df["realistic_hit_prob"] * 100).round(1)
+    singles_df["edge_display"] = (singles_df["true_edge"] * 100).round(1)
+    singles_df["ev_display"] = singles_df["realistic_ev_pct"].round(1)
+
+    top_n = st.slider("Show top N singles", 3, min(25, len(singles_df)), min(10, len(singles_df)))
+    for _, row in singles_df.head(top_n).iterrows():
+        render_play_card(row, f"Ranked Single • {row['player']}")
+
+# ============================================================
+# Parlay Lab
+# ============================================================
+with tab3:
+    st.markdown("## 🧩 Parlay Lab")
+
+    s1, s2, s3 = st.columns(3)
+    with s1:
+        if best_by_type["Safe"]:
+            render_parlay_card(best_by_type["Safe"], "Best Safe Parlay")
         else:
-            st.warning("Selected combination did not pass custom parlay rules.")
+            st.info("No Safe parlay found.")
+    with s2:
+        if best_by_type["Balanced"]:
+            render_parlay_card(best_by_type["Balanced"], "Best Balanced Parlay")
+        else:
+            st.info("No Balanced parlay found.")
+    with s3:
+        if best_by_type["Aggressive"]:
+            render_parlay_card(best_by_type["Aggressive"], "Best Aggressive Parlay")
+        else:
+            st.info("No Aggressive parlay found.")
+
+    st.markdown('<div class="rule"></div>', unsafe_allow_html=True)
+    st.markdown("## All Approved Parlays")
+
+    if approved_parlays:
+        rows = []
+        for i, p in enumerate(approved_parlays, 1):
+            rows.append({
+                "Rank": i,
+                "Type": p["type"],
+                "Odds": fmt_american(p["combined_american"]),
+                "Hit %": round(p["hit_pct"], 1),
+                "EV %": round(p["ev_pct"], 1),
+                "Kelly %": round(p["kelly_raw_pct"], 2),
+                "Bet %": round(p["bet_pct"], 2),
+                "Stake u": round(p["stake_u"], 2),
+                "Stake $": round(p["stake_$"], 2),
+                "Corr": round(p["corr_pen"], 2),
+                "Legs": " | ".join([f"{x['player']} {x['bet_side']} {x['line']}" for x in p["legs"]]),
+            })
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        st.caption("Sharper builds rise after EV, hit-rate, and correlation controls.")
     else:
-        st.caption("Select at least two plays to build a custom parlay.")
+        st.info("No approved parlays available.")
 
-st.markdown("## All Approved Parlays")
-if approved_parlays:
-    rows = []
-    for i, p in enumerate(approved_parlays, 1):
-        rows.append({
-            "Rank": i,
-            "Type": p["type"],
-            "Odds": fmt_american(p["combined_american"]),
-            "Hit %": round(p["hit_pct"], 1),
-            "EV %": round(p["ev_pct"], 1),
-            "Kelly %": round(p["kelly_raw_pct"], 2),
-            "Bet %": round(p["bet_pct"], 2),
-            "Stake u": round(p["stake_u"], 2),
-            "Stake $": round(p["stake_$"], 2),
-            "Corr": round(p["corr_pen"], 2),
-            "Legs": " | ".join([f"{x['player']} {x['bet_side']} {x['line']}" for x in p["legs"]]),
-        })
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-    st.caption("Sharper builds float to the top after EV, hit rate, and correlation controls.")
-else:
-    st.info("No approved parlays available.")
+# ============================================================
+# Bet Slip
+# ============================================================
+with tab4:
+    st.markdown("## 🎯 Bet Slip Builder")
 
-st.caption("Next upgrade: same-game parlay mode, live odds movement, and slate exposure controls.")
+    if not bet_slip_mode:
+        st.info("Enable Bet Slip Mode in the sidebar to use this tab.")
+    else:
+        st.markdown(
+            '<div class="bet-slip-wrap">Select approved plays below and Build V8 will price your custom parlay with correlation control.</div>',
+            unsafe_allow_html=True,
+        )
+
+        selections = []
+        for idx, row in pool.sort_values(["rank_score", "realistic_ev_pct"], ascending=False).iterrows():
+            label = (
+                f"{row['player']} — {row['bet_side']} {row['line']} {row['market']} "
+                f"({fmt_american(row['odds'])}) • EV {row['realistic_ev_pct']:.1f}% • {row['single_stake_u']:.2f}u"
+            )
+            if st.checkbox(label, key=f"bet_slip_{idx}"):
+                selections.append(row)
+
+        st.caption(f"Selected plays: {len(selections)}")
+        if len(selections) >= 2:
+            custom_leg_size = st.selectbox("Custom parlay leg count", [2, 3], index=0, key="custom_leg_size")
+            chosen = selections[:custom_leg_size]
+            custom = build_parlay(chosen, float(bankroll), float(max_bet_pct))
+            if custom:
+                render_parlay_card(custom, "Custom Bet Slip Parlay")
+            else:
+                st.warning("Selected combination did not pass custom parlay thresholds.")
+        else:
+            st.caption("Select at least two plays to build a custom parlay.")
+
+# ============================================================
+# Data view
+# ============================================================
+with tab5:
+    st.markdown("## 📋 Model Data View")
+    if show_full_table:
+        raw_show = filtered_df.copy()
+        if "odds" in raw_show.columns:
+            raw_show["odds_display"] = raw_show["odds"].apply(fmt_american)
+        st.dataframe(raw_show, use_container_width=True, hide_index=True)
+    else:
+        data_view = pool[[
+            "player", "team", "opponent", "matchup", "market", "bet_side", "line",
+            "projection", "odds", "hit_prob", "realistic_hit_prob", "implied_prob",
+            "true_edge", "raw_ev_pct", "realistic_ev_pct", "consensus_score",
+            "rank_score", "confidence_grade", "model_agreement_pct", "single_stake_u",
+            "book", "starter", "minutes", "script_type", "script_score", "variance_note"
+        ]].copy()
+        data_view["odds"] = data_view["odds"].apply(fmt_american)
+        st.dataframe(data_view, use_container_width=True, hide_index=True)
+
+st.caption("Next upgrade target: NBA Props V9 with starters-only prop engine, alternate odds filters, 1Q props logic, and slate exposure controls.")

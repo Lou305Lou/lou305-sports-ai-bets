@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Sports AI Betting Dashboard V11.2 PRO UI", layout="wide")
+st.set_page_config(page_title="Sports AI Betting Dashboard V12 Automation Engine", layout="wide")
 
 CALL_LOG_FILE = "api_call_log.csv"
 BET_LOG_FILE = "bet_log.csv"
@@ -994,7 +994,7 @@ def load_uploaded_csv(file):
 # -----------------------------
 # App
 # -----------------------------
-st.title("🏀 Sports AI Betting Dashboard V11.2 PRO UI")
+st.title("🏀 Sports AI Betting Dashboard V12 Automation Engine")
 st.caption("FINAL POLISH: compact pro layout, confidence tiers, why-this-play engine, fallback triggers, and market insight banner.")
 
 with st.sidebar:
@@ -1008,6 +1008,12 @@ with st.sidebar:
     top_live_checks = st.slider("Top plays to live-check", 1, 5, 3)
     min_live_edge = st.slider("Minimum edge % for live-check", 0.0, 10.0, 5.0, 0.5)
     manual_refresh = st.button("Refresh Top Plays Only")
+
+    st.markdown("### Automation")
+    auto_alerts_enabled = st.toggle("Enable alert routing", value=True)
+    alert_delivery = st.selectbox("Alert route", ["In-App Only", "Scheduled Scan Only", "Manual + Scheduled"])
+    auto_execute_mode = st.selectbox("Execution mode", ["Manual Confirmation", "Queue Signals Only", "Auto Queue"])
+    scheduled_scan_button = st.button("Run Scheduled Alert Scan Now")
 
     st.markdown("### Portfolio")
     bankroll = st.number_input("Bankroll ($)", min_value=100, max_value=100000, value=1000, step=50)
@@ -1196,6 +1202,8 @@ if not best_play_port.empty:
 
 render_best_bet(best_play)
 
+st.markdown(f'<div class="insight-box"><b>🎯 Execution Signal:</b> {execution_signal(best_play)} • Confidence {urgency_level(best_play)} • Best book {best_play["best_book"]} {fmt_american(best_play["best_display_odds"])}</div>', unsafe_allow_html=True)
+
 st.markdown("## 🤖 PRO MODE Model Panel")
 st.markdown(f'<span class="conf-pill {best_play["confidence_css"]}">{best_play["confidence_label"]}</span>', unsafe_allow_html=True)
 render_summary_box([
@@ -1206,7 +1214,17 @@ render_summary_box([
     ("Variance", f"{best_play['model_variance']:.1f}"),
     ("Agreement", f"{int(best_play['agreement_count'])}/5"),
 ])
-insight = "Strong projection + strong CLV alignment → GREEN LIGHT" if best_play["agreement_count"] >= 4 else "Mixed model alignment → use controlled size"
+strong = []
+if best_play["model_projection"] >= 70: strong.append("Projection")
+if best_play["model_clv"] >= 70: strong.append("CLV")
+if best_play["model_script"] >= 70: strong.append("Script")
+weak = []
+if best_play["model_market"] < 50: weak.append("Market")
+if best_play["model_variance"] < 50: weak.append("Variance")
+insight = f"{' + '.join(strong) if strong else 'Mixed signals'} strong"
+if weak:
+    insight += f" • {', '.join(weak)} slightly weaker"
+insight += f" → {execution_signal(best_play)}"
 st.markdown(f"<div class='insight-box'><b>🧠 Model Insight:</b> {insight}</div>", unsafe_allow_html=True)
 
 st.markdown("## ✅ Qualified Plays")
@@ -1243,6 +1261,13 @@ else:
     ]].copy()
     portfolio_show["portfolio_weight"] = (portfolio_show["portfolio_weight"] * 100).round(1).astype(str) + "%"
     st.dataframe(portfolio_show, use_container_width=True, hide_index=True)
+
+st.markdown("## 🛰️ Automation Queue")
+queue_df = build_automation_queue(qualified, fallback_pool)
+if queue_df.empty:
+    st.info("No automation signals available.")
+else:
+    st.dataframe(queue_df, use_container_width=True, hide_index=True)
 
 st.markdown("## ✅ Add To Bet Log")
 track_rows = portfolio.head(5).copy()
@@ -1337,4 +1362,4 @@ if call_log.empty:
 else:
     st.dataframe(call_log.sort_index(ascending=False), use_container_width=True, hide_index=True)
 
-st.caption("V11.2 PRO UI FINAL: compact best-bet layout, confidence tiers, why-this-play engine, fallback triggers, market insight banner, and polished mobile spacing.")
+st.caption("V12 AUTOMATION ENGINE: scheduled scans, alert routing, execution signals, automation queue, fallback triggers, confidence tiers, and polished mobile spacing.")

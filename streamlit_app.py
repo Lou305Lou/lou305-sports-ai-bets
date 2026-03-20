@@ -1,13 +1,19 @@
 
 import math
 import itertools
-from typing import Dict, List, Tuple
+import os
+from datetime import datetime
+from typing import Dict, List, Tuple, Optional
 
 import numpy as np
 import pandas as pd
+import requests
 import streamlit as st
 
-st.set_page_config(page_title="Sports AI Betting Dashboard V8.4 FINAL", layout="wide")
+st.set_page_config(page_title="Sports AI Betting Dashboard V9", layout="wide")
+
+APP_VERSION = "V9 Live Odds + Auto Tracker"
+BET_LOG_FILE = "bet_log.csv"
 
 # ============================================================
 # Helpers
@@ -57,6 +63,10 @@ def fmt_american(v: float) -> str:
         return "—"
     v = int(round(v))
     return f"+{v}" if v > 0 else str(v)
+
+
+def now_ts() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
 # ============================================================
@@ -125,7 +135,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ============================================================
-# Data prep
+# Data prep and scoring
 # ============================================================
 def ensure_columns(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
@@ -524,7 +534,7 @@ def compute_scores(df: pd.DataFrame, bankroll: float = 1000, max_single_pct: flo
 
 
 # ============================================================
-# Portfolio logic
+# Portfolio and tracking
 # ============================================================
 def approved_pool(df: pd.DataFrame) -> pd.DataFrame:
     primary = df[
@@ -644,6 +654,150 @@ def build_best_parlay(df: pd.DataFrame, leg_size: int = 2) -> Dict:
     return best or {}
 
 
+def load_bet_log() -> pd.DataFrame:
+    if os.path.exists(BET_LOG_FILE):
+        try:
+            return pd.read_csv(BET_LOG_FILE)
+        except Exception:
+            pass
+    cols = [
+        "timestamp", "bet_id", "player", "market", "bet_side", "line", "book", "best_book",
+        "placed_odds", "best_odds", "stake_u", "stake_$", "edge_pct", "ev_pct",
+        "result", "profit_u", "closing_odds", "clv_placed_vs_close_pct", "notes"
+    ]
+    return pd.DataFrame(columns=cols)
+
+
+def save_bet_log(df: pd.DataFrame):
+    df.to_csv(BET_LOG_FILE, index=False)
+
+
+def add_bet_to_log(row: pd.Series):
+    log = load_bet_log()
+    bet_id = f"{row['player']}_{row['market']}_{row['bet_side']}_{row['line']}_{now_ts()}"
+    new_row = {
+        "timestamp": now_ts(),
+        "bet_id": bet_id,
+        "player": row["player"],
+        "market": row["market"],
+        "bet_side": row["bet_side"],
+        "line": row["line"],
+        "book": row["book"],
+        "best_book": row["best_book"],
+        "placed_odds": row["odds"],
+        "best_odds": row["best_display_odds"],
+        "stake_u": row["single_stake_u"],
+        "stake_$": row["single_stake_$"],
+        "edge_pct": row["true_edge"] * 100,
+        "ev_pct": row["realistic_ev_pct"],
+        "result": "Pending",
+        "profit_u": 0.0,
+        "closing_odds": np.nan,
+        "clv_placed_vs_close_pct": np.nan,
+        "notes": ""
+    }
+    log = pd.concat([log, pd.DataFrame([new_row])], ignore_index=True)
+    save_bet_log(log)
+
+
+def settle_bet(result: str, placed_odds: float, stake_u: float) -> float:
+    dec = american_to_decimal(placed_odds)
+    if pd.isna(dec):
+        return 0.0
+    if result == "Win":
+        return round((dec - 1) * stake_u, 2)
+    if result == "Loss":
+        return round(-1.0 * stake_u, 2)
+    return 0.0
+
+
+def tracker_summary(log: pd.DataFrame) -> Dict[str, float]:
+    if log.empty:
+        return {"bets": 0, "wins": 0, "losses": 0, "pushes": 0, "profit_u": 0.0, "roi_pct": 0.0, "win_rate": 0.0}
+    wins = int((log["result"] == "Win").sum())
+    losses = int((log["result"] == "Loss").sum())
+    pushes = int((log["result"] == "Push").sum())
+    graded = wins + losses + pushes
+    total_staked = pd.to_numeric(log["stake_u"], errors="coerce").fillna(0).sum()
+    profit_u = pd.to_numeric(log["profit_u"], errors="coerce").fillna(0).sum()
+    roi_pct = (profit_u / total_staked * 100) if total_staked > 0 else 0.0
+    win_rate = (wins / (wins + losses) * 100) if (wins + losses) > 0 else 0.0
+    return {
+        "bets": int(len(log)),
+        "wins": wins,
+        "losses": losses,
+        "pushes": pushes,
+        "profit_u": round(profit_u, 2),
+        "roi_pct": round(roi_pct, 1),
+        "win_rate": round(win_rate, 1),
+        "graded": graded,
+    }
+
+
+# ============================================================
+# Live odds fetcher (API-ready)
+# ============================================================
+def fetch_theoddsapi_nba_props(api_key: str) -> Optional[pd.DataFrame]:
+    """
+    API-ready hook for deployment.
+    You will still need to map sportsbooks and markets to your preferred schema.
+    """
+    try:
+        sport = "basketball_nba"
+        markets = "player_points,player_rebounds,player_assists"
+        regions = "us"
+        odds_format = "american"
+        base_url = "https://api.the-odds-api.com/v4/sports"
+        url = f"{base_url}/{sport}/odds"
+        params = {
+            "apiKey": api_key,
+            "regions": regions,
+            "markets": markets,
+            "oddsFormat": odds_format,
+            "bookmakers": "fanduel,draftkings,betmgm,caesars"
+        }
+        resp = requests.get(url, params=params, timeout=20)
+        if resp.status_code != 200:
+            return None
+        raw = resp.json()
+        rows = []
+        for game in raw:
+            home = game.get("home_team", "")
+            away = game.get("away_team", "")
+            matchup = f"{away} vs {home}"
+            bookmakers = game.get("bookmakers", [])
+            for bk in bookmakers:
+                book_name = bk.get("title", "")
+                for market in bk.get("markets", []):
+                    market_key = market.get("key", "")
+                    for outcome in market.get("outcomes", []):
+                        player = outcome.get("description", "") or outcome.get("name", "")
+                        side = outcome.get("name", "")
+                        line = outcome.get("point", np.nan)
+                        price = outcome.get("price", np.nan)
+                        if not player or pd.isna(line):
+                            continue
+                        market_map = {
+                            "player_points": "points",
+                            "player_rebounds": "rebounds",
+                            "player_assists": "assists"
+                        }
+                        rows.append({
+                            "player": player,
+                            "matchup": matchup,
+                            "market": market_map.get(market_key, market_key),
+                            "bet_side": side,
+                            "line": line,
+                            "odds": price,
+                            "book": book_name,
+                        })
+        if not rows:
+            return None
+        return pd.DataFrame(rows)
+    except Exception:
+        return None
+
+
 # ============================================================
 # Render helpers
 # ============================================================
@@ -670,7 +824,7 @@ def why_this_play(row: pd.Series) -> List[str]:
     best_book = row.get("best_book", "")
     best_odds = fmt_american(row.get("best_display_odds", np.nan))
 
-    notes = [
+    return [
         f"Projection Edge: {proj_edge:+.1f} vs line" if not pd.isna(proj_edge) else "Projection Edge: N/A",
         f"Model Agreement: {model_agreement}% aligned",
         f"Market Inefficiency: true edge {true_edge:.1f}%",
@@ -682,7 +836,6 @@ def why_this_play(row: pd.Series) -> List[str]:
         f"Risk: {variance}",
         f"Recommended stake: {stake_u:.2f}u",
     ]
-    return notes
 
 
 def render_best_bet(row: pd.Series):
@@ -743,13 +896,18 @@ def load_csv(file) -> pd.DataFrame:
 # ============================================================
 # App
 # ============================================================
-st.title("🏀 Sports AI Betting Dashboard V8.4")
-st.caption("FINAL: sharp mode, line shopping, market intelligence, exposure controls, and mobile-first layout.")
+st.title("🏀 Sports AI Betting Dashboard V9")
+st.caption("Live odds + auto tracker: sharp mode, line shopping, grading log, and API-ready live odds hooks.")
 
 with st.sidebar:
     st.markdown("### Data")
     uploaded = st.file_uploader("Upload CSV", type=["csv"])
     use_sample = st.toggle("Use sample data", value=uploaded is None)
+
+    st.markdown("### Live Odds")
+    live_source = st.selectbox("Live source", ["Sample / CSV", "The Odds API (API-ready)"])
+    odds_api_key = st.text_input("The Odds API key", type="password")
+    refresh_live = st.button("Refresh live odds")
 
     st.markdown("### Bankroll")
     bankroll = st.number_input("Bankroll ($)", min_value=100, max_value=100000, value=1000, step=50)
@@ -766,6 +924,20 @@ if uploaded and not use_sample:
     base_df = ensure_columns(load_csv(uploaded))
 else:
     base_df = ensure_columns(sample_data())
+
+live_status = "Using sample / CSV data."
+if live_source == "The Odds API (API-ready)" and odds_api_key:
+    if refresh_live or "live_df" not in st.session_state:
+        fetched = fetch_theoddsapi_nba_props(odds_api_key)
+        st.session_state["live_df"] = fetched
+    live_df = st.session_state.get("live_df")
+    if live_df is not None and not live_df.empty:
+        live_status = "Live odds fetched from API. Projection fields still need your model feed for full scoring."
+        st.info(live_status)
+    else:
+        st.warning("Live odds fetch did not return usable rows. Falling back to current local dataset.")
+else:
+    st.caption(live_status)
 
 scored = compute_scores(base_df, bankroll=float(bankroll), max_single_pct=float(max_single_pct))
 
@@ -785,12 +957,6 @@ with st.expander("⚙️ Filters", expanded=False):
     with c4:
         side_filter = st.selectbox("Bet Side", ["All", "Over", "Under"])
 
-    c5, c6 = st.columns(2)
-    with c5:
-        market_intel_filter = st.selectbox("Movement", ["All", "Steam only", "Reverse only", "Stable only"])
-    with c6:
-        stale_filter = st.selectbox("Book Quality", ["All", "Current book in line", "Shop books", "Stale line risk"])
-
 filtered = scored.copy()
 
 if starters_only:
@@ -809,16 +975,6 @@ if selected_markets:
 if side_filter != "All":
     filtered = filtered[filtered["bet_side"] == side_filter]
 
-if market_intel_filter == "Steam only":
-    filtered = filtered[filtered["movement_note"].astype(str).str.contains("Steam", case=False, na=False)]
-elif market_intel_filter == "Reverse only":
-    filtered = filtered[filtered["movement_note"].astype(str).str.contains("Reverse", case=False, na=False)]
-elif market_intel_filter == "Stable only":
-    filtered = filtered[filtered["movement_note"].astype(str).str.contains("Stable", case=False, na=False)]
-
-if stale_filter != "All":
-    filtered = filtered[filtered["stale_line_note"] == stale_filter]
-
 pool = approved_pool(filtered)
 pool = pool[
     (pool["consensus_score"] >= min_score)
@@ -836,7 +992,7 @@ if sharp_mode:
     pool = pool.sort_values(["rank_score", "realistic_ev_pct"], ascending=False).head(3)
 
 if pool.empty:
-    st.warning("No plays qualify under the current V8.4 FINAL filters.")
+    st.warning("No plays qualify under the current V9 filters.")
     st.stop()
 
 pool = pool.sort_values(["rank_score", "realistic_ev_pct", "true_edge"], ascending=False).reset_index(drop=True)
@@ -865,6 +1021,14 @@ st.markdown("## 📋 Other Plays")
 for _, row in pool.iloc[1:4].iterrows():
     render_compact_play(row)
 
+st.markdown("## ✅ Add To Bet Log")
+add_cols = st.columns(min(3, len(pool)))
+for i, (_, row) in enumerate(pool.head(3).iterrows()):
+    with add_cols[i]:
+        if st.button(f"Track {row['player']}", key=f"track_{i}"):
+            add_bet_to_log(row)
+            st.success(f"Added {row['player']} to bet log.")
+
 st.markdown("## 💰 Bankroll")
 c1, c2, c3 = st.columns(3)
 with c1:
@@ -875,6 +1039,91 @@ with c2:
 with c3:
     roi_est = (best_play["realistic_ev_pct"] * 0.55) + ((best_parlay["ev_pct"] if best_parlay else 0) * 0.45)
     render_metric_box("ROI", f"{min(roi_est, 42.0):.1f}%")
+
+if best_parlay:
+    legs_txt = " + ".join([f"{x['player']} {x['bet_side']} {x['line']}" for x in best_parlay["legs"]])
+    st.markdown("## 🧩 Best 2-Leg Parlay")
+    st.markdown(f"**Legs:** {legs_txt}")
+    st.markdown(
+        f"**Odds:** {fmt_american(best_parlay['odds'])} | "
+        f"**Hit %:** {best_parlay['hit_prob']*100:.1f}% | "
+        f"**EV:** {best_parlay['ev_pct']:.1f}% | "
+        f"**Correlation Penalty:** {best_parlay['corr_pen']:.2f}"
+    )
+
+st.markdown("## 📒 Auto Tracker")
+log = load_bet_log()
+
+if log.empty:
+    st.info("No tracked bets yet. Use the buttons above to add bets to the log.")
+else:
+    summary = tracker_summary(log)
+    s1, s2, s3, s4 = st.columns(4)
+    with s1:
+        render_metric_box("Tracked Bets", str(summary["bets"]))
+    with s2:
+        render_metric_box("Profit", f"{summary['profit_u']:.2f}u")
+    with s3:
+        render_metric_box("ROI", f"{summary['roi_pct']:.1f}%")
+    with s4:
+        render_metric_box("Win Rate", f"{summary['win_rate']:.1f}%")
+
+    st.markdown("### Grade Bets")
+    editable = log.copy()
+    for idx in editable.index:
+        with st.expander(f"{editable.loc[idx, 'player']} • {editable.loc[idx, 'market']} • {editable.loc[idx, 'bet_side']} {editable.loc[idx, 'line']}", expanded=False):
+            result = st.selectbox(
+                "Result",
+                ["Pending", "Win", "Loss", "Push"],
+                index=["Pending", "Win", "Loss", "Push"].index(str(editable.loc[idx, "result"])),
+                key=f"result_{idx}"
+            )
+            closing_odds = st.number_input(
+                "Closing odds",
+                value=float(editable.loc[idx, "closing_odds"]) if pd.notna(editable.loc[idx, "closing_odds"]) else 0.0,
+                step=1.0,
+                key=f"close_{idx}"
+            )
+            notes = st.text_input("Notes", value=str(editable.loc[idx, "notes"]), key=f"notes_{idx}")
+
+            if st.button("Save grading", key=f"save_grade_{idx}"):
+                editable.loc[idx, "result"] = result
+                editable.loc[idx, "closing_odds"] = closing_odds if closing_odds != 0 else np.nan
+                editable.loc[idx, "notes"] = notes
+                editable.loc[idx, "profit_u"] = settle_bet(
+                    result,
+                    safe_float(editable.loc[idx, "placed_odds"], np.nan),
+                    safe_float(editable.loc[idx, "stake_u"], 0.0)
+                )
+
+                if pd.notna(editable.loc[idx, "closing_odds"]):
+                    placed_ip = american_to_implied_prob(safe_float(editable.loc[idx, "placed_odds"], np.nan))
+                    close_ip = american_to_implied_prob(safe_float(editable.loc[idx, "closing_odds"], np.nan))
+                    editable.loc[idx, "clv_placed_vs_close_pct"] = round((close_ip - placed_ip) * 100, 2)
+                else:
+                    editable.loc[idx, "clv_placed_vs_close_pct"] = np.nan
+
+                save_bet_log(editable)
+                st.success("Bet updated.")
+
+    display_log = load_bet_log().copy()
+    if "placed_odds" in display_log.columns:
+        display_log["placed_odds"] = display_log["placed_odds"].apply(fmt_american)
+    if "best_odds" in display_log.columns:
+        display_log["best_odds"] = display_log["best_odds"].apply(fmt_american)
+    if "closing_odds" in display_log.columns:
+        display_log["closing_odds"] = display_log["closing_odds"].apply(lambda x: fmt_american(x) if pd.notna(x) else "—")
+    if "edge_pct" in display_log.columns:
+        display_log["edge_pct"] = pd.to_numeric(display_log["edge_pct"], errors="coerce").round(1).astype(str) + "%"
+    if "ev_pct" in display_log.columns:
+        display_log["ev_pct"] = pd.to_numeric(display_log["ev_pct"], errors="coerce").round(1).astype(str) + "%"
+    if "stake_u" in display_log.columns:
+        display_log["stake_u"] = pd.to_numeric(display_log["stake_u"], errors="coerce").round(2).astype(str) + "u"
+    if "clv_placed_vs_close_pct" in display_log.columns:
+        display_log["clv_placed_vs_close_pct"] = display_log["clv_placed_vs_close_pct"].apply(
+            lambda x: f"{x:.2f}%" if pd.notna(x) else "—"
+        )
+    st.dataframe(display_log, use_container_width=True, hide_index=True)
 
 with st.expander("🧠 Engine Details", expanded=False):
     engine_view = pool[[
@@ -891,15 +1140,4 @@ with st.expander("🧠 Engine Details", expanded=False):
     engine_view["single_stake_u"] = engine_view["single_stake_u"].round(2).astype(str) + "u"
     st.dataframe(engine_view, use_container_width=True, hide_index=True)
 
-if best_parlay:
-    legs_txt = " + ".join([f"{x['player']} {x['bet_side']} {x['line']}" for x in best_parlay["legs"]])
-    st.markdown("## 🧩 Best 2-Leg Parlay")
-    st.markdown(f"**Legs:** {legs_txt}")
-    st.markdown(
-        f"**Odds:** {fmt_american(best_parlay['odds'])} | "
-        f"**Hit %:** {best_parlay['hit_prob']*100:.1f}% | "
-        f"**EV:** {best_parlay['ev_pct']:.1f}% | "
-        f"**Correlation Penalty:** {best_parlay['corr_pen']:.2f}"
-    )
-
-st.caption("V8.4 FINAL: sharp mode and line shopping active.")
+st.caption("V9: live odds hooks + auto tracker active. Live API fetch is API-ready and needs your odds provider key and full projection feed for production.")

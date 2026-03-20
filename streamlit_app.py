@@ -6,7 +6,6 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-
 st.set_page_config(page_title="Sports AI Betting Dashboard", layout="wide")
 
 
@@ -41,17 +40,132 @@ def clamp01(x: float) -> float:
     return max(0.0, min(1.0, x))
 
 
-def safe_float(x, default=np.nan):
-    try:
-        if pd.isna(x):
-            return default
-        return float(x)
-    except Exception:
-        return default
-
-
 def normal_cdf(x: float) -> float:
     return 0.5 * (1 + math.erf(x / math.sqrt(2)))
+
+
+# ============================================================
+# Styling
+# ============================================================
+st.markdown("""
+<style>
+.block-container {padding-top: 1.2rem; padding-bottom: 3rem;}
+.small-muted {color: rgba(49,51,63,0.68); font-size: 0.95rem;}
+.section-card {
+    border:1px solid rgba(128,128,128,0.22);
+    border-radius:18px;
+    padding:14px 16px;
+    background: rgba(250,250,250,0.78);
+    margin-bottom: 12px;
+}
+.metric-box {
+    border:1px solid rgba(128,128,128,0.22);
+    border-radius:16px;
+    padding:12px 14px;
+    background: rgba(250,250,250,0.78);
+    min-height: 86px;
+}
+.metric-label {
+    font-size: 0.90rem;
+    color: rgba(49,51,63,0.70);
+    margin-bottom: 6px;
+}
+.metric-value {
+    font-size: 1.9rem;
+    font-weight: 800;
+    line-height: 1.1;
+}
+.pill {
+    display:inline-block;
+    padding:6px 10px;
+    border-radius:999px;
+    font-weight:700;
+    font-size:0.95rem;
+    margin-right:6px;
+    margin-bottom:6px;
+    border:1px solid rgba(128,128,128,0.20);
+}
+.pill-green {background:#16a34a; color:white; border:none;}
+.pill-yellow {background:#eab308; color:#111827; border:none;}
+.pill-red {background:#dc2626; color:white; border:none;}
+.pill-gray {background:#f3f4f6; color:#111827;}
+.play-card {
+    border:1px solid rgba(128,128,128,0.20);
+    border-radius:18px;
+    padding:16px;
+    background: rgba(250,250,250,0.82);
+    margin-bottom: 14px;
+}
+.play-title {
+    font-size: 1.65rem;
+    font-weight: 800;
+    line-height: 1.15;
+    margin-bottom: 6px;
+}
+.play-sub {
+    color: rgba(49,51,63,0.76);
+    font-size: 1rem;
+    margin-bottom: 10px;
+}
+.kpi-grid {
+    display:grid;
+    grid-template-columns: repeat(2, minmax(0,1fr));
+    gap:10px;
+    margin-top: 8px;
+    margin-bottom: 10px;
+}
+.kpi-cell {
+    border:1px solid rgba(128,128,128,0.16);
+    background:#f7f7f8;
+    border-radius:14px;
+    padding:10px 12px;
+}
+.kpi-name {
+    font-size: 0.85rem;
+    color: rgba(49,51,63,0.68);
+}
+.kpi-value {
+    font-size: 1.35rem;
+    font-weight: 800;
+    margin-top: 3px;
+}
+.confbar-wrap {
+    height: 10px;
+    border-radius: 999px;
+    background: #ececec;
+    overflow: hidden;
+    margin-top: 8px;
+    margin-bottom: 10px;
+}
+.confbar-fill {
+    height: 10px;
+    border-radius: 999px;
+}
+.parlay-card {
+    border:2px solid rgba(128,128,128,0.18);
+    border-radius:20px;
+    padding:16px;
+    margin-bottom: 16px;
+    background: rgba(250,250,250,0.82);
+}
+.parlay-safe {border-color:#16a34a;}
+.parlay-balanced {border-color:#eab308;}
+.parlay-aggressive {border-color:#dc2626;}
+.legs-list li {margin-bottom: 8px;}
+.summary-banner {
+    border-radius:18px;
+    padding:16px;
+    background: linear-gradient(135deg, rgba(248,250,252,1), rgba(240,249,255,1));
+    border:1px solid rgba(148,163,184,0.22);
+    margin-bottom: 14px;
+}
+@media (max-width: 768px) {
+  .play-title {font-size: 1.35rem;}
+  .metric-value {font-size: 1.55rem;}
+  .kpi-grid {grid-template-columns: repeat(2, minmax(0,1fr));}
+}
+</style>
+""", unsafe_allow_html=True)
 
 
 # ============================================================
@@ -106,12 +220,8 @@ def infer_market_std(row: pd.Series) -> float:
         return float(supplied)
     market = str(row.get("market", "")).lower()
     defaults = {
-        "points": 8.5,
-        "rebounds": 4.0,
-        "assists": 3.6,
-        "pra": 9.0,
-        "threes": 2.4,
-        "3pm": 2.4,
+        "points": 8.5, "rebounds": 4.0, "assists": 3.6,
+        "pra": 9.0, "threes": 2.4, "3pm": 2.4
     }
     for k, v in defaults.items():
         if k in market:
@@ -152,7 +262,6 @@ def compute_scores(df: pd.DataFrame) -> pd.DataFrame:
     out["raw_ev"] = (out["hit_prob"] * (dec - 1)) - (1 - out["hit_prob"])
     out["raw_ev_pct"] = (out["raw_ev"] * 100).round(2)
 
-    # Conservative realism haircut
     out["realistic_hit_prob"] = (
         out["hit_prob"]
         - np.where(out["true_edge"] > 0.08, 0.03, 0.0)
@@ -204,9 +313,6 @@ def compute_scores(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-# ============================================================
-# Pool + singles
-# ============================================================
 def approved_pool(df: pd.DataFrame) -> pd.DataFrame:
     primary = df[
         (
@@ -230,18 +336,43 @@ def approved_pool(df: pd.DataFrame) -> pd.DataFrame:
     return primary
 
 
-def best_single(df: pd.DataFrame, mode: str) -> pd.Series:
-    if df.empty:
-        return pd.Series(dtype=object)
-    if mode == "ev":
-        return df.sort_values(["realistic_ev_pct", "true_edge", "consensus_score"], ascending=False).iloc[0]
-    if mode == "safe":
-        return df.sort_values(["realistic_hit_prob", "consensus_score", "true_edge"], ascending=False).iloc[0]
-    return df.sort_values(["true_edge", "realistic_ev_pct", "consensus_score"], ascending=False).iloc[0]
+# ============================================================
+# Singles logic
+# ============================================================
+def confidence_badge(row: pd.Series) -> str:
+    score = float(row["consensus_score"])
+    edge = float(row["true_edge"]) * 100
+    if score >= 80 and edge >= 10:
+        return "🔥 ELITE PLAY"
+    if score >= 72 and edge >= 5:
+        return "🟡 SOLID EDGE"
+    return "⚠️ LEAN ONLY"
+
+
+def unique_top_plays(df: pd.DataFrame) -> Dict[str, pd.Series]:
+    used = set()
+    plays = {}
+    sort_modes = {
+        "ev": ["realistic_ev_pct", "true_edge", "consensus_score"],
+        "safe": ["realistic_hit_prob", "consensus_score", "true_edge"],
+        "edge": ["true_edge", "realistic_ev_pct", "consensus_score"],
+    }
+    for key in ["ev", "safe", "edge"]:
+        sorted_df = df.sort_values(sort_modes[key], ascending=False)
+        chosen = None
+        for _, row in sorted_df.iterrows():
+            if row["player"] not in used:
+                chosen = row
+                used.add(row["player"])
+                break
+        if chosen is None and not sorted_df.empty:
+            chosen = sorted_df.iloc[0]
+        plays[key] = chosen if chosen is not None else pd.Series(dtype=object)
+    return plays
 
 
 # ============================================================
-# Correlation + parlays
+# Correlation + bankroll
 # ============================================================
 def same_game(a: pd.Series, b: pd.Series) -> bool:
     a_match = str(a.get("matchup", ""))
@@ -261,7 +392,6 @@ def pair_corr_penalty(a: pd.Series, b: pd.Series) -> float:
     pen = 0.0
     same_g = same_game(a, b)
     same_t = same_team(a, b)
-
     if not same_g:
         return 0.0
 
@@ -271,7 +401,6 @@ def pair_corr_penalty(a: pd.Series, b: pd.Series) -> float:
     side_b = str(b.get("bet_side", "")).lower()
 
     pen += 0.12
-
     if same_t:
         pen += 0.08
 
@@ -295,9 +424,6 @@ def combo_corr_penalty(rows: List[pd.Series]) -> float:
     return total
 
 
-# ============================================================
-# Bankroll optimizer
-# ============================================================
 def kelly_fraction(prob: float, decimal_odds: float) -> float:
     if decimal_odds <= 1 or prob <= 0 or prob >= 1:
         return 0.0
@@ -322,13 +448,12 @@ def stake_from_kelly(prob: float, decimal_odds: float, parlay_type: str, bankrol
 
 
 # ============================================================
-# Parlay engine
+# Parlays
 # ============================================================
 def tag_parlay_type(metrics: Dict) -> str:
     hp = metrics["hit_pct"]
     ev = metrics["ev_pct"]
     odds = metrics["combined_american"]
-
     if hp >= 42 and odds <= 300:
         return "Safe"
     if hp >= 28 and ev >= 6:
@@ -339,24 +464,18 @@ def tag_parlay_type(metrics: Dict) -> str:
 def build_parlay_metrics(rows: List[pd.Series], bankroll: float, max_fraction: float) -> Dict:
     decs = [american_to_decimal(r["odds"]) for r in rows]
     probs = [r["realistic_hit_prob"] for r in rows]
-
     if any(pd.isna(x) for x in decs) or any(pd.isna(x) for x in probs):
         return {}
 
     combined_dec = float(np.prod(decs))
     combined_amer = decimal_to_american(combined_dec)
-
     p_ind = float(np.prod(probs))
     corr_pen = combo_corr_penalty(rows)
     p_adj = clamp01(p_ind * (1 - corr_pen))
-
     ev = p_adj * (combined_dec - 1) - (1 - p_adj)
     ev_pct = ev * 100
 
-    # Conservative quality filters
-    if p_adj < 0.12:
-        return {}
-    if ev_pct < 2.0:
+    if p_adj < 0.12 or ev_pct < 2.0:
         return {}
 
     base = {
@@ -378,13 +497,21 @@ def generate_parlays(df: pd.DataFrame, k: int, bankroll: float, max_fraction: fl
     rows = [r[1] for r in df.iterrows()]
     results = []
     for combo in itertools.combinations(rows, k):
-        metrics = build_parlay_metrics(list(combo), bankroll, max_fraction)
-        if not metrics:
-            continue
-        results.append(metrics)
-
+        m = build_parlay_metrics(list(combo), bankroll, max_fraction)
+        if m:
+            results.append(m)
     results = sorted(results, key=lambda x: (x["ev_pct"], x["hit_pct"]), reverse=True)
     return results[:max_results]
+
+
+def apply_total_exposure_cap(parlays: List[Dict], bankroll: float, exposure_cap_pct: float) -> List[Dict]:
+    remaining = bankroll * exposure_cap_pct
+    approved = []
+    for p in parlays:
+        if p["stake_$"] <= remaining + 1e-9:
+            approved.append(p)
+            remaining -= p["stake_$"]
+    return approved
 
 
 def select_best_by_type(parlays: List[Dict]) -> Dict[str, Dict]:
@@ -402,98 +529,136 @@ def select_best_by_type(parlays: List[Dict]) -> Dict[str, Dict]:
     return buckets
 
 
-def apply_total_exposure_cap(parlays: List[Dict], bankroll: float, exposure_cap_pct: float) -> List[Dict]:
-    remaining = bankroll * exposure_cap_pct
-    approved = []
-    for p in parlays:
-        if p["stake_$"] <= remaining + 1e-9:
-            approved.append(p)
-            remaining -= p["stake_$"]
-    return approved
-
-
 # ============================================================
-# UI helpers
+# Render helpers
 # ============================================================
-def metric_cards(items: List[tuple]):
-    cols = st.columns(len(items))
-    for col, (label, value) in zip(cols, items):
-        with col:
-            st.markdown(
-                f"""
-                <div style="
-                    border:1px solid rgba(128,128,128,0.25);
-                    border-radius:14px;
-                    padding:12px;
-                    background:rgba(250,250,250,0.75);
-                    min-height:80px;">
-                    <div style="font-size:12px;opacity:0.72;">{label}</div>
-                    <div style="font-size:24px;font-weight:700;">{value}</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-
-def render_single_card(row: pd.Series, title: str):
-    if row.empty:
-        return
-    st.markdown(f"### {title}")
-    metric_cards([
-        ("Player", row["player"]),
-        ("Action", row["consensus_action"]),
-        ("Score", f"{row['consensus_score']:.1f}"),
-        ("Agreement", f"{int(row['model_agreement_pct'])}%"),
-    ])
-    metric_cards([
-        ("Hit %", f"{row['realistic_hit_prob']*100:.1f}%"),
-        ("True Edge", f"{row['true_edge']*100:.1f}%"),
-        ("Realistic EV", f"{row['realistic_ev_pct']:.1f}%"),
-        ("Odds", f"{int(row['odds']) if not pd.isna(row['odds']) else '—'}"),
-    ])
-    st.write(f"**{row['player']} — {row['bet_side']} {row['line']} {row['market']}**")
-    st.write(f"{row['matchup']} • {row['book']} • {row['variance_note']}")
-    st.markdown("---")
-
-
-def render_parlay_card(p: Dict, title: str):
-    if not p:
-        return
-    color = {"Safe": "#16a34a", "Balanced": "#eab308", "Aggressive": "#dc2626"}[p["parlay_type"]]
+def metric_box(label: str, value: str):
     st.markdown(
         f"""
-        <div style="
-            border:2px solid {color};
-            border-radius:16px;
-            padding:14px;
-            margin-bottom:14px;
-            background:rgba(250,250,250,0.78);">
-            <div style="font-size:24px;font-weight:800;margin-bottom:8px;">{title}</div>
-            <div style="margin-bottom:8px;">
-                <span style="display:inline-block;padding:4px 10px;border-radius:999px;background:{color};color:white;font-weight:700;margin-right:8px;">{p["parlay_type"]}</span>
-                <span style="display:inline-block;padding:4px 10px;border-radius:999px;border:1px solid rgba(128,128,128,0.25);font-weight:700;margin-right:8px;">{int(p["combined_american"]) if not pd.isna(p["combined_american"]) else "—"}</span>
-                <span style="display:inline-block;padding:4px 10px;border-radius:999px;border:1px solid rgba(128,128,128,0.25);font-weight:700;">{p["stake_u"]:.2f}u</span>
-            </div>
+        <div class="metric-box">
+            <div class="metric-label">{label}</div>
+            <div class="metric-value">{value}</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
-    metric_cards([
-        ("Hit %", f"{p['hit_pct']:.1f}%"),
-        ("EV %", f"{p['ev_pct']:.1f}%"),
-        ("Kelly Raw", f"{p['kelly_raw_pct']:.1f}%"),
-        ("Bet %", f"{p['kelly_bet_pct']:.2f}%"),
-    ])
-    metric_cards([
-        ("Corr Penalty", f"{p['corr_pen']:.2f}"),
-        ("Stake", f"{p['stake_u']:.2f}u"),
-        ("Stake $", f"${p['stake_$']:.2f}"),
-        ("Odds", f"{int(p['combined_american']) if not pd.isna(p['combined_american']) else '—'}"),
-    ])
-    st.write("**Legs**")
-    for leg in p["legs"]:
-        st.write(f"- {leg['player']} — {leg['bet_side']} {leg['line']} {leg['market']} ({int(leg['odds']) if not pd.isna(leg['odds']) else 'N/A'})")
-    st.markdown("---")
+
+
+def render_metric_grid(items: List[tuple], cols_per_row: int = 4):
+    for i in range(0, len(items), cols_per_row):
+        chunk = items[i:i+cols_per_row]
+        cols = st.columns(len(chunk))
+        for col, (label, value) in zip(cols, chunk):
+            with col:
+                metric_box(label, value)
+
+
+def ev_color(ev_pct: float) -> str:
+    if ev_pct > 10:
+        return "#16a34a"
+    if ev_pct >= 5:
+        return "#eab308"
+    return "#dc2626"
+
+
+def conf_color(score: float) -> str:
+    if score >= 80:
+        return "#16a34a"
+    if score >= 70:
+        return "#eab308"
+    return "#f97316"
+
+
+def render_summary_banner(play_ev: pd.Series, play_safe: pd.Series, parlay: Dict | None):
+    best_play_text = f"{play_ev['player']} {play_ev['bet_side']} {play_ev['line']} {play_ev['market']}" if not play_ev.empty else "N/A"
+    safest_text = f"{play_safe['player']} ({play_safe['realistic_hit_prob']*100:.1f}%)" if not play_safe.empty else "N/A"
+    parlay_text = f"{parlay['parlay_type']} +{int(parlay['combined_american'])}" if parlay else "None"
+    st.markdown(
+        f"""
+        <div class="summary-banner">
+            <div style="font-size:1.25rem;font-weight:800;margin-bottom:10px;">📊 TODAY'S EDGE SUMMARY</div>
+            <div style="margin-bottom:6px;"><b>Best Play:</b> {best_play_text}</div>
+            <div style="margin-bottom:6px;"><b>Highest EV:</b> {play_ev['realistic_ev_pct']:.1f}%</div>
+            <div style="margin-bottom:6px;"><b>Safest Hit:</b> {safest_text}</div>
+            <div><b>Recommended:</b> 1 Single • 1 Parlay ({parlay_text})</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_compact_play_card(row: pd.Series, title: str):
+    if row.empty:
+        return
+    badge = confidence_badge(row)
+    action = str(row["consensus_action"])
+    action_class = "pill-green" if action == "Bet" else ("pill-yellow" if action == "Lean" else "pill-red")
+    fill = conf_color(float(row["consensus_score"]))
+    pct = max(8, min(100, int(round(float(row["consensus_score"])))))
+    st.markdown(
+        f"""
+        <div class="play-card">
+            <div class="play-title">{title}</div>
+            <div class="play-sub">{row['player']} — {row['bet_side']} {row['line']} {row['market']}</div>
+            <div>
+                <span class="pill {action_class}">{action}</span>
+                <span class="pill pill-gray">{badge}</span>
+                <span class="pill pill-gray">{int(row['model_agreement_pct'])}% Agreement</span>
+            </div>
+            <div class="confbar-wrap"><div class="confbar-fill" style="width:{pct}%; background:{fill};"></div></div>
+            <div class="kpi-grid">
+                <div class="kpi-cell"><div class="kpi-name">Hit %</div><div class="kpi-value">{row['realistic_hit_prob']*100:.1f}%</div></div>
+                <div class="kpi-cell"><div class="kpi-name">Realistic EV</div><div class="kpi-value" style="color:{ev_color(float(row['realistic_ev_pct']))};">{row['realistic_ev_pct']:.1f}%</div></div>
+                <div class="kpi-cell"><div class="kpi-name">True Edge</div><div class="kpi-value">{row['true_edge']*100:.1f}%</div></div>
+                <div class="kpi-cell"><div class="kpi-name">Odds</div><div class="kpi-value">{int(row['odds']) if not pd.isna(row['odds']) else '—'}</div></div>
+                <div class="kpi-cell"><div class="kpi-name">Score</div><div class="kpi-value">{row['consensus_score']:.1f}</div></div>
+                <div class="kpi-cell"><div class="kpi-name">Variance</div><div class="kpi-value" style="font-size:1.05rem;">{row['variance_note']}</div></div>
+            </div>
+            <div class="small-muted">{row['matchup']} • {row['book']}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_parlay_pro_card(p: Dict, title: str):
+    if not p:
+        return
+    ptype = p["parlay_type"]
+    border_cls = "parlay-safe" if ptype == "Safe" else ("parlay-balanced" if ptype == "Balanced" else "parlay-aggressive")
+    pill_cls = "pill-green" if ptype == "Safe" else ("pill-yellow" if ptype == "Balanced" else "pill-red")
+    confidence = int(max(10, min(100, round((p["hit_pct"] * 0.65) + (max(0, p["ev_pct"]) * 0.8)))))
+    fill = "#16a34a" if ptype == "Safe" else ("#eab308" if ptype == "Balanced" else "#dc2626")
+    risk_tag = "Low Risk" if ptype == "Safe" else ("Medium Risk" if ptype == "Balanced" else "High Risk")
+
+    legs_html = "".join([f"<li>{leg['player']} — {leg['bet_side']} {leg['line']} {leg['market']} ({int(leg['odds']) if not pd.isna(leg['odds']) else 'N/A'})</li>" for leg in p["legs"]])
+
+    st.markdown(
+        f"""
+        <div class="parlay-card {border_cls}">
+            <div class="play-title">{title}</div>
+            <div>
+                <span class="pill {pill_cls}">{ptype}</span>
+                <span class="pill pill-gray">{risk_tag}</span>
+                <span class="pill pill-gray">Odds {int(p['combined_american']) if not pd.isna(p['combined_american']) else '—'}</span>
+                <span class="pill pill-gray">{p['stake_u']:.2f}u</span>
+            </div>
+            <div class="small-muted">Confidence: {confidence}%</div>
+            <div class="confbar-wrap"><div class="confbar-fill" style="width:{confidence}%; background:{fill};"></div></div>
+            <div class="kpi-grid">
+                <div class="kpi-cell"><div class="kpi-name">Hit %</div><div class="kpi-value">{p['hit_pct']:.1f}%</div></div>
+                <div class="kpi-cell"><div class="kpi-name">EV %</div><div class="kpi-value" style="color:{ev_color(float(p['ev_pct']))};">{p['ev_pct']:.1f}%</div></div>
+                <div class="kpi-cell"><div class="kpi-name">Kelly Raw</div><div class="kpi-value">{p['kelly_raw_pct']:.1f}%</div></div>
+                <div class="kpi-cell"><div class="kpi-name">Bet %</div><div class="kpi-value">{p['kelly_bet_pct']:.2f}%</div></div>
+                <div class="kpi-cell"><div class="kpi-name">Stake $</div><div class="kpi-value">${p['stake_$']:.2f}</div></div>
+                <div class="kpi-cell"><div class="kpi-name">Corr Penalty</div><div class="kpi-value">{p['corr_pen']:.2f}</div></div>
+            </div>
+            <div class="small-muted" style="margin-bottom:6px;"><b>Legs</b></div>
+            <ul class="legs-list">{legs_html}</ul>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 # ============================================================
@@ -519,7 +684,7 @@ def load_csv(file) -> pd.DataFrame:
 # App
 # ============================================================
 st.title("🏀 Sports AI Betting Dashboard")
-st.caption("V7.5 Conservative / Sharp Mode: true edge filters, realistic EV, stronger correlation penalties, and exposure controls.")
+st.caption("V7.6 UI Pro: compact mobile layout, sharper visual hierarchy, unique top plays, and sportsbook-style cards.")
 
 with st.sidebar:
     uploaded = st.file_uploader("Upload CSV", type=["csv"])
@@ -538,75 +703,75 @@ else:
 df = compute_scores(df)
 pool = approved_pool(df)
 
-st.markdown("## Approved Pool")
 if pool.empty:
-    st.warning("No plays qualify for Sharp Mode approved pool.")
+    st.warning("No plays qualify for UI Pro Sharp Mode.")
     st.stop()
 
-if "fallback_flag" in pool.columns and pool["fallback_flag"].any():
-    st.warning("⚠️ Sharp Mode could not find enough elite plays, so it is using a fallback pool.")
+st.markdown("## Approved Pool")
+pool_show = pool[[
+    "player", "market", "bet_side", "line", "odds",
+    "true_edge", "realistic_ev_pct", "consensus_score", "model_agreement_pct", "consensus_action"
+]].copy()
+pool_show["true_edge"] = (pool_show["true_edge"] * 100).round(1).astype(str) + "%"
+pool_show["realistic_ev_pct"] = pool_show["realistic_ev_pct"].round(1).astype(str) + "%"
+pool_show["model_agreement_pct"] = pool_show["model_agreement_pct"].astype(int).astype(str) + "%"
+st.dataframe(pool_show, use_container_width=True, hide_index=True)
 
-st.dataframe(
-    pool[[
-        "player", "matchup", "market", "bet_side", "line", "odds",
-        "true_edge", "realistic_ev_pct", "consensus_score", "model_agreement_pct", "consensus_action"
-    ]],
-    use_container_width=True,
-    hide_index=True,
-)
-
-st.markdown("---")
-st.markdown("## 🔍 Top Plays Panel")
-render_single_card(best_single(pool, "ev"), "🔥 Best Single (EV)")
-render_single_card(best_single(pool, "safe"), "🔒 Safest Play")
-render_single_card(best_single(pool, "edge"), "⚡ Highest Edge Play")
-
-if len(pool) < 2:
-    st.warning("Not enough approved plays to build parlays.")
-    st.stop()
+top_plays = unique_top_plays(pool)
 
 all_parlays = generate_parlays(pool, k=parlay_size, bankroll=float(bankroll), max_fraction=float(max_bet_pct), max_results=max_results)
 parlays = apply_total_exposure_cap(all_parlays, float(bankroll), float(exposure_cap_pct))
 best = select_best_by_type(parlays)
 
+best_parlay = best["Safe"] or best["Balanced"] or best["Aggressive"]
+render_summary_banner(top_plays["ev"], top_plays["safe"], best_parlay)
+
+st.markdown("## 🔍 Top Plays Panel")
+tab1, tab2, tab3 = st.tabs(["🔥 Best Single", "🔒 Safest Play", "⚡ Highest Edge"])
+with tab1:
+    render_compact_play_card(top_plays["ev"], "Best Single (EV)")
+with tab2:
+    render_compact_play_card(top_plays["safe"], "Safest Play")
+with tab3:
+    render_compact_play_card(top_plays["edge"], "Highest Edge Play")
+
 st.markdown("## 🛡️ Best Conservative Parlay")
-metric_cards([
+render_metric_grid([
     ("Approved Plays", f"{len(pool)}"),
     ("Parlay Size", f"{parlay_size}-leg"),
     ("Bankroll", f"${float(bankroll):,.0f}"),
     ("Exposure Cap", f"{exposure_cap_pct*100:.1f}%"),
-])
+], cols_per_row=4)
 
 if not parlays:
-    st.info("Sharp Mode did not find any parlays that passed the quality and exposure rules.")
+    st.info("No parlays survived UI Pro sharp rules.")
 else:
     if best["Safe"] is not None:
-        render_parlay_card(best["Safe"], "🟢 Safe Parlay")
-    elif best["Balanced"] is not None:
-        render_parlay_card(best["Balanced"], "🟡 Balanced Parlay")
-    elif best["Aggressive"] is not None:
-        render_parlay_card(best["Aggressive"], "🔴 Aggressive Parlay")
+        render_parlay_pro_card(best["Safe"], "🟢 Safe Parlay")
+    if best["Balanced"] is not None and best["Balanced"] is not best["Safe"]:
+        render_parlay_pro_card(best["Balanced"], "🟡 Balanced Parlay")
+    if best["Aggressive"] is not None and best["Aggressive"] not in [best["Safe"], best["Balanced"]]:
+        render_parlay_pro_card(best["Aggressive"], "🔴 Aggressive Parlay")
 
 st.markdown("## All Approved Parlays")
 if parlays:
     rows = []
     for i, p in enumerate(parlays, 1):
         rows.append({
-            "rank": i,
-            "type": p["parlay_type"],
-            "combined_odds": int(p["combined_american"]) if not pd.isna(p["combined_american"]) else np.nan,
-            "hit_pct": round(p["hit_pct"], 1),
-            "ev_pct": round(p["ev_pct"], 1),
-            "kelly_raw_pct": round(p["kelly_raw_pct"], 2),
-            "bet_pct": round(p["kelly_bet_pct"], 2),
-            "stake_u": round(p["stake_u"], 2),
-            "stake_$": round(p["stake_$"], 2),
-            "corr_penalty": round(p["corr_pen"], 2),
-            "legs": " | ".join([f"{x['player']} {x['bet_side']} {x['line']}" for x in p["legs"]]),
+            "Rank": i,
+            "Type": p["parlay_type"],
+            "Odds": int(p["combined_american"]) if not pd.isna(p["combined_american"]) else np.nan,
+            "Hit %": round(p["hit_pct"], 1),
+            "EV %": round(p["ev_pct"], 1),
+            "Kelly %": round(p["kelly_raw_pct"], 2),
+            "Bet %": round(p["kelly_bet_pct"], 2),
+            "Stake u": round(p["stake_u"], 2),
+            "Stake $": round(p["stake_$"], 2),
+            "Corr": round(p["corr_pen"], 2),
+            "Legs": " | ".join([f"{x['player']} {x['bet_side']} {x['line']}" for x in p["legs"]]),
         })
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 else:
-    st.info("No parlays survived the conservative Sharp Mode rules.")
+    st.info("No approved parlays available.")
 
-st.markdown("---")
 st.caption("Next upgrade: same-game parlay mode, live odds, and slate-level exposure controls.")

@@ -1,4 +1,16 @@
 
+def pending_bets_only(df):
+    try:
+        import pandas as pd
+        if df is None or len(df) == 0:
+            return pd.DataFrame()
+        if "result" not in df.columns:
+            return df.copy()
+        return df[df["result"].isna()].copy()
+    except:
+        return None
+
+
 import math
 import itertools
 import os

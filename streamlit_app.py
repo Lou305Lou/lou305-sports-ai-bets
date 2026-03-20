@@ -1041,8 +1041,8 @@ def load_uploaded_csv(file):
 # -----------------------------
 # App
 # -----------------------------
-st.title("🏀 Sports AI Betting Dashboard V12 Automation Engine (Stable)")
-st.caption("STABLE BUILD: full corrected automation engine with safe execution signals, fallback triggers, market insight banner, and guarded mobile-first workflow.")
+st.title("🏀 Sports AI Betting Dashboard V12 Automation Engine (Stable Fix 2)")
+st.caption("STABLE FIX 2: full corrected automation engine with safe execution signals, fallback triggers, market insight banner, guarded mobile-first workflow, and a working automation queue.")
 
 with st.sidebar:
     st.markdown("### Data")
@@ -1318,11 +1318,14 @@ else:
     st.dataframe(portfolio_show, use_container_width=True, hide_index=True)
 
 st.markdown("## 🛰️ Automation Queue")
-queue_df = build_automation_queue(qualified, fallback_pool)
-if queue_df.empty:
-    st.info("No automation signals available.")
-else:
-    st.dataframe(queue_df, use_container_width=True, hide_index=True)
+try:
+    queue_df = build_automation_queue(qualified, fallback_pool)
+    if queue_df is None or queue_df.empty:
+        st.info("No automation actions at this time.")
+    else:
+        st.dataframe(queue_df, use_container_width=True, hide_index=True)
+except Exception:
+    st.warning("Automation queue temporarily unavailable.")
 
 st.markdown("## ✅ Add To Bet Log")
 track_rows = portfolio.head(5).copy()

@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Sports AI Dashboard V12.4 Pro", layout="wide")
+st.set_page_config(page_title="Sports AI Dashboard V12.4.1 Pro", layout="wide")
 
 # ---------- SESSION ----------
 if "active_df" not in st.session_state:
@@ -542,7 +542,7 @@ def render_mobile_bet_picker(df, bankroll, risk_mode, drawdown_pct, roi_pct, key
                 st.success("Added to bet slip.")
         st.divider()
 
-def render_bet_slip():
+def render_bet_slip(namespace):
     st.subheader("Live Smart Bet Slip")
     slip = pd.DataFrame(st.session_state.bet_slip)
     if slip.empty:
@@ -560,29 +560,37 @@ def render_bet_slip():
         st.warning("Tip: You have multiple bets from the same game.")
     if summary["same_player_extra"] > 0:
         st.warning("Tip: You have multiple bets tied to the same player.")
+
     slip_show = slip[[c for c in ["sport","player","market","book","odds","line","stake","adjusted_score","tier","game"] if c in slip.columns]]
     st.dataframe(slip_show, use_container_width=True)
-    for i, item in slip.iterrows():
+
+    st.markdown("### Remove Individual Bets")
+    for i, item in slip.reset_index(drop=True).iterrows():
         label = f"{item['sport']} | {item['player']} - {item['market']} | ${float(item['stake']):.2f}"
-        if st.button("Remove: " + label, key=f"remove_slip_{i}", use_container_width=True):
+        if st.button(
+            "Remove: " + label,
+            key=f"{namespace}_remove_slip_{i}_{item['slip_key']}",
+            use_container_width=True
+        ):
             remove_from_slip(item["slip_key"])
             st.success("Removed from slip.")
             st.rerun()
+
     x1, x2 = st.columns(2)
     with x1:
-        if st.button("Clear Bet Slip", use_container_width=True):
+        if st.button("Clear Bet Slip", key=f"{namespace}_clear_slip", use_container_width=True):
             clear_slip()
             st.success("Bet slip cleared.")
             st.rerun()
     with x2:
-        if st.button("Confirm Slip To Tracker", use_container_width=True):
+        if st.button("Confirm Slip To Tracker", key=f"{namespace}_confirm_slip", use_container_width=True):
             count = confirm_slip_to_tracker()
             st.success(f"Added {count} bet(s) to tracker.")
             st.rerun()
 
 # ---------- APP ----------
-st.title("Sports AI Dashboard V12.4 Pro")
-st.caption("V12.4 Pro adds a multi-sport engine with sport-aware risk, sport filters, and by-sport performance dashboards.")
+st.title("Sports AI Dashboard V12.4.1 Pro")
+st.caption("V12.4.1 Pro fixes the smart slip key collision and keeps the multi-sport launch engine.")
 
 tabs = st.tabs([
     "Dashboard","Data Input","Launch Board","Auto Unit AI","Smart Bet Slip",
@@ -659,7 +667,7 @@ with tabs[2]:
         roi_quick = st.number_input("ROI %", value=float(refresh_bet_log_metrics()["roi"]), step=0.5, key="launch_roi")
 
         render_mobile_bet_picker(filtered, bankroll_quick, risk_mode_quick, drawdown_quick, roi_quick, "launch_picker")
-        render_bet_slip()
+        render_bet_slip("launch_board")
 
 with tabs[3]:
     st.subheader("Auto Unit AI by Sport")
@@ -679,9 +687,10 @@ with tabs[3]:
     else:
         ai_df = best_bets(filtered_launch_ready(st.session_state.active_df)).reset_index(drop=True)
         render_mobile_bet_picker(ai_df, bankroll, risk_mode, drawdown_pct, roi_input, "auto_unit")
+        render_bet_slip("auto_unit")
 
 with tabs[4]:
-    render_bet_slip()
+    render_bet_slip("smart_bet_slip")
 
 with tabs[5]:
     st.subheader("CLV Tracker")
@@ -753,15 +762,13 @@ with tabs[8]:
             profit=("profit","sum"),
             avg_clv=("clv_diff","mean"),
         ).reset_index()
-        by_sport["roi_pct"] = np.where(by_sport["bets"] > 0, 0.0, 0.0)
         st.dataframe(by_sport, use_container_width=True)
-        if "clv_win" in settled.columns:
-            clv_sport = settled[settled["clv_win"].astype(str) != ""].groupby(["sport","clv_win"], dropna=False).agg(
-                bets=("bet_id","count"),
-                profit=("profit","sum")
-            ).reset_index()
-            if len(clv_sport):
-                st.dataframe(clv_sport, use_container_width=True)
+        clv_sport = settled[settled["clv_win"].astype(str) != ""].groupby(["sport","clv_win"], dropna=False).agg(
+            bets=("bet_id","count"),
+            profit=("profit","sum")
+        ).reset_index()
+        if len(clv_sport):
+            st.dataframe(clv_sport, use_container_width=True)
 
 with tabs[9]:
     st.subheader("Multi-AI Lab")
@@ -787,4 +794,4 @@ with tabs[10]:
         st.metric("System State", learn["hot_cold"])
         st.metric("Global Learning Adj", f"{learn['global_adj']:.2f}")
 
-st.success("V12.4 Pro Multi-Sport Engine ready.")
+st.success("V12.4.1 Pro Multi-Sport Engine ready.")

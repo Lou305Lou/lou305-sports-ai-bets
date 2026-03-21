@@ -1,3 +1,4 @@
+
 import io
 from typing import Optional
 
@@ -7,13 +8,104 @@ import streamlit as st
 st.set_page_config(page_title="Sports AI Dashboard", layout="wide")
 
 
-# ------------------------------
-# Helpers
-# ------------------------------
+# ---------- Helpers ----------
+EXPECTED_COLS = [
+    "sport", "league", "market", "book", "odds", "point", "player",
+    "team", "opponent", "game", "event", "result", "projection",
+    "edge", "hit_pct", "ev_edge", "score", "is_starter"
+]
+
+
 def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     out.columns = [str(c).strip().lower().replace(" ", "_") for c in out.columns]
     return out
+
+
+def ensure_session_defaults():
+    if "active_df" not in st.session_state:
+        st.session_state.active_df = None
+    if "active_source" not in st.session_state:
+        st.session_state.active_source = "None"
+
+
+def sample_nba_props_df() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "sport": "NBA",
+                "league": "NBA",
+                "market": "Points Over",
+                "book": "DraftKings",
+                "odds": -115,
+                "point": 27.5,
+                "player": "Stephen Curry",
+                "team": "GSW",
+                "opponent": "LAL",
+                "game": "GSW @ LAL",
+                "projection": 32.2,
+                "edge": 4.7,
+                "hit_pct": 66.7,
+                "ev_edge": 12.7,
+                "score": 70.9,
+                "is_starter": True,
+            },
+            {
+                "sport": "NBA",
+                "league": "NBA",
+                "market": "PRA Over",
+                "book": "FanDuel",
+                "odds": -110,
+                "point": 38.5,
+                "player": "LeBron James",
+                "team": "LAL",
+                "opponent": "GSW",
+                "game": "GSW @ LAL",
+                "projection": 43.8,
+                "edge": 5.3,
+                "hit_pct": 64.8,
+                "ev_edge": 12.2,
+                "score": 67.7,
+                "is_starter": True,
+            },
+            {
+                "sport": "NBA",
+                "league": "NBA",
+                "market": "Assists Over",
+                "book": "BetMGM",
+                "odds": 105,
+                "point": 8.5,
+                "player": "Tyrese Haliburton",
+                "team": "IND",
+                "opponent": "MIL",
+                "game": "MIL @ IND",
+                "projection": 10.1,
+                "edge": 1.6,
+                "hit_pct": 58.3,
+                "ev_edge": 7.9,
+                "score": 61.4,
+                "is_starter": True,
+            },
+            {
+                "sport": "NBA",
+                "league": "NBA",
+                "market": "Rebounds Over",
+                "book": "Caesars",
+                "odds": -125,
+                "point": 11.5,
+                "player": "Anthony Davis",
+                "team": "LAL",
+                "opponent": "GSW",
+                "game": "GSW @ LAL",
+                "projection": 13.2,
+                "edge": 1.7,
+                "hit_pct": 59.4,
+                "ev_edge": 6.8,
+                "score": 60.2,
+                "is_starter": True,
+            },
+        ]
+    )
 
 
 def try_read_uploaded_file(uploaded_file) -> tuple[Optional[pd.DataFrame], Optional[str]]:
@@ -44,10 +136,7 @@ def try_read_uploaded_file(uploaded_file) -> tuple[Optional[pd.DataFrame], Optio
             return None, f"CSV read failed after multiple attempts: {last_error}"
 
         if filename.endswith(".xlsx") or filename.endswith(".xls"):
-            try:
-                return pd.read_excel(io.BytesIO(file_bytes)), None
-            except Exception as e:
-                return None, f"Excel read failed: {e}"
+            return pd.read_excel(io.BytesIO(file_bytes)), None
 
         return None, "Unsupported file type. Please upload a .csv, .xlsx, or .xls file."
 
@@ -55,292 +144,292 @@ def try_read_uploaded_file(uploaded_file) -> tuple[Optional[pd.DataFrame], Optio
         return None, f"Unexpected upload error: {e}"
 
 
-def coerce_numeric(series: pd.Series) -> pd.Series:
-    if series is None:
-        return series
-    cleaned = (
-        series.astype(str)
-        .str.replace("%", "", regex=False)
-        .str.replace(",", "", regex=False)
-        .str.strip()
-    )
-    return pd.to_numeric(cleaned, errors="coerce")
+def parse_pasted_csv(text: str) -> tuple[Optional[pd.DataFrame], Optional[str]]:
+    if not text or not text.strip():
+        return None, "Paste box is empty."
 
+    attempts = [
+        {"sep": ","},
+        {"sep": ";"},
+        {"sep": None, "engine": "python"},
+    ]
+    last_error = None
 
-def american_to_implied_prob(odds: float) -> Optional[float]:
-    try:
-        odds = float(odds)
-    except Exception:
-        return None
-    if odds == 0:
-        return None
-    if odds > 0:
-        return 100 / (odds + 100)
-    return abs(odds) / (abs(odds) + 100)
+    for attempt in attempts:
+        try:
+            df = pd.read_csv(io.StringIO(text.strip()), **attempt)
+            return df, None
+        except Exception as e:
+            last_error = e
 
-
-def expected_value(prob: float, odds: float) -> Optional[float]:
-    try:
-        prob = float(prob)
-        odds = float(odds)
-    except Exception:
-        return None
-
-    if prob <= 0 or prob >= 1:
-        return None
-
-    if odds > 0:
-        profit = odds / 100
-    else:
-        profit = 100 / abs(odds)
-
-    return prob * profit - (1 - prob)
-
-
-REQUIRED_HINT_COLUMNS = [
-    "sport", "league", "market", "book", "odds", "point", "player",
-    "team", "opponent", "game", "event", "result"
-]
-
-
-PROP_CANDIDATE_MAP = {
-    "player": ["player", "player_name", "name"],
-    "market": ["market", "bet_type", "stat_type", "prop_type"],
-    "line": ["point", "line", "prop_line"],
-    "odds": ["odds", "price", "american_odds"],
-    "projection": ["projection", "proj", "model_projection"],
-    "hit_rate": ["hit_rate", "hit_%", "win_prob", "probability", "model_prob"],
-    "book": ["book", "sportsbook"],
-    "team": ["team"],
-    "opponent": ["opponent", "opp"],
-    "game": ["game", "matchup", "event"],
-}
-
-
-def find_column(df: pd.DataFrame, candidates: list[str]) -> Optional[str]:
-    for col in candidates:
-        if col in df.columns:
-            return col
-    return None
-
+    return None, f"Could not parse pasted CSV text: {last_error}"
 
 
 def inspect_dataframe(df: pd.DataFrame) -> dict:
-    cols = [str(c) for c in df.columns]
     normalized = normalize_columns(df)
     normalized_cols = list(normalized.columns)
-    matched = [c for c in REQUIRED_HINT_COLUMNS if c in normalized_cols]
-
+    matched = [c for c in EXPECTED_COLS if c in normalized_cols]
     return {
         "rows": int(len(df)),
         "cols": int(len(df.columns)),
-        "original_columns": cols,
         "normalized_columns": normalized_cols,
         "matched_expected_columns": matched,
-        "missing_expected_columns": [c for c in REQUIRED_HINT_COLUMNS if c not in normalized_cols],
+        "missing_expected_columns": [c for c in EXPECTED_COLS if c not in normalized_cols],
         "duplicate_columns": normalized.columns[normalized.columns.duplicated()].tolist(),
-        "null_rows": int(df.isna().all(axis=1).sum()) if len(df) else 0,
+        "blank_rows": int(df.isna().all(axis=1).sum()) if len(df) else 0,
     }
 
 
-
-def build_nba_props_view(df: pd.DataFrame, odds_min: int, odds_max: int, starters_only: bool) -> pd.DataFrame:
-    data = normalize_columns(df)
-
-    sport_col = find_column(data, ["sport", "league"])
-    if sport_col:
-        sport_mask = data[sport_col].astype(str).str.upper().str.contains("NBA", na=False)
-        data = data[sport_mask].copy()
-
-    player_col = find_column(data, PROP_CANDIDATE_MAP["player"])
-    market_col = find_column(data, PROP_CANDIDATE_MAP["market"])
-    line_col = find_column(data, PROP_CANDIDATE_MAP["line"])
-    odds_col = find_column(data, PROP_CANDIDATE_MAP["odds"])
-    projection_col = find_column(data, PROP_CANDIDATE_MAP["projection"])
-    hit_rate_col = find_column(data, PROP_CANDIDATE_MAP["hit_rate"])
-    book_col = find_column(data, PROP_CANDIDATE_MAP["book"])
-    team_col = find_column(data, PROP_CANDIDATE_MAP["team"])
-    opponent_col = find_column(data, PROP_CANDIDATE_MAP["opponent"])
-    game_col = find_column(data, PROP_CANDIDATE_MAP["game"])
-
-    if odds_col is None:
-        return pd.DataFrame()
-
-    data["_odds_num"] = coerce_numeric(data[odds_col])
-    data = data[data["_odds_num"].between(odds_min, odds_max, inclusive="both")].copy()
-
-    if starters_only and "is_starter" in data.columns:
-        starter_mask = data["is_starter"].astype(str).str.lower().isin(["true", "1", "yes", "y"])
-        data = data[starter_mask].copy()
-
-    if projection_col and line_col:
-        data["_line_num"] = coerce_numeric(data[line_col])
-        data["_proj_num"] = coerce_numeric(data[projection_col])
-        data["edge"] = data["_proj_num"] - data["_line_num"]
-    else:
-        data["edge"] = pd.NA
-
-    if hit_rate_col:
-        hit_raw = coerce_numeric(data[hit_rate_col])
-        data["hit_rate"] = hit_raw.where(hit_raw <= 1, hit_raw / 100)
-    else:
-        data["hit_rate"] = data["_odds_num"].apply(american_to_implied_prob)
-
-    data["implied_prob"] = data["_odds_num"].apply(american_to_implied_prob)
-    data["ev"] = [
-        expected_value(p, o) if pd.notna(p) and pd.notna(o) else None
-        for p, o in zip(data["hit_rate"], data["_odds_num"])
-    ]
-
-    display = pd.DataFrame()
-    display["Player"] = data[player_col] if player_col else ""
-    display["Market"] = data[market_col] if market_col else ""
-    display["Line"] = data[line_col] if line_col else ""
-    display["Odds"] = data[odds_col] if odds_col else ""
-    display["Projection"] = data[projection_col] if projection_col else ""
-    display["Edge"] = data["edge"]
-    display["Hit %"] = data["hit_rate"]
-    display["EV"] = data["ev"]
-    display["Book"] = data[book_col] if book_col else ""
-    display["Team"] = data[team_col] if team_col else ""
-    display["Opponent"] = data[opponent_col] if opponent_col else ""
-    display["Game"] = data[game_col] if game_col else ""
-
-    if "Hit %" in display.columns:
-        display["Hit %"] = (display["Hit %"] * 100).round(1)
-    if "EV" in display.columns:
-        display["EV"] = (display["EV"] * 100).round(2)
-    if "Edge" in display.columns:
-        display["Edge"] = pd.to_numeric(display["Edge"], errors="coerce").round(2)
-
-    sort_cols = [c for c in ["EV", "Edge", "Hit %"] if c in display.columns]
-    if sort_cols:
-        display = display.sort_values(by=sort_cols, ascending=False, na_position="last")
-
-    return display.reset_index(drop=True)
+def convert_numeric_columns(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
+    out = df.copy()
+    for c in cols:
+        if c in out.columns:
+            out[c] = pd.to_numeric(out[c], errors="coerce")
+    return out
 
 
-# ------------------------------
-# App
-# ------------------------------
+def prepare_props_df(df: pd.DataFrame) -> pd.DataFrame:
+    out = normalize_columns(df)
+    out = convert_numeric_columns(out, ["odds", "point", "projection", "edge", "hit_pct", "ev_edge", "score"])
+
+    if "sport" in out.columns:
+        out = out[out["sport"].astype(str).str.upper().str.contains("NBA", na=False)].copy()
+    elif "league" in out.columns:
+        out = out[out["league"].astype(str).str.upper().str.contains("NBA", na=False)].copy()
+
+    return out
+
+
+def display_data_summary(df: pd.DataFrame):
+    report = inspect_dataframe(df)
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Rows", report["rows"])
+    c2.metric("Columns", report["cols"])
+    c3.metric("Blank rows", report["blank_rows"])
+    c4.metric("Expected cols found", len(report["matched_expected_columns"]))
+
+    st.subheader("Preview")
+    st.dataframe(df.head(50), use_container_width=True)
+
+    st.subheader("Column Check")
+    left, right = st.columns(2)
+    with left:
+        st.write("Detected columns")
+        st.code("\n".join(report["normalized_columns"]) or "No columns")
+    with right:
+        st.write("Sports-AI style columns found")
+        st.code(", ".join(report["matched_expected_columns"]) if report["matched_expected_columns"] else "None detected")
+
+    if report["duplicate_columns"]:
+        st.warning(f"Duplicate columns found after normalization: {report['duplicate_columns']}")
+
+    with st.expander("Debug details", expanded=False):
+        st.json(
+            {
+                "shape": list(df.shape),
+                "dtypes": {k: str(v) for k, v in df.dtypes.astype(str).to_dict().items()},
+                "missing_expected_columns": report["missing_expected_columns"],
+            }
+        )
+
+
+# ---------- App ----------
+ensure_session_defaults()
+
 st.title("Sports AI Dashboard")
-st.caption("Full downloadable base app with safer upload handling and an NBA props tab.")
+st.caption("Mobile-proof base app with upload, paste-in CSV, sample data, and an NBA props tab.")
 
-main_tab, upload_tab, props_tab = st.tabs(["Dashboard", "Upload Debug", "NBA Props"])
+tab1, tab2, tab3 = st.tabs(["Dashboard", "Data Input", "NBA Props"])
 
-with main_tab:
+with tab1:
     st.subheader("Overview")
     st.write(
-        "This is a stable base version built for mobile-friendly use. Upload a CSV or Excel file in the "
-        "Upload Debug tab, then review detected data and NBA props in the NBA Props tab."
-    )
-    st.info(
-        "This file is a clean replacement base. It does not include all custom V7/V8 logic from your earlier app, "
-        "but it gives you a working foundation with safer uploads and props filtering."
+        "Use the Data Input tab to load data three ways: upload a file, paste CSV text directly, "
+        "or load sample data. The app keeps the most recently loaded dataset active across tabs."
     )
 
-with upload_tab:
-    st.subheader("Upload your bets/data file")
+    source = st.session_state.active_source
+    active_df = st.session_state.active_df
 
+    info_col1, info_col2 = st.columns(2)
+    with info_col1:
+        st.info(f"Active data source: {source}")
+    with info_col2:
+        if active_df is not None:
+            st.success(f"Active rows: {len(active_df):,}")
+        else:
+            st.warning("No active dataset loaded yet.")
+
+    st.markdown(
+        '''
+        **Mobile-proof options**
+
+        - Upload a CSV or Excel file
+        - Paste CSV text directly from Notes, Sheets, or email
+        - Load built-in NBA sample data
+        '''
+    )
+
+with tab2:
+    st.subheader("Load Your Data")
+
+    action_col1, action_col2 = st.columns(2)
+
+    with action_col1:
+        if st.button("Load Sample NBA Data", use_container_width=True):
+            st.session_state.active_df = sample_nba_props_df()
+            st.session_state.active_source = "Built-in sample data"
+            st.success("Sample NBA data loaded.")
+
+    with action_col2:
+        if st.button("Clear Active Data", use_container_width=True):
+            st.session_state.active_df = None
+            st.session_state.active_source = "None"
+            st.warning("Active data cleared.")
+
+    st.divider()
+    st.markdown("### Option 1 — Upload a file")
     uploaded_file = st.file_uploader(
         "Choose a CSV or Excel file",
         type=["csv", "xlsx", "xls"],
-        help="Supported formats: CSV, XLSX, XLS"
+        help="If mobile upload is unreliable, use the paste option below instead.",
     )
 
-    if uploaded_file is None:
-        st.info("Waiting for upload...")
-    else:
+    if uploaded_file is not None:
         st.write("File detected:", uploaded_file.name)
         st.write("File size:", f"{uploaded_file.size:,} bytes")
-
         with st.spinner("Reading file..."):
-            df, error_message = try_read_uploaded_file(uploaded_file)
+            df_upload, upload_error = try_read_uploaded_file(uploaded_file)
 
-        if error_message:
-            st.error(error_message)
-        elif df is None:
-            st.error("The file did not load, but no detailed error was returned.")
-        else:
-            st.session_state["uploaded_df"] = df.copy()
-            st.session_state["uploaded_name"] = uploaded_file.name
+        if upload_error:
+            st.error(upload_error)
+        elif df_upload is not None:
+            st.session_state.active_df = df_upload
+            st.session_state.active_source = f"Uploaded file: {uploaded_file.name}"
+            st.success("Uploaded file loaded successfully.")
 
-            if len(df) == 0:
-                st.warning("The file loaded, but it has 0 rows.")
-            else:
-                st.success("File loaded successfully.")
+    st.divider()
+    st.markdown("### Option 2 — Paste CSV text directly")
+    st.caption("This is the most reliable option on iPhone if file upload is inconsistent.")
+    default_text = '''player,market,odds,point,sport,league,book,projection,edge,hit_pct,ev_edge,score,is_starter,team,opponent,game
+Stephen Curry,Points Over,-115,27.5,NBA,NBA,DraftKings,32.2,4.7,66.7,12.7,70.9,True,GSW,LAL,GSW @ LAL
+LeBron James,PRA Over,-110,38.5,NBA,NBA,FanDuel,43.8,5.3,64.8,12.2,67.7,True,LAL,GSW,GSW @ LAL'''
+    pasted_csv = st.text_area("Paste CSV data here", value="", height=220, placeholder=default_text)
 
-            report = inspect_dataframe(df)
-            col1, col2, col3, col4 = st.columns(4)
-            col1.metric("Rows", report["rows"])
-            col2.metric("Columns", report["cols"])
-            col3.metric("Blank rows", report["null_rows"])
-            col4.metric("Expected cols found", len(report["matched_expected_columns"]))
+    paste_btn_col1, paste_btn_col2 = st.columns(2)
+    with paste_btn_col1:
+        if st.button("Load Pasted CSV", use_container_width=True):
+            df_paste, paste_error = parse_pasted_csv(pasted_csv)
+            if paste_error:
+                st.error(paste_error)
+            elif df_paste is not None:
+                st.session_state.active_df = df_paste
+                st.session_state.active_source = "Pasted CSV text"
+                st.success("Pasted CSV loaded successfully.")
 
-            st.subheader("Preview")
-            st.dataframe(df.head(50), use_container_width=True)
+    with paste_btn_col2:
+        st.download_button(
+            "Download sample CSV",
+            data=sample_nba_props_df().to_csv(index=False).encode("utf-8"),
+            file_name="sample_nba_props.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
 
-            st.subheader("Column Check")
-            left, right = st.columns(2)
-            with left:
-                st.write("Detected columns")
-                st.code("\n".join(report["normalized_columns"]) or "No columns")
-            with right:
-                st.write("Sports-AI style columns found")
-                st.code(", ".join(report["matched_expected_columns"]) if report["matched_expected_columns"] else "None detected")
+    st.divider()
+    st.markdown("### Active Dataset Preview")
 
-            if report["duplicate_columns"]:
-                st.warning(f"Duplicate columns found after normalization: {report['duplicate_columns']}")
-
-            with st.expander("Debug details", expanded=False):
-                st.json({
-                    "filename": uploaded_file.name,
-                    "shape": list(df.shape),
-                    "dtypes": {k: str(v) for k, v in df.dtypes.astype(str).to_dict().items()},
-                    "missing_expected_columns": report["missing_expected_columns"],
-                })
-
-            normalized_df = normalize_columns(df)
-            csv_data = normalized_df.to_csv(index=False).encode("utf-8")
-            st.download_button(
-                "Download normalized CSV",
-                data=csv_data,
-                file_name="normalized_uploaded_data.csv",
-                mime="text/csv"
-            )
-
-with props_tab:
-    st.subheader("NBA Player Props")
-    st.caption("Starter base version with odds filter and optional starters-only mode.")
-
-    source_df = st.session_state.get("uploaded_df")
-    if source_df is None:
-        st.warning("Upload a file first in the Upload Debug tab.")
+    if st.session_state.active_df is None:
+        st.info("No active data loaded yet. Use one of the options above.")
     else:
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            odds_min = st.number_input("Minimum odds", min_value=-1000, max_value=2000, value=-300, step=5)
-        with c2:
-            odds_max = st.number_input("Maximum odds", min_value=-1000, max_value=2000, value=200, step=5)
-        with c3:
-            starters_only = st.checkbox("Starters only", value=False)
+        st.write("Current source:", st.session_state.active_source)
+        display_data_summary(st.session_state.active_df)
 
-        props_df = build_nba_props_view(source_df, odds_min=odds_min, odds_max=odds_max, starters_only=starters_only)
+        normalized_df = normalize_columns(st.session_state.active_df)
+        st.subheader("Normalized Copy")
+        st.dataframe(normalized_df.head(20), use_container_width=True)
+        st.download_button(
+            "Download normalized active CSV",
+            data=normalized_df.to_csv(index=False).encode("utf-8"),
+            file_name="normalized_active_data.csv",
+            mime="text/csv",
+        )
+
+with tab3:
+    st.subheader("NBA Props")
+
+    if st.session_state.active_df is None:
+        st.info("Load data first in the Data Input tab, or use the built-in sample data.")
+    else:
+        props_df = prepare_props_df(st.session_state.active_df)
 
         if props_df.empty:
-            st.info(
-                "No NBA props matched the current filters, or your uploaded file does not yet include the columns "
-                "needed for the props view."
-            )
-            st.write("Helpful columns for this tab: player, market, point/line, odds, projection, hit_rate, team, opponent, game.")
+            st.warning("No NBA rows were found in the active dataset.")
         else:
-            st.success(f"Found {len(props_df)} prop rows.")
-            st.dataframe(props_df, use_container_width=True)
+            st.caption("Filters below update the displayed props table.")
+            f1, f2, f3 = st.columns(3)
 
-            export_csv = props_df.to_csv(index=False).encode("utf-8")
-            st.download_button(
-                "Download NBA props view",
-                data=export_csv,
-                file_name="nba_props_view.csv",
-                mime="text/csv"
-            )
+            with f1:
+                odds_min, odds_max = st.slider(
+                    "Odds range",
+                    min_value=-300,
+                    max_value=200,
+                    value=(-300, 200),
+                )
+
+            with f2:
+                if "market" in props_df.columns:
+                    market_options = sorted([m for m in props_df["market"].dropna().astype(str).unique().tolist()])
+                    selected_markets = st.multiselect("Markets", market_options, default=market_options[: min(5, len(market_options))])
+                else:
+                    selected_markets = []
+
+            with f3:
+                starters_only = False
+                if "is_starter" in props_df.columns:
+                    starters_only = st.toggle("Starters only", value=False)
+                min_score = st.number_input("Minimum score", min_value=0.0, max_value=100.0, value=0.0, step=1.0)
+
+            filtered = props_df.copy()
+
+            if "odds" in filtered.columns:
+                filtered = filtered[filtered["odds"].between(odds_min, odds_max, inclusive="both")]
+
+            if selected_markets and "market" in filtered.columns:
+                filtered = filtered[filtered["market"].astype(str).isin(selected_markets)]
+
+            if starters_only and "is_starter" in filtered.columns:
+                starter_vals = filtered["is_starter"].astype(str).str.lower()
+                filtered = filtered[starter_vals.isin(["true", "1", "yes"])]
+
+            if "score" in filtered.columns:
+                filtered = filtered[filtered["score"].fillna(0) >= min_score]
+
+            sort_col = "score" if "score" in filtered.columns else ("edge" if "edge" in filtered.columns else None)
+            if sort_col:
+                filtered = filtered.sort_values(sort_col, ascending=False)
+
+            metric_col1, metric_col2, metric_col3 = st.columns(3)
+            metric_col1.metric("Filtered props", len(filtered))
+            metric_col2.metric("Books", filtered["book"].nunique() if "book" in filtered.columns else 0)
+            metric_col3.metric("Players", filtered["player"].nunique() if "player" in filtered.columns else 0)
+
+            display_cols = [
+                c for c in [
+                    "player", "market", "book", "odds", "point", "projection",
+                    "edge", "hit_pct", "ev_edge", "score", "team", "opponent",
+                    "game", "is_starter"
+                ] if c in filtered.columns
+            ]
+
+            st.dataframe(filtered[display_cols], use_container_width=True)
+
+            if not filtered.empty:
+                st.download_button(
+                    "Download filtered props CSV",
+                    data=filtered.to_csv(index=False).encode("utf-8"),
+                    file_name="filtered_nba_props.csv",
+                    mime="text/csv",
+                )
+
+st.success("App ready. Use Data Input to load data, then review results in NBA Props.")

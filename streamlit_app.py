@@ -1,34 +1,41 @@
 
 import io
+import json
 from datetime import datetime, date
 
 import numpy as np
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Sports AI Dashboard V12.5 Launch Candidate", layout="wide")
+st.set_page_config(page_title="Sports AI Dashboard V12.6 Stability Build", layout="wide")
 
 # ---------- SESSION ----------
+BET_LOG_COLUMNS = [
+    "bet_id","added_at","bet_date","mode","sport","player","market","book","odds","line","stake","score","adjusted_score",
+    "tier","units","game","bet_side","result","profit","notes","risk_mode","bankroll_snapshot",
+    "model_projection","model_price_ev","model_risk","model_market","model_history",
+    "multi_ai_score","clv_closing_line","clv_direction","clv_diff","clv_win"
+]
+
+DEFAULT_WEIGHTS = {
+    "model_projection": 0.30,
+    "model_price_ev": 0.25,
+    "model_risk": 0.15,
+    "model_market": 0.15,
+    "model_history": 0.15,
+}
+
 if "active_df" not in st.session_state:
     st.session_state.active_df = None
 if "active_source" not in st.session_state:
     st.session_state.active_source = "None"
 if "bet_log" not in st.session_state:
-    st.session_state.bet_log = pd.DataFrame(columns=[
-        "bet_id","added_at","bet_date","mode","sport","player","market","book","odds","line","stake","score","adjusted_score",
-        "tier","units","game","bet_side","result","profit","notes","risk_mode","bankroll_snapshot",
-        "model_projection","model_price_ev","model_risk","model_market","model_history",
-        "multi_ai_score","clv_closing_line","clv_direction","clv_diff","clv_win"
-    ])
+    st.session_state.bet_log = pd.DataFrame(columns=BET_LOG_COLUMNS)
 if "learning_state" not in st.session_state:
     st.session_state.learning_state = {
-        "weights": {
-            "model_projection": 0.30,
-            "model_price_ev": 0.25,
-            "model_risk": 0.15,
-            "model_market": 0.15,
-            "model_history": 0.15,
-        }
+        "weights": DEFAULT_WEIGHTS.copy(),
+        "last_recalculated_at": None,
+        "warmup_needed": 12,
     }
 if "bet_slip" not in st.session_state:
     st.session_state.bet_slip = []
@@ -142,7 +149,10 @@ def read_uploaded_file(uploaded_file):
             return None, f"CSV read failed: {last_error}"
         if name.endswith(".xlsx") or name.endswith(".xls"):
             return pd.read_excel(io.BytesIO(file_bytes)), None
-        return None, "Unsupported file type. Use CSV or Excel."
+        if name.endswith(".json"):
+            payload = json.loads(file_bytes.decode("utf-8"))
+            return payload, None
+        return None, "Unsupported file type. Use CSV, Excel, or JSON."
     except Exception as e:
         return None, f"Unexpected upload error: {e}"
 
@@ -178,6 +188,53 @@ def clv_result(row):
         return diff, "Beat Close" if diff > 0 else ("Lost Close" if diff < 0 else "Push Close")
     return np.nan, ""
 
+def safe_float(x, default=0.0):
+    try:
+        if pd.isna(x):
+            return default
+        return float(x)
+    except Exception:
+        return default
+
+def ensure_bet_log_shape(df):
+    if df is None or len(df) == 0:
+        return pd.DataFrame(columns=BET_LOG_COLUMNS)
+    out = df.copy()
+    for c in BET_LOG_COLUMNS:
+        if c not in out.columns:
+            out[c] = np.nan
+    out = out[BET_LOG_COLUMNS].copy()
+    fill_text_cols = ["bet_id","added_at","bet_date","mode","sport","player","market","book","tier","game","bet_side","result","notes","risk_mode","clv_direction","clv_win"]
+    for c in fill_text_cols:
+        out[c] = out[c].fillna("").astype(str)
+    return out
+
+def export_state_payload():
+    return {
+        "active_source": st.session_state.active_source,
+        "launch_settings": st.session_state.launch_settings,
+        "learning_state": st.session_state.learning_state,
+        "bet_log": ensure_bet_log_shape(st.session_state.bet_log).replace({np.nan: None}).to_dict(orient="records"),
+    }
+
+def import_state_payload(payload):
+    if not isinstance(payload, dict):
+        return False, "Invalid import file."
+    if "bet_log" in payload:
+        st.session_state.bet_log = ensure_bet_log_shape(pd.DataFrame(payload.get("bet_log", [])))
+    if "launch_settings" in payload and isinstance(payload["launch_settings"], dict):
+        merged_settings = st.session_state.launch_settings.copy()
+        merged_settings.update(payload["launch_settings"])
+        st.session_state.launch_settings = merged_settings
+    if "learning_state" in payload and isinstance(payload["learning_state"], dict):
+        merged_learning = st.session_state.learning_state.copy()
+        merged_learning.update(payload["learning_state"])
+        merged_learning["weights"] = normalize_weights(merged_learning.get("weights", DEFAULT_WEIGHTS.copy()))
+        st.session_state.learning_state = merged_learning
+    if "active_source" in payload:
+        st.session_state.active_source = str(payload.get("active_source", "Imported"))
+    return True, "Tracker state imported."
+
 # ---------- SAMPLE DATA ----------
 def sample_data():
     rows = [
@@ -196,10 +253,11 @@ def sample_data():
 
 # ---------- LEARNING ----------
 def get_settled_log():
-    log = st.session_state.bet_log.copy()
+    log = ensure_bet_log_shape(st.session_state.bet_log.copy())
     if log.empty:
         return log
-    log = to_numeric_safe(log, ["stake", "profit", "score", "adjusted_score", "multi_ai_score", "clv_diff"])
+    log = to_numeric_safe(log, ["stake", "profit", "score", "adjusted_score", "multi_ai_score", "clv_diff",
+                                "model_projection","model_price_ev","model_risk","model_market","model_history"])
     return log[log["result"].isin(["Win", "Loss", "Push"])].copy()
 
 def stable_score_bucket(score):
@@ -217,9 +275,26 @@ def stable_score_bucket(score):
         return "80-89"
     return "90+"
 
+def normalize_weights(weights):
+    base = DEFAULT_WEIGHTS.copy()
+    if isinstance(weights, dict):
+        for key in base:
+            try:
+                if key in weights:
+                    base[key] = max(0.01, float(weights[key]))
+            except Exception:
+                pass
+    total = sum(base.values())
+    if total <= 0:
+        return DEFAULT_WEIGHTS.copy()
+    return {k: v / total for k, v in base.items()}
+
 def compute_learning_adjustments():
     settled = get_settled_log()
-    defaults = {"market_adj": {}, "tier_adj": {}, "score_adj": {}, "global_adj": 0.0, "hot_cold": "Neutral"}
+    defaults = {
+        "market_adj": {}, "tier_adj": {}, "score_adj": {}, "global_adj": 0.0, "hot_cold": "Neutral",
+        "roi": 0.0, "settled_count": int(len(settled))
+    }
     if settled.empty or len(settled) < 5:
         return defaults
     settled["win_flag"] = (settled["result"] == "Win").astype(int)
@@ -227,6 +302,7 @@ def compute_learning_adjustments():
     profit_sum = settled["profit"].fillna(0).sum()
     staked_sum = settled["stake"].fillna(0).sum()
     roi = (profit_sum / staked_sum * 100) if staked_sum > 0 else 0.0
+    defaults["roi"] = round(roi, 2)
     if roi >= 8:
         defaults["global_adj"] = 3.0
         defaults["hot_cold"] = "HOT"
@@ -243,6 +319,45 @@ def compute_learning_adjustments():
         if len(g) >= 3:
             defaults["score_adj"][bucket] = float(np.clip((g["win_flag"].mean() - 0.5) * 14, -2.5, 2.5))
     return defaults
+
+def compute_adaptive_weights():
+    settled = get_settled_log()
+    warmup_needed = int(st.session_state.learning_state.get("warmup_needed", 12))
+    if settled.empty or len(settled) < warmup_needed:
+        return DEFAULT_WEIGHTS.copy(), False
+
+    work = settled.copy()
+    work["profit"] = pd.to_numeric(work["profit"], errors="coerce").fillna(0.0)
+    score_cols = ["model_projection","model_price_ev","model_risk","model_market","model_history"]
+    scores = {}
+    for col in score_cols:
+        series = pd.to_numeric(work[col], errors="coerce")
+        valid = series.notna()
+        if valid.sum() < max(5, warmup_needed // 2):
+            scores[col] = 0.0
+            continue
+        corr = series[valid].corr(work.loc[valid, "profit"])
+        if pd.isna(corr):
+            corr = 0.0
+        top_half = work.loc[valid & (series >= series.median()), "profit"].mean()
+        bottom_half = work.loc[valid & (series < series.median()), "profit"].mean()
+        edge = 0.0 if pd.isna(top_half) or pd.isna(bottom_half) else (top_half - bottom_half)
+        score = max(0.0, (corr + 1.0) / 2.0) + max(0.0, edge / 10.0)
+        scores[col] = score
+
+    base = DEFAULT_WEIGHTS.copy()
+    adjusted = {}
+    for col in score_cols:
+        adjusted[col] = base[col] * (1.0 + scores[col])
+
+    adjusted = normalize_weights(adjusted)
+    return adjusted, True
+
+def refresh_learning_state():
+    new_weights, active = compute_adaptive_weights()
+    st.session_state.learning_state["weights"] = normalize_weights(new_weights)
+    st.session_state.learning_state["adaptive_active"] = active
+    st.session_state.learning_state["last_recalculated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 def apply_learning_layer(df):
     out = df.copy()
@@ -327,7 +442,7 @@ def build_engine(df):
     if "model_history" not in df.columns:
         df["model_history"] = np.select([df["score"].fillna(0) >= 84, df["score"].fillna(0) >= 72, df["score"].fillna(0) >= 60], [72, 62, 54], default=45)
 
-    weights = st.session_state.learning_state["weights"]
+    weights = normalize_weights(st.session_state.learning_state.get("weights", DEFAULT_WEIGHTS.copy()))
     df["multi_ai_score"] = (
         df["model_projection"].fillna(50) * weights["model_projection"] +
         df["model_price_ev"].fillna(50) * weights["model_price_ev"] +
@@ -365,6 +480,7 @@ def build_engine(df):
     return df
 
 def filtered_launch_ready(df):
+    refresh_learning_state()
     out = build_engine(df)
     out = apply_learning_layer(out)
     out = out[out["adjusted_score"] >= out["sport_min_score"]].copy()
@@ -460,10 +576,10 @@ def slip_risk_message(summary):
     return " | ".join(msgs) if msgs else "Balanced exposure"
 
 def daily_log_df():
-    log = st.session_state.bet_log.copy()
+    log = ensure_bet_log_shape(st.session_state.bet_log.copy())
     if log.empty:
         return log
-    if "bet_date" in log.columns:
+    if "bet_date" in log.columns and log["bet_date"].astype(str).str.len().gt(0).any():
         return log
     log["bet_date"] = pd.to_datetime(log["added_at"], errors="coerce").dt.date.astype(str)
     return log
@@ -502,11 +618,12 @@ def confirm_slip_to_tracker(mode):
         add_bet_to_log(item, item["stake"], item["risk_mode"], item["bankroll_snapshot"], mode)
         count += 1
     clear_slip()
+    refresh_learning_state()
     return count
 
 # ---------- TRACKER ----------
 def add_bet_to_log(row, stake, risk_mode, bankroll_snapshot, mode):
-    log = st.session_state.bet_log.copy()
+    log = ensure_bet_log_shape(st.session_state.bet_log.copy())
     bet_id = f"BET-{len(log)+1:04d}"
     bet_date = str(date.today())
     new_row = {
@@ -543,10 +660,10 @@ def add_bet_to_log(row, stake, risk_mode, bankroll_snapshot, mode):
         "clv_diff": np.nan,
         "clv_win": "",
     }
-    st.session_state.bet_log = pd.concat([log, pd.DataFrame([new_row])], ignore_index=True)
+    st.session_state.bet_log = ensure_bet_log_shape(pd.concat([log, pd.DataFrame([new_row])], ignore_index=True))
 
 def refresh_bet_log_metrics():
-    log = st.session_state.bet_log.copy()
+    log = ensure_bet_log_shape(st.session_state.bet_log.copy())
     if log.empty:
         return {"total_bets":0,"settled_bets":0,"wins":0,"losses":0,"pushes":0,"pending":0,"total_staked":0.0,"profit":0.0,"roi":0.0,"win_rate":0.0}
     settled = log[log["result"].isin(["Win","Loss","Push"])].copy()
@@ -560,6 +677,24 @@ def refresh_bet_log_metrics():
     roi = (settled_profit / total_staked * 100) if total_staked > 0 else 0.0
     return {"total_bets":len(log),"settled_bets":len(settled),"wins":wins,"losses":losses,"pushes":pushes,"pending":pending,"total_staked":round(total_staked,2),"profit":round(settled_profit,2),"roi":round(roi,2),"win_rate":round(win_rate,2)}
 
+def clv_summary_table():
+    settled = get_settled_log()
+    if settled.empty:
+        return pd.DataFrame()
+    work = settled.copy()
+    work["clv_diff"] = pd.to_numeric(work["clv_diff"], errors="coerce")
+    work["beat_close_flag"] = work["clv_win"].eq("Beat Close").astype(int)
+    summary = work.groupby(["sport","market","book"], dropna=False).agg(
+        bets=("bet_id","count"),
+        avg_clv=("clv_diff","mean"),
+        beat_close_rate=("beat_close_flag","mean"),
+        profit=("profit","sum")
+    ).reset_index()
+    summary["beat_close_rate"] = (summary["beat_close_rate"] * 100).round(2)
+    summary["avg_clv"] = summary["avg_clv"].round(2)
+    summary["profit"] = summary["profit"].round(2)
+    return summary.sort_values(["profit","avg_clv"], ascending=False)
+
 # ---------- RENDER ----------
 def render_mobile_bet_picker(df, bankroll, risk_mode, drawdown_pct, roi_pct, key_prefix):
     if df.empty:
@@ -569,15 +704,15 @@ def render_mobile_bet_picker(df, bankroll, risk_mode, drawdown_pct, roi_pct, key
     work["suggested_stake"] = work["units"].apply(lambda u: suggested_stake_from_units(u, bankroll, risk_mode, drawdown_pct, roi_pct))
     st.subheader("Launch Selector")
     st.caption("Add plays to slip, then confirm them to tracker in Paper or Live mode.")
-    for i, row in work.head(12).iterrows():
+    for i, row in work.head(20).iterrows():
         st.markdown("**" + str(row.get("sport","")) + " | " + str(row.get("player","")) + " - " + str(row.get("market","")) + "**")
         st.write(str(row.get("book","")) + " | Odds: " + str(row.get("odds","")) + " | Line: " + str(row.get("line","")))
-        st.write("Score: " + f"{row.get('score',0):.1f}" + " | Adjusted: " + f"{row.get('adjusted_score',0):.1f}" + " | Multi-AI: " + f"{row.get('multi_ai_score',0):.1f}")
-        st.write(str(row.get("tier","")) + " | Units: " + f"{row.get('units',0):.2f}" + "u | Suggested Stake: $" + f"{row.get('suggested_stake',0):.2f}")
-        st.write("Game: " + str(row.get("game","")) + " | Sport Mult: " + f"{row.get('sport_unit_mult',1.0):.2f}" + "x")
+        st.write("Score: " + f"{safe_float(row.get('score')):.1f}" + " | Adjusted: " + f"{safe_float(row.get('adjusted_score')):.1f}" + " | Multi-AI: " + f"{safe_float(row.get('multi_ai_score')):.1f}")
+        st.write(str(row.get("tier","")) + " | Units: " + f"{safe_float(row.get('units')):.2f}" + "u | Suggested Stake: $" + f"{safe_float(row.get('suggested_stake')):.2f}")
+        st.write("Game: " + str(row.get("game","")) + " | Sport Mult: " + f"{safe_float(row.get('sport_unit_mult'), 1.0):.2f}" + "x")
         c1, c2 = st.columns([1,1])
         with c1:
-            custom_stake = st.number_input("Stake", min_value=1.0, value=float(max(1.0, row.get("suggested_stake", 1.0))), step=1.0, key=f"{key_prefix}_stake_{i}")
+            custom_stake = st.number_input("Stake", min_value=1.0, value=float(max(1.0, safe_float(row.get("suggested_stake"), 1.0))), step=1.0, key=f"{key_prefix}_stake_{i}")
         with c2:
             st.write("")
             ok, msg = can_add_slip_item(row.to_dict(), custom_stake)
@@ -631,8 +766,8 @@ def render_bet_slip(namespace):
             st.rerun()
 
 # ---------- APP ----------
-st.title("Sports AI Dashboard V12.5 Launch Candidate")
-st.caption("Launch candidate with paper/live tracking, session controls, daily guardrails, and testing dashboard.")
+st.title("Sports AI Dashboard V12.6 Stability Build")
+st.caption("Adaptive weights, launch guardrails, export/import support, safer analytics, and upgraded CLV review.")
 
 tabs = st.tabs([
     "Dashboard","Data Input","Launch Settings","Launch Board","Auto Unit AI","Bet Slip",
@@ -647,10 +782,12 @@ with tabs[0]:
     c2.metric("Profit", f"${metrics['profit']:.2f}")
     c3.metric("ROI", f"{metrics['roi']:.2f}%")
     c4.metric("Win Rate", f"{metrics['win_rate']:.1f}%")
+    d1, d2, d3 = st.columns(3)
     today_bets, today_stake = today_counts_and_exposure()
-    d1, d2 = st.columns(2)
     d1.metric("Today's Bets", today_bets)
     d2.metric("Today's Exposure", f"${today_stake:.2f}")
+    d3.metric("Adaptive Weights", "On" if st.session_state.learning_state.get("adaptive_active") else "Warm-Up")
+    st.caption("Last weight refresh: " + str(st.session_state.learning_state.get("last_recalculated_at", "Not yet")))
 
 with tabs[1]:
     c1, c2 = st.columns(2)
@@ -664,15 +801,17 @@ with tabs[1]:
             st.session_state.active_df = None
             st.session_state.active_source = "None"
             st.warning("Active data cleared.")
-    uploaded_file = st.file_uploader("Choose CSV or Excel", type=["csv","xlsx","xls"])
+
+    uploaded_file = st.file_uploader("Choose CSV or Excel for active board", type=["csv","xlsx","xls"])
     if uploaded_file is not None:
         df_upload, err = read_uploaded_file(uploaded_file)
         if err:
             st.error(err)
-        else:
+        elif isinstance(df_upload, pd.DataFrame):
             st.session_state.active_df = df_upload
             st.session_state.active_source = f"Uploaded: {uploaded_file.name}"
             st.success("File loaded.")
+
     sample_text = "sport,player,market,odds,point,book,projection,edge,hit_pct,is_starter,team,opponent,game\nNBA,Stephen Curry,Points Over,-115,27.5,DraftKings,32.2,4.7,66.7,True,GSW,LAL,GSW @ LAL\nNHL,Connor McDavid,Shots Over,-120,3.5,DraftKings,4.3,0.8,58.0,True,EDM,CGY,EDM @ CGY"
     txt = st.text_area("Paste CSV here", value="", height=180, placeholder=sample_text)
     if st.button("Load Pasted Data", use_container_width=True):
@@ -683,6 +822,24 @@ with tabs[1]:
             st.session_state.active_df = df_paste
             st.session_state.active_source = "Pasted CSV"
             st.success("Pasted data loaded.")
+
+    st.divider()
+    st.subheader("Export / Import Tracker State")
+    export_bytes = json.dumps(export_state_payload(), indent=2).encode("utf-8")
+    st.download_button("Download tracker_state_v12_6.json", data=export_bytes, file_name="tracker_state_v12_6.json", mime="application/json", use_container_width=True)
+    import_file = st.file_uploader("Import tracker state JSON", type=["json"], key="state_import_json")
+    if import_file is not None:
+        imported_payload, err = read_uploaded_file(import_file)
+        if err:
+            st.error(err)
+        else:
+            ok, msg = import_state_payload(imported_payload)
+            if ok:
+                st.success(msg)
+                refresh_learning_state()
+            else:
+                st.error(msg)
+
     if st.session_state.active_df is not None:
         preview = filtered_launch_ready(st.session_state.active_df)
         st.dataframe(preview.head(20), use_container_width=True)
@@ -697,6 +854,8 @@ with tabs[2]:
     settings["default_mode"] = st.selectbox("Default tracking mode", ["Paper", "Live"], index=0 if settings["default_mode"] == "Paper" else 1)
     settings["lock_after_add"] = st.toggle("Lock bet details after adding to tracker", value=bool(settings["lock_after_add"]))
     settings["min_adjusted_score"] = st.slider("Launch minimum adjusted score", 0, 100, int(settings["min_adjusted_score"]))
+    warmup = int(st.session_state.learning_state.get("warmup_needed", 12))
+    st.session_state.learning_state["warmup_needed"] = st.slider("Adaptive weights warm-up settled bets", 5, 50, warmup)
     st.success("Launch settings saved in session.")
 
 with tabs[3]:
@@ -705,12 +864,29 @@ with tabs[3]:
     else:
         df = filtered_launch_ready(st.session_state.active_df)
         sport_options = sorted(df["sport"].dropna().astype(str).unique().tolist()) if "sport" in df.columns else []
-        selected_sports = st.multiselect("Sports", sport_options, default=sport_options)
+        book_options = sorted(df["book"].dropna().astype(str).unique().tolist()) if "book" in df.columns else []
+        tier_options = sorted(df["tier"].dropna().astype(str).unique().tolist()) if "tier" in df.columns else []
+        f1, f2, f3 = st.columns(3)
+        with f1:
+            selected_sports = st.multiselect("Sports", sport_options, default=sport_options)
+        with f2:
+            selected_books = st.multiselect("Books", book_options, default=book_options)
+        with f3:
+            selected_tiers = st.multiselect("Tiers", tier_options, default=tier_options)
         min_adjusted = st.slider("Min adjusted score", 0, 100, int(st.session_state.launch_settings["min_adjusted_score"]), key="launchboard_min")
+        odds_min, odds_max = st.slider("Odds range", -500, 500, (-150, 200), key="launchboard_odds")
         filtered = df.copy()
         if selected_sports:
             filtered = filtered[filtered["sport"].astype(str).isin(selected_sports)]
-        filtered = filtered[filtered["adjusted_score"].fillna(0) >= min_adjusted]
+        if selected_books:
+            filtered = filtered[filtered["book"].astype(str).isin(selected_books)]
+        if selected_tiers:
+            filtered = filtered[filtered["tier"].astype(str).isin(selected_tiers)]
+        filtered = filtered[
+            (filtered["adjusted_score"].fillna(0) >= min_adjusted) &
+            (filtered["odds"].fillna(0) >= odds_min) &
+            (filtered["odds"].fillna(0) <= odds_max)
+        ]
         filtered = best_bets(filtered)
 
         bankroll_quick = st.number_input("Bankroll for selector ($)", min_value=25.0, value=float(st.session_state.launch_settings["starting_bankroll"]), step=25.0, key="launch_bankroll")
@@ -718,6 +894,7 @@ with tabs[3]:
         drawdown_quick = st.number_input("Drawdown %", min_value=0.0, max_value=100.0, value=0.0, step=1.0, key="launch_drawdown")
         roi_quick = st.number_input("ROI %", value=float(refresh_bet_log_metrics()["roi"]), step=0.5, key="launch_roi")
 
+        st.dataframe(filtered[[c for c in ["sport","player","market","book","odds","line","score","adjusted_score","tier","units","game"] if c in filtered.columns]], use_container_width=True)
         render_mobile_bet_picker(filtered, bankroll_quick, risk_mode_quick, drawdown_quick, roi_quick, "launch_picker")
         render_bet_slip("launch_board")
 
@@ -741,31 +918,39 @@ with tabs[5]:
 
 with tabs[6]:
     st.subheader("CLV Tracker")
-    log = st.session_state.bet_log.copy()
+    log = ensure_bet_log_shape(st.session_state.bet_log.copy())
     if log.empty:
         st.info("No tracked bets yet.")
     else:
         editable_idx = st.selectbox("Select tracked bet", options=list(log.index), format_func=lambda i: f"{log.loc[i, 'bet_id']} | {log.loc[i, 'mode']} | {log.loc[i, 'sport']} | {log.loc[i, 'player']} {log.loc[i, 'market']}")
         current = log.loc[editable_idx]
-        closing_line = st.number_input("Closing line", value=float(current["clv_closing_line"]) if pd.notna(current["clv_closing_line"]) else float(current["line"]) if pd.notna(current["line"]) else 0.0, step=0.5)
+        default_line = safe_float(current["clv_closing_line"], safe_float(current["line"], 0.0))
+        closing_line = st.number_input("Closing line", value=float(default_line), step=0.5)
         if st.button("Save CLV", use_container_width=True):
             st.session_state.bet_log.loc[editable_idx, "clv_closing_line"] = closing_line
             diff, result = clv_result(st.session_state.bet_log.loc[editable_idx])
             st.session_state.bet_log.loc[editable_idx, "clv_diff"] = diff
             st.session_state.bet_log.loc[editable_idx, "clv_win"] = result
             st.success("CLV updated.")
+            st.rerun()
         st.dataframe(st.session_state.bet_log[[c for c in ["bet_id","mode","sport","player","market","bet_side","line","clv_closing_line","clv_diff","clv_win","result"] if c in st.session_state.bet_log.columns]], use_container_width=True)
+        st.divider()
+        clv_summary = clv_summary_table()
+        if clv_summary.empty:
+            st.info("Settle bets and save CLV to unlock CLV summary.")
+        else:
+            st.dataframe(clv_summary, use_container_width=True)
 
 with tabs[7]:
     st.subheader("Bet Tracker")
-    log = st.session_state.bet_log.copy()
+    log = ensure_bet_log_shape(st.session_state.bet_log.copy())
     if log.empty:
         st.info("No bets tracked yet.")
     else:
-        locked_cols = st.session_state.launch_settings["lock_after_add"]
+        lock_after_add = bool(st.session_state.launch_settings["lock_after_add"])
         for i in range(len(log)):
             with st.expander(f"{log.loc[i, 'bet_id']} | {log.loc[i, 'mode']} | {log.loc[i, 'sport']} | {log.loc[i, 'player']} {log.loc[i, 'market']}", expanded=False):
-                st.write(f"Book: {log.loc[i, 'book']} | Odds: {log.loc[i, 'odds']} | Stake: ${float(log.loc[i, 'stake']):.2f}")
+                st.write(f"Book: {log.loc[i, 'book']} | Odds: {log.loc[i, 'odds']} | Stake: ${safe_float(log.loc[i, 'stake']):.2f}")
                 result = st.selectbox(
                     f"Result for {log.loc[i, 'bet_id']}",
                     ["Pending","Win","Loss","Push"],
@@ -773,12 +958,22 @@ with tabs[7]:
                     key=f"result_{i}",
                 )
                 notes = st.text_input("Notes", value=str(log.loc[i, "notes"]), key=f"notes_{i}")
+                if lock_after_add:
+                    st.caption("Bet details are locked after add. You can still update result, notes, and CLV.")
+                else:
+                    stake_edit = st.number_input("Stake override", min_value=1.0, value=float(max(1.0, safe_float(log.loc[i, "stake"], 1.0))), step=1.0, key=f"stake_edit_{i}")
+                    odds_edit = st.number_input("Odds override", value=float(safe_float(log.loc[i, "odds"], 0.0)), step=1.0, key=f"odds_edit_{i}")
                 if st.button(f"Save {log.loc[i, 'bet_id']}", key=f"save_{i}"):
                     log.loc[i, "result"] = result
                     log.loc[i, "notes"] = notes
+                    if not lock_after_add:
+                        log.loc[i, "stake"] = stake_edit
+                        log.loc[i, "odds"] = odds_edit
                     log.loc[i, "profit"] = settle_profit(log.loc[i, "odds"], log.loc[i, "stake"], result)
-                    st.session_state.bet_log = log.copy()
+                    st.session_state.bet_log = ensure_bet_log_shape(log.copy())
+                    refresh_learning_state()
                     st.success("Bet updated.")
+                    st.rerun()
         st.dataframe(st.session_state.bet_log, use_container_width=True)
 
 with tabs[8]:
@@ -800,6 +995,9 @@ with tabs[8]:
             avg_adjusted=("adjusted_score","mean"),
             win_rate=("result", lambda s: round((s.eq("Win").sum() / max(1, s.isin(["Win","Loss"]).sum())) * 100, 2))
         ).reset_index()
+        perf["profit"] = perf["profit"].round(2)
+        perf["avg_score"] = perf["avg_score"].round(2)
+        perf["avg_adjusted"] = perf["avg_adjusted"].round(2)
         st.dataframe(perf, use_container_width=True)
 
 with tabs[9]:
@@ -815,6 +1013,8 @@ with tabs[9]:
             profit=("profit","sum"),
             avg_clv=("clv_diff","mean"),
         ).reset_index()
+        by_sport["profit"] = by_sport["profit"].round(2)
+        by_sport["avg_clv"] = by_sport["avg_clv"].round(2)
         st.dataframe(by_sport, use_container_width=True)
 
 with tabs[10]:
@@ -823,7 +1023,10 @@ with tabs[10]:
     if log.empty:
         st.info("No tracked bets yet.")
     else:
-        daily = log.groupby(["bet_date","mode"], dropna=False).agg(
+        work = log.copy()
+        work["profit"] = pd.to_numeric(work["profit"], errors="coerce").fillna(0.0)
+        work["stake"] = pd.to_numeric(work["stake"], errors="coerce").fillna(0.0)
+        daily = work.groupby(["bet_date","mode"], dropna=False).agg(
             bets=("bet_id","count"),
             risk=("stake","sum"),
             profit=("profit","sum"),
@@ -831,6 +1034,9 @@ with tabs[10]:
         daily["cum_profit"] = daily.groupby("mode")["profit"].cumsum()
         daily["starting_bankroll"] = float(st.session_state.launch_settings["starting_bankroll"])
         daily["roll"] = daily["starting_bankroll"] + daily["cum_profit"]
+        daily["risk"] = daily["risk"].round(2)
+        daily["profit"] = daily["profit"].round(2)
+        daily["roll"] = daily["roll"].round(2)
         st.dataframe(daily, use_container_width=True)
 
 with tabs[11]:
@@ -848,13 +1054,33 @@ with tabs[11]:
 with tabs[12]:
     st.subheader("Learning Dashboard")
     settled = get_settled_log()
-    weight_df = pd.DataFrame({"model": list(st.session_state.learning_state["weights"].keys()), "weight": [round(v, 4) for v in st.session_state.learning_state["weights"].values()]})
+    refresh_learning_state()
+    learn = compute_learning_adjustments()
+    weights = normalize_weights(st.session_state.learning_state.get("weights", DEFAULT_WEIGHTS.copy()))
+    weight_df = pd.DataFrame({
+        "model": list(weights.keys()),
+        "weight": [round(v, 4) for v in weights.values()],
+        "default_weight": [round(DEFAULT_WEIGHTS[k], 4) for k in weights.keys()],
+        "delta": [round(weights[k] - DEFAULT_WEIGHTS[k], 4) for k in weights.keys()],
+    })
     st.dataframe(weight_df, use_container_width=True)
+    x1, x2, x3 = st.columns(3)
+    x1.metric("System State", learn["hot_cold"])
+    x2.metric("Global Learning Adj", f"{learn['global_adj']:.2f}")
+    x3.metric("Settled Bets", int(learn["settled_count"]))
     if settled.empty or len(settled) < 5:
-        st.info("Learning engine is in stable warm-up mode. Settle at least 5 bets to activate adaptive learning.")
+        st.info("Learning engine is in stable warm-up mode. Settle at least 5 bets to activate score adjustments.")
     else:
-        learn = compute_learning_adjustments()
-        st.metric("System State", learn["hot_cold"])
-        st.metric("Global Learning Adj", f"{learn['global_adj']:.2f}")
+        st.success(f"Learning adjustments active. Current learning ROI: {learn['roi']:.2f}%")
+        st.write("Market adjustments")
+        st.dataframe(pd.DataFrame(sorted(learn["market_adj"].items()), columns=["market", "adj"]).sort_values("adj", ascending=False), use_container_width=True)
+        st.write("Tier adjustments")
+        st.dataframe(pd.DataFrame(sorted(learn["tier_adj"].items()), columns=["tier", "adj"]).sort_values("adj", ascending=False), use_container_width=True)
+        st.write("Score bucket adjustments")
+        st.dataframe(pd.DataFrame(sorted(learn["score_adj"].items()), columns=["score_bucket", "adj"]).sort_values("adj", ascending=False), use_container_width=True)
+    if not st.session_state.learning_state.get("adaptive_active"):
+        st.caption(f"Adaptive weights stay in warm-up until {st.session_state.learning_state.get('warmup_needed', 12)} settled bets.")
+    else:
+        st.caption("Adaptive weights are live and updating from settled performance.")
 
-st.success("V12.5 Launch Candidate ready.")
+st.success("V12.6 Stability Build ready.")

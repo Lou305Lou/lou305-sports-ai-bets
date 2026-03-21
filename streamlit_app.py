@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Sports AI Dashboard V12.1", layout="wide")
+st.set_page_config(page_title="Sports AI Dashboard V12.2", layout="wide")
 
 if "active_df" not in st.session_state:
     st.session_state.active_df = None
@@ -373,8 +373,8 @@ def render_mobile_bet_picker(df, bankroll, risk_mode, drawdown_pct, roi_pct, key
         return
     work = df.copy().reset_index(drop=True)
     work["suggested_stake"] = work["units"].apply(lambda u: suggested_stake_from_units(u, bankroll, risk_mode, drawdown_pct, roi_pct))
-    st.subheader("Tap-to-Add Bet Cards")
-    st.caption("Built for iPhone. Each play has its own Add Bet button.")
+    st.subheader("Mobile Bet Selector")
+    st.caption("Selector appears here first, above the table.")
     for i, row in work.head(12).iterrows():
         st.markdown("**" + str(row.get("player","")) + " - " + str(row.get("market","")) + "**")
         st.write(str(row.get("book","")) + " | Odds: " + str(row.get("odds","")) + " | Line: " + str(row.get("line","")))
@@ -391,8 +391,8 @@ def render_mobile_bet_picker(df, bankroll, risk_mode, drawdown_pct, roi_pct, key
                 st.success("Added " + str(row.get("player","")) + " - " + str(row.get("market","")) + " to tracker.")
         st.divider()
 
-st.title("Sports AI Dashboard V12.1")
-st.caption("V12.1 adds a mobile-friendly bet selector with tap-to-add cards for iPhone.")
+st.title("Sports AI Dashboard V12.2")
+st.caption("V12.2 puts the mobile selector first, above the dataframe, so it is visible on iPhone.")
 
 tabs = st.tabs(["Dashboard","Data Input","NBA Props","Auto Unit AI","CLV Tracker","Bet Tracker","Performance","Multi-AI Lab","Learning Dashboard"])
 
@@ -432,7 +432,7 @@ with tabs[1]:
             st.session_state.active_df = df_upload
             st.session_state.active_source = f"Uploaded: {uploaded_file.name}"
             st.success("File loaded.")
-    sample_text = "player,market,odds,point,sport,league,book,projection,edge,hit_pct,is_starter,team,opponent,game\nStephen Curry,Points Over,-115,27.5,NBA,NBA,DraftKings,32.2,4.7,66.7,True,GSW,LAL,GSW @ LAL\nLeBron James,PRA Over,-110,38.5,NBA,NBA,FanDuel,43.8,5.3,64.8,True,LAL,GSW,GSW @ LAL"
+    sample_text = "player,market,odds,point,sport,league,book,projection,edge,hit_pct,is_starter,team,opponent,game\\nStephen Curry,Points Over,-115,27.5,NBA,NBA,DraftKings,32.2,4.7,66.7,True,GSW,LAL,GSW @ LAL\\nLeBron James,PRA Over,-110,38.5,NBA,NBA,FanDuel,43.8,5.3,64.8,True,LAL,GSW,GSW @ LAL"
     txt = st.text_area("Paste CSV here", value="", height=180, placeholder=sample_text)
     if st.button("Load Pasted Data", use_container_width=True):
         df_paste, err = parse_csv_text(txt)
@@ -444,7 +444,7 @@ with tabs[1]:
             st.success("Pasted data loaded.")
     if st.session_state.active_df is not None:
         preview = nba_only(st.session_state.active_df)
-        st.dataframe(preview.head(30), use_container_width=True)
+        st.dataframe(preview.head(15), use_container_width=True)
 
 with tabs[2]:
     if st.session_state.active_df is None:
@@ -469,14 +469,17 @@ with tabs[2]:
         if starters_only and "is_starter" in filtered.columns:
             filtered = filtered[filtered["is_starter"].apply(clean_bool)]
         filtered = filtered.sort_values(["adjusted_score","multi_ai_score","score"], ascending=False)
-        show_cols = [c for c in ["player","market","book","odds","line","edge","hit_pct","ev_edge","multi_ai_score","score","learning_boost","adjusted_score","tier","units","game"] if c in filtered.columns]
-        st.dataframe(filtered[show_cols], use_container_width=True)
-        st.markdown("### Mobile Bet Selector")
-        bankroll_quick = st.number_input("Bankroll for quick-add ($)", min_value=25.0, value=250.0, step=25.0, key="nba_bankroll")
+
+        bankroll_quick = st.number_input("Bankroll for selector ($)", min_value=25.0, value=250.0, step=25.0, key="nba_bankroll")
         risk_mode_quick = st.selectbox("Risk mode", ["Conservative","Balanced","Aggressive"], index=1, key="nba_risk")
         drawdown_quick = st.number_input("Drawdown %", min_value=0.0, max_value=100.0, value=0.0, step=1.0, key="nba_drawdown")
         roi_quick = st.number_input("ROI %", value=float(refresh_bet_log_metrics()["roi"]), step=0.5, key="nba_roi")
+
         render_mobile_bet_picker(filtered, bankroll_quick, risk_mode_quick, drawdown_quick, roi_quick, "nba_picker")
+
+        with st.expander("Show props table", expanded=False):
+            show_cols = [c for c in ["player","market","book","odds","line","edge","hit_pct","ev_edge","multi_ai_score","score","learning_boost","adjusted_score","tier","units","game"] if c in filtered.columns]
+            st.dataframe(filtered[show_cols], use_container_width=True)
 
 with tabs[3]:
     st.subheader("Auto Unit Scaling AI")
@@ -497,6 +500,9 @@ with tabs[3]:
     else:
         ai_df = best_bets(nba_only(st.session_state.active_df)).reset_index(drop=True)
         render_mobile_bet_picker(ai_df, bankroll, risk_mode, drawdown_pct, roi_input, "auto_unit")
+        with st.expander("Show AI table", expanded=False):
+            show_cols = [c for c in ["player","market","book","odds","line","adjusted_score","tier","units"] if c in ai_df.columns]
+            st.dataframe(ai_df[show_cols].head(20), use_container_width=True)
 
 with tabs[4]:
     st.subheader("CLV Tracker")
@@ -581,4 +587,4 @@ with tabs[8]:
         st.markdown("### Score Bucket Learning")
         st.dataframe(bucket_perf, use_container_width=True)
 
-st.success("V12.1 Mobile Bet Selector ready.")
+st.success("V12.2 Mobile Selector First ready.")

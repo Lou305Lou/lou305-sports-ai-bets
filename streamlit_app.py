@@ -1,12 +1,12 @@
 
 import io
-from datetime import datetime
+from datetime import datetime, date
 
 import numpy as np
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Sports AI Dashboard V12.4.1 Pro", layout="wide")
+st.set_page_config(page_title="Sports AI Dashboard V12.5 Launch Candidate", layout="wide")
 
 # ---------- SESSION ----------
 if "active_df" not in st.session_state:
@@ -15,7 +15,7 @@ if "active_source" not in st.session_state:
     st.session_state.active_source = "None"
 if "bet_log" not in st.session_state:
     st.session_state.bet_log = pd.DataFrame(columns=[
-        "bet_id","added_at","sport","player","market","book","odds","line","stake","score","adjusted_score",
+        "bet_id","added_at","bet_date","mode","sport","player","market","book","odds","line","stake","score","adjusted_score",
         "tier","units","game","bet_side","result","profit","notes","risk_mode","bankroll_snapshot",
         "model_projection","model_price_ev","model_risk","model_market","model_history",
         "multi_ai_score","clv_closing_line","clv_direction","clv_diff","clv_win"
@@ -32,6 +32,16 @@ if "learning_state" not in st.session_state:
     }
 if "bet_slip" not in st.session_state:
     st.session_state.bet_slip = []
+if "launch_settings" not in st.session_state:
+    st.session_state.launch_settings = {
+        "starting_bankroll": 250.0,
+        "risk_mode": "Balanced",
+        "max_bets_per_day": 6,
+        "max_daily_exposure": 75.0,
+        "default_mode": "Paper",
+        "lock_after_add": True,
+        "min_adjusted_score": 60,
+    }
 
 # ---------- HELPERS ----------
 def normalize_columns(df):
@@ -288,10 +298,8 @@ def build_engine(df):
         df["implied_prob"] = df["odds"].apply(implied_prob) * 100
     if "break_even_pct" not in df.columns and "odds" in df.columns:
         df["break_even_pct"] = df["odds"].apply(implied_prob) * 100
-
     if "edge" not in df.columns:
         df["edge"] = df["projection"] - df["line"] if "projection" in df.columns and "line" in df.columns else 0.0
-
     if "hit_pct" not in df.columns:
         df["hit_pct"] = np.clip(50 + df["edge"].fillna(0) * 3.5, 35, 75)
     else:
@@ -341,11 +349,7 @@ def build_engine(df):
         1, 99
     )
 
-    df["tier"] = np.select(
-        [df["score"] >= 84, df["score"] >= 72, df["score"] >= 60],
-        ["Tier 1", "Tier 2", "Tier 3"],
-        default="Pass"
-    )
+    df["tier"] = np.select([df["score"] >= 84, df["score"] >= 72, df["score"] >= 60], ["Tier 1", "Tier 2", "Tier 3"], default="Pass")
 
     if "units" not in df.columns:
         df["units"] = np.nan
@@ -360,13 +364,9 @@ def build_engine(df):
     df["units"] = (df["units"].fillna(0) * df["sport_unit_mult"]).round(2)
     return df
 
-def engine_all_sports(df):
+def filtered_launch_ready(df):
     out = build_engine(df)
     out = apply_learning_layer(out)
-    return out
-
-def filtered_launch_ready(df):
-    out = engine_all_sports(df)
     out = out[out["adjusted_score"] >= out["sport_min_score"]].copy()
     return out
 
@@ -375,7 +375,7 @@ def best_bets(df):
     out = out[out["units"].fillna(0) > 0].copy()
     return out.sort_values(["adjusted_score", "multi_ai_score", "score", "ev_edge"], ascending=False)
 
-# ---------- TRACKER / SLIP ----------
+# ---------- SLIP / RULES ----------
 def recommended_unit_multiplier(risk_mode, bankroll, drawdown_pct, roi_pct):
     base = {"Conservative": 0.75, "Balanced": 1.00, "Aggressive": 1.25}.get(risk_mode, 1.0)
     bankroll_factor = 0.75 if bankroll < 100 else (1.10 if bankroll >= 500 else 1.0)
@@ -394,43 +394,6 @@ def suggested_stake_from_units(base_units, bankroll, risk_mode, drawdown_pct, ro
 
 def slip_key(row):
     return f"{row.get('sport','')}|{row.get('player','')}|{row.get('market','')}|{row.get('book','')}|{row.get('line','')}"
-
-def add_bet_to_log(row, stake, risk_mode, bankroll_snapshot):
-    log = st.session_state.bet_log.copy()
-    bet_id = f"BET-{len(log)+1:04d}"
-    new_row = {
-        "bet_id": bet_id,
-        "added_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "sport": row.get("sport",""),
-        "player": row.get("player",""),
-        "market": row.get("market",""),
-        "book": row.get("book",""),
-        "odds": row.get("odds",np.nan),
-        "line": row.get("line", row.get("point",np.nan)),
-        "stake": round(float(stake),2),
-        "score": row.get("score",np.nan),
-        "adjusted_score": row.get("adjusted_score",np.nan),
-        "tier": row.get("tier",""),
-        "units": row.get("units",np.nan),
-        "game": row.get("game",""),
-        "bet_side": row.get("bet_side",""),
-        "result": "Pending",
-        "profit": np.nan,
-        "notes": "",
-        "risk_mode": risk_mode,
-        "bankroll_snapshot": round(float(bankroll_snapshot),2),
-        "model_projection": row.get("model_projection",np.nan),
-        "model_price_ev": row.get("model_price_ev",np.nan),
-        "model_risk": row.get("model_risk",np.nan),
-        "model_market": row.get("model_market",np.nan),
-        "model_history": row.get("model_history",np.nan),
-        "multi_ai_score": row.get("multi_ai_score",np.nan),
-        "clv_closing_line": np.nan,
-        "clv_direction": row.get("bet_side",""),
-        "clv_diff": np.nan,
-        "clv_win": "",
-    }
-    st.session_state.bet_log = pd.concat([log, pd.DataFrame([new_row])], ignore_index=True)
 
 def add_to_slip(row, stake, bankroll, risk_mode):
     key = slip_key(row)
@@ -468,13 +431,6 @@ def remove_from_slip(slip_key_value):
 def clear_slip():
     st.session_state.bet_slip = []
 
-def confirm_slip_to_tracker():
-    for item in st.session_state.bet_slip:
-        add_bet_to_log(item, item["stake"], item["risk_mode"], item["bankroll_snapshot"])
-    count = len(st.session_state.bet_slip)
-    clear_slip()
-    return count
-
 def slip_summary():
     slip = pd.DataFrame(st.session_state.bet_slip)
     if slip.empty:
@@ -503,6 +459,92 @@ def slip_risk_message(summary):
         msgs.append("Large slip size")
     return " | ".join(msgs) if msgs else "Balanced exposure"
 
+def daily_log_df():
+    log = st.session_state.bet_log.copy()
+    if log.empty:
+        return log
+    if "bet_date" in log.columns:
+        return log
+    log["bet_date"] = pd.to_datetime(log["added_at"], errors="coerce").dt.date.astype(str)
+    return log
+
+def today_counts_and_exposure():
+    log = daily_log_df()
+    if log.empty:
+        return 0, 0.0
+    today_str = str(date.today())
+    today_log = log[log["bet_date"].astype(str) == today_str].copy()
+    total_bets = len(today_log)
+    total_stake = float(pd.to_numeric(today_log["stake"], errors="coerce").fillna(0).sum())
+    return total_bets, round(total_stake, 2)
+
+def can_add_slip_item(row, stake):
+    settings = st.session_state.launch_settings
+    current = pd.DataFrame(st.session_state.bet_slip)
+    today_bets, today_stake = today_counts_and_exposure()
+    slip_bets = len(current)
+    slip_stake = float(pd.to_numeric(current["stake"], errors="coerce").fillna(0).sum()) if len(current) else 0.0
+
+    projected_bets = today_bets + slip_bets + 1
+    projected_stake = today_stake + slip_stake + float(stake)
+
+    if projected_bets > int(settings["max_bets_per_day"]):
+        return False, f"Blocked: max bets per day is {settings['max_bets_per_day']}."
+    if projected_stake > float(settings["max_daily_exposure"]):
+        return False, f"Blocked: max daily exposure is ${float(settings['max_daily_exposure']):.2f}."
+    if float(row.get("adjusted_score", 0)) < float(settings["min_adjusted_score"]):
+        return False, f"Blocked: adjusted score below launch minimum of {settings['min_adjusted_score']}."
+    return True, "OK"
+
+def confirm_slip_to_tracker(mode):
+    count = 0
+    for item in st.session_state.bet_slip:
+        add_bet_to_log(item, item["stake"], item["risk_mode"], item["bankroll_snapshot"], mode)
+        count += 1
+    clear_slip()
+    return count
+
+# ---------- TRACKER ----------
+def add_bet_to_log(row, stake, risk_mode, bankroll_snapshot, mode):
+    log = st.session_state.bet_log.copy()
+    bet_id = f"BET-{len(log)+1:04d}"
+    bet_date = str(date.today())
+    new_row = {
+        "bet_id": bet_id,
+        "added_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "bet_date": bet_date,
+        "mode": mode,
+        "sport": row.get("sport",""),
+        "player": row.get("player",""),
+        "market": row.get("market",""),
+        "book": row.get("book",""),
+        "odds": row.get("odds",np.nan),
+        "line": row.get("line", row.get("point",np.nan)),
+        "stake": round(float(stake),2),
+        "score": row.get("score",np.nan),
+        "adjusted_score": row.get("adjusted_score",np.nan),
+        "tier": row.get("tier",""),
+        "units": row.get("units",np.nan),
+        "game": row.get("game",""),
+        "bet_side": row.get("bet_side",""),
+        "result": "Pending",
+        "profit": np.nan,
+        "notes": "",
+        "risk_mode": risk_mode,
+        "bankroll_snapshot": round(float(bankroll_snapshot),2),
+        "model_projection": row.get("model_projection",np.nan),
+        "model_price_ev": row.get("model_price_ev",np.nan),
+        "model_risk": row.get("model_risk",np.nan),
+        "model_market": row.get("model_market",np.nan),
+        "model_history": row.get("model_history",np.nan),
+        "multi_ai_score": row.get("multi_ai_score",np.nan),
+        "clv_closing_line": np.nan,
+        "clv_direction": row.get("bet_side",""),
+        "clv_diff": np.nan,
+        "clv_win": "",
+    }
+    st.session_state.bet_log = pd.concat([log, pd.DataFrame([new_row])], ignore_index=True)
+
 def refresh_bet_log_metrics():
     log = st.session_state.bet_log.copy()
     if log.empty:
@@ -518,14 +560,15 @@ def refresh_bet_log_metrics():
     roi = (settled_profit / total_staked * 100) if total_staked > 0 else 0.0
     return {"total_bets":len(log),"settled_bets":len(settled),"wins":wins,"losses":losses,"pushes":pushes,"pending":pending,"total_staked":round(total_staked,2),"profit":round(settled_profit,2),"roi":round(roi,2),"win_rate":round(win_rate,2)}
 
+# ---------- RENDER ----------
 def render_mobile_bet_picker(df, bankroll, risk_mode, drawdown_pct, roi_pct, key_prefix):
     if df.empty:
         st.info("No qualified plays available.")
         return
     work = df.copy().reset_index(drop=True)
     work["suggested_stake"] = work["units"].apply(lambda u: suggested_stake_from_units(u, bankroll, risk_mode, drawdown_pct, roi_pct))
-    st.subheader("Smart Bet Slip Selector")
-    st.caption("Sport-aware selection with launch filters applied.")
+    st.subheader("Launch Selector")
+    st.caption("Add plays to slip, then confirm them to tracker in Paper or Live mode.")
     for i, row in work.head(12).iterrows():
         st.markdown("**" + str(row.get("sport","")) + " | " + str(row.get("player","")) + " - " + str(row.get("market","")) + "**")
         st.write(str(row.get("book","")) + " | Odds: " + str(row.get("odds","")) + " | Line: " + str(row.get("line","")))
@@ -537,13 +580,17 @@ def render_mobile_bet_picker(df, bankroll, risk_mode, drawdown_pct, roi_pct, key
             custom_stake = st.number_input("Stake", min_value=1.0, value=float(max(1.0, row.get("suggested_stake", 1.0))), step=1.0, key=f"{key_prefix}_stake_{i}")
         with c2:
             st.write("")
+            ok, msg = can_add_slip_item(row.to_dict(), custom_stake)
             if st.button(f"Add To Slip {i+1}", key=f"{key_prefix}_add_{i}", use_container_width=True):
-                add_to_slip(row.to_dict(), custom_stake, bankroll, risk_mode)
-                st.success("Added to bet slip.")
+                if ok:
+                    add_to_slip(row.to_dict(), custom_stake, bankroll, risk_mode)
+                    st.success("Added to bet slip.")
+                else:
+                    st.error(msg)
         st.divider()
 
 def render_bet_slip(namespace):
-    st.subheader("Live Smart Bet Slip")
+    st.subheader("Live Bet Slip")
     slip = pd.DataFrame(st.session_state.bet_slip)
     if slip.empty:
         st.info("Your bet slip is empty.")
@@ -560,22 +607,17 @@ def render_bet_slip(namespace):
         st.warning("Tip: You have multiple bets from the same game.")
     if summary["same_player_extra"] > 0:
         st.warning("Tip: You have multiple bets tied to the same player.")
-
     slip_show = slip[[c for c in ["sport","player","market","book","odds","line","stake","adjusted_score","tier","game"] if c in slip.columns]]
     st.dataframe(slip_show, use_container_width=True)
 
-    st.markdown("### Remove Individual Bets")
     for i, item in slip.reset_index(drop=True).iterrows():
         label = f"{item['sport']} | {item['player']} - {item['market']} | ${float(item['stake']):.2f}"
-        if st.button(
-            "Remove: " + label,
-            key=f"{namespace}_remove_slip_{i}_{item['slip_key']}",
-            use_container_width=True
-        ):
+        if st.button("Remove: " + label, key=f"{namespace}_remove_slip_{i}_{item['slip_key']}", use_container_width=True):
             remove_from_slip(item["slip_key"])
             st.success("Removed from slip.")
             st.rerun()
 
+    mode = st.selectbox("Confirm mode", ["Paper", "Live"], index=0 if st.session_state.launch_settings["default_mode"] == "Paper" else 1, key=f"{namespace}_mode")
     x1, x2 = st.columns(2)
     with x1:
         if st.button("Clear Bet Slip", key=f"{namespace}_clear_slip", use_container_width=True):
@@ -584,17 +626,17 @@ def render_bet_slip(namespace):
             st.rerun()
     with x2:
         if st.button("Confirm Slip To Tracker", key=f"{namespace}_confirm_slip", use_container_width=True):
-            count = confirm_slip_to_tracker()
-            st.success(f"Added {count} bet(s) to tracker.")
+            count = confirm_slip_to_tracker(mode)
+            st.success(f"Added {count} {mode} bet(s) to tracker.")
             st.rerun()
 
 # ---------- APP ----------
-st.title("Sports AI Dashboard V12.4.1 Pro")
-st.caption("V12.4.1 Pro fixes the smart slip key collision and keeps the multi-sport launch engine.")
+st.title("Sports AI Dashboard V12.5 Launch Candidate")
+st.caption("Launch candidate with paper/live tracking, session controls, daily guardrails, and testing dashboard.")
 
 tabs = st.tabs([
-    "Dashboard","Data Input","Launch Board","Auto Unit AI","Smart Bet Slip",
-    "CLV Tracker","Bet Tracker","Performance","Sport Stats","Multi-AI Lab","Learning Dashboard"
+    "Dashboard","Data Input","Launch Settings","Launch Board","Auto Unit AI","Bet Slip",
+    "CLV Tracker","Bet Tracker","Performance","Sport Stats","30-Day Test","Multi-AI Lab","Learning Dashboard"
 ])
 
 with tabs[0]:
@@ -605,12 +647,10 @@ with tabs[0]:
     c2.metric("Profit", f"${metrics['profit']:.2f}")
     c3.metric("ROI", f"{metrics['roi']:.2f}%")
     c4.metric("Win Rate", f"{metrics['win_rate']:.1f}%")
-    if st.session_state.active_df is None:
-        st.info("Load data in Data Input to begin.")
-    else:
-        df = best_bets(filtered_launch_ready(st.session_state.active_df)).head(10)
-        show_cols = [c for c in ["sport","player","market","book","odds","score","adjusted_score","tier","units"] if c in df.columns]
-        st.dataframe(df[show_cols], use_container_width=True)
+    today_bets, today_stake = today_counts_and_exposure()
+    d1, d2 = st.columns(2)
+    d1.metric("Today's Bets", today_bets)
+    d2.metric("Today's Exposure", f"${today_stake:.2f}")
 
 with tabs[1]:
     c1, c2 = st.columns(2)
@@ -648,39 +688,46 @@ with tabs[1]:
         st.dataframe(preview.head(20), use_container_width=True)
 
 with tabs[2]:
+    st.subheader("Launch Settings")
+    settings = st.session_state.launch_settings
+    settings["starting_bankroll"] = st.number_input("Starting bankroll ($)", min_value=25.0, value=float(settings["starting_bankroll"]), step=25.0)
+    settings["risk_mode"] = st.selectbox("Default risk mode", ["Conservative", "Balanced", "Aggressive"], index=["Conservative", "Balanced", "Aggressive"].index(settings["risk_mode"]))
+    settings["max_bets_per_day"] = st.number_input("Max bets per day", min_value=1, max_value=20, value=int(settings["max_bets_per_day"]), step=1)
+    settings["max_daily_exposure"] = st.number_input("Max daily exposure ($)", min_value=10.0, value=float(settings["max_daily_exposure"]), step=5.0)
+    settings["default_mode"] = st.selectbox("Default tracking mode", ["Paper", "Live"], index=0 if settings["default_mode"] == "Paper" else 1)
+    settings["lock_after_add"] = st.toggle("Lock bet details after adding to tracker", value=bool(settings["lock_after_add"]))
+    settings["min_adjusted_score"] = st.slider("Launch minimum adjusted score", 0, 100, int(settings["min_adjusted_score"]))
+    st.success("Launch settings saved in session.")
+
+with tabs[3]:
     if st.session_state.active_df is None:
         st.info("Load data first.")
     else:
         df = filtered_launch_ready(st.session_state.active_df)
         sport_options = sorted(df["sport"].dropna().astype(str).unique().tolist()) if "sport" in df.columns else []
         selected_sports = st.multiselect("Sports", sport_options, default=sport_options)
-        min_adjusted = st.slider("Min adjusted score", 0, 100, 60)
+        min_adjusted = st.slider("Min adjusted score", 0, 100, int(st.session_state.launch_settings["min_adjusted_score"]), key="launchboard_min")
         filtered = df.copy()
         if selected_sports:
             filtered = filtered[filtered["sport"].astype(str).isin(selected_sports)]
         filtered = filtered[filtered["adjusted_score"].fillna(0) >= min_adjusted]
         filtered = best_bets(filtered)
 
-        bankroll_quick = st.number_input("Bankroll for selector ($)", min_value=25.0, value=250.0, step=25.0, key="launch_bankroll")
-        risk_mode_quick = st.selectbox("Risk mode", ["Conservative","Balanced","Aggressive"], index=1, key="launch_risk")
+        bankroll_quick = st.number_input("Bankroll for selector ($)", min_value=25.0, value=float(st.session_state.launch_settings["starting_bankroll"]), step=25.0, key="launch_bankroll")
+        risk_mode_quick = st.selectbox("Risk mode", ["Conservative","Balanced","Aggressive"], index=["Conservative","Balanced","Aggressive"].index(st.session_state.launch_settings["risk_mode"]), key="launch_risk")
         drawdown_quick = st.number_input("Drawdown %", min_value=0.0, max_value=100.0, value=0.0, step=1.0, key="launch_drawdown")
         roi_quick = st.number_input("ROI %", value=float(refresh_bet_log_metrics()["roi"]), step=0.5, key="launch_roi")
 
         render_mobile_bet_picker(filtered, bankroll_quick, risk_mode_quick, drawdown_quick, roi_quick, "launch_picker")
         render_bet_slip("launch_board")
 
-with tabs[3]:
-    st.subheader("Auto Unit AI by Sport")
+with tabs[4]:
+    st.subheader("Auto Unit AI")
     metrics = refresh_bet_log_metrics()
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        bankroll = st.number_input("Current bankroll ($)", min_value=25.0, value=250.0, step=25.0)
-    with c2:
-        risk_mode = st.selectbox("Risk mode", ["Conservative","Balanced","Aggressive"], index=1)
-    with c3:
-        drawdown_pct = st.number_input("Current drawdown %", min_value=0.0, max_value=100.0, value=0.0, step=1.0)
-    with c4:
-        roi_input = st.number_input("Current ROI %", value=float(metrics["roi"]), step=0.5)
+    bankroll = st.number_input("Current bankroll ($)", min_value=25.0, value=float(st.session_state.launch_settings["starting_bankroll"]), step=25.0)
+    risk_mode = st.selectbox("Risk mode", ["Conservative","Balanced","Aggressive"], index=["Conservative","Balanced","Aggressive"].index(st.session_state.launch_settings["risk_mode"]))
+    drawdown_pct = st.number_input("Current drawdown %", min_value=0.0, max_value=100.0, value=0.0, step=1.0)
+    roi_input = st.number_input("Current ROI %", value=float(metrics["roi"]), step=0.5)
     st.success(f"Recommended unit multiplier: {recommended_unit_multiplier(risk_mode, bankroll, drawdown_pct, roi_input)}x")
     if st.session_state.active_df is None:
         st.info("Load data first.")
@@ -689,16 +736,16 @@ with tabs[3]:
         render_mobile_bet_picker(ai_df, bankroll, risk_mode, drawdown_pct, roi_input, "auto_unit")
         render_bet_slip("auto_unit")
 
-with tabs[4]:
-    render_bet_slip("smart_bet_slip")
-
 with tabs[5]:
+    render_bet_slip("bet_slip")
+
+with tabs[6]:
     st.subheader("CLV Tracker")
     log = st.session_state.bet_log.copy()
     if log.empty:
         st.info("No tracked bets yet.")
     else:
-        editable_idx = st.selectbox("Select tracked bet", options=list(log.index), format_func=lambda i: f"{log.loc[i, 'bet_id']} | {log.loc[i, 'sport']} | {log.loc[i, 'player']} {log.loc[i, 'market']}")
+        editable_idx = st.selectbox("Select tracked bet", options=list(log.index), format_func=lambda i: f"{log.loc[i, 'bet_id']} | {log.loc[i, 'mode']} | {log.loc[i, 'sport']} | {log.loc[i, 'player']} {log.loc[i, 'market']}")
         current = log.loc[editable_idx]
         closing_line = st.number_input("Closing line", value=float(current["clv_closing_line"]) if pd.notna(current["clv_closing_line"]) else float(current["line"]) if pd.notna(current["line"]) else 0.0, step=0.5)
         if st.button("Save CLV", use_container_width=True):
@@ -707,18 +754,24 @@ with tabs[5]:
             st.session_state.bet_log.loc[editable_idx, "clv_diff"] = diff
             st.session_state.bet_log.loc[editable_idx, "clv_win"] = result
             st.success("CLV updated.")
-        st.dataframe(st.session_state.bet_log[[c for c in ["bet_id","sport","player","market","bet_side","line","clv_closing_line","clv_diff","clv_win","result"] if c in st.session_state.bet_log.columns]], use_container_width=True)
+        st.dataframe(st.session_state.bet_log[[c for c in ["bet_id","mode","sport","player","market","bet_side","line","clv_closing_line","clv_diff","clv_win","result"] if c in st.session_state.bet_log.columns]], use_container_width=True)
 
-with tabs[6]:
+with tabs[7]:
     st.subheader("Bet Tracker")
     log = st.session_state.bet_log.copy()
     if log.empty:
         st.info("No bets tracked yet.")
     else:
+        locked_cols = st.session_state.launch_settings["lock_after_add"]
         for i in range(len(log)):
-            with st.expander(f"{log.loc[i, 'bet_id']} | {log.loc[i, 'sport']} | {log.loc[i, 'player']} {log.loc[i, 'market']}", expanded=False):
+            with st.expander(f"{log.loc[i, 'bet_id']} | {log.loc[i, 'mode']} | {log.loc[i, 'sport']} | {log.loc[i, 'player']} {log.loc[i, 'market']}", expanded=False):
                 st.write(f"Book: {log.loc[i, 'book']} | Odds: {log.loc[i, 'odds']} | Stake: ${float(log.loc[i, 'stake']):.2f}")
-                result = st.selectbox(f"Result for {log.loc[i, 'bet_id']}", ["Pending","Win","Loss","Push"], index=["Pending","Win","Loss","Push"].index(log.loc[i, "result"]) if log.loc[i, "result"] in ["Pending","Win","Loss","Push"] else 0, key=f"result_{i}")
+                result = st.selectbox(
+                    f"Result for {log.loc[i, 'bet_id']}",
+                    ["Pending","Win","Loss","Push"],
+                    index=["Pending","Win","Loss","Push"].index(log.loc[i, "result"]) if log.loc[i, "result"] in ["Pending","Win","Loss","Push"] else 0,
+                    key=f"result_{i}",
+                )
                 notes = st.text_input("Notes", value=str(log.loc[i, "notes"]), key=f"notes_{i}")
                 if st.button(f"Save {log.loc[i, 'bet_id']}", key=f"save_{i}"):
                     log.loc[i, "result"] = result
@@ -728,7 +781,7 @@ with tabs[6]:
                     st.success("Bet updated.")
         st.dataframe(st.session_state.bet_log, use_container_width=True)
 
-with tabs[7]:
+with tabs[8]:
     st.subheader("Performance")
     metrics = refresh_bet_log_metrics()
     c1, c2, c3, c4 = st.columns(4)
@@ -740,7 +793,7 @@ with tabs[7]:
     if settled.empty:
         st.info("No settled bets yet.")
     else:
-        perf = settled.groupby("sport", dropna=False).agg(
+        perf = settled.groupby(["mode","sport"], dropna=False).agg(
             bets=("bet_id","count"),
             profit=("profit","sum"),
             avg_score=("score","mean"),
@@ -749,13 +802,13 @@ with tabs[7]:
         ).reset_index()
         st.dataframe(perf, use_container_width=True)
 
-with tabs[8]:
+with tabs[9]:
     st.subheader("Sport Stats")
     settled = get_settled_log()
     if settled.empty:
         st.info("No settled bets yet.")
     else:
-        by_sport = settled.groupby("sport", dropna=False).agg(
+        by_sport = settled.groupby(["mode","sport"], dropna=False).agg(
             bets=("bet_id","count"),
             wins=("result", lambda s: int((s=="Win").sum())),
             losses=("result", lambda s: int((s=="Loss").sum())),
@@ -763,14 +816,24 @@ with tabs[8]:
             avg_clv=("clv_diff","mean"),
         ).reset_index()
         st.dataframe(by_sport, use_container_width=True)
-        clv_sport = settled[settled["clv_win"].astype(str) != ""].groupby(["sport","clv_win"], dropna=False).agg(
-            bets=("bet_id","count"),
-            profit=("profit","sum")
-        ).reset_index()
-        if len(clv_sport):
-            st.dataframe(clv_sport, use_container_width=True)
 
-with tabs[9]:
+with tabs[10]:
+    st.subheader("30-Day Test Dashboard")
+    log = daily_log_df()
+    if log.empty:
+        st.info("No tracked bets yet.")
+    else:
+        daily = log.groupby(["bet_date","mode"], dropna=False).agg(
+            bets=("bet_id","count"),
+            risk=("stake","sum"),
+            profit=("profit","sum"),
+        ).reset_index()
+        daily["cum_profit"] = daily.groupby("mode")["profit"].cumsum()
+        daily["starting_bankroll"] = float(st.session_state.launch_settings["starting_bankroll"])
+        daily["roll"] = daily["starting_bankroll"] + daily["cum_profit"]
+        st.dataframe(daily, use_container_width=True)
+
+with tabs[11]:
     st.subheader("Multi-AI Lab")
     if st.session_state.active_df is None:
         st.info("Load data first.")
@@ -782,7 +845,7 @@ with tabs[9]:
             "sport_unit_mult","sport_min_score","tier","units"
         ] if c in df.columns]], use_container_width=True)
 
-with tabs[10]:
+with tabs[12]:
     st.subheader("Learning Dashboard")
     settled = get_settled_log()
     weight_df = pd.DataFrame({"model": list(st.session_state.learning_state["weights"].keys()), "weight": [round(v, 4) for v in st.session_state.learning_state["weights"].values()]})
@@ -794,4 +857,4 @@ with tabs[10]:
         st.metric("System State", learn["hot_cold"])
         st.metric("Global Learning Adj", f"{learn['global_adj']:.2f}")
 
-st.success("V12.4.1 Pro Multi-Sport Engine ready.")
+st.success("V12.5 Launch Candidate ready.")

@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Sports AI Dashboard V10 Tracker", layout="wide")
+st.set_page_config(page_title="Sports AI Dashboard V11", layout="wide")
 
 # ---------- SESSION ----------
 if "active_df" not in st.session_state:
@@ -17,7 +17,9 @@ if "bet_log" not in st.session_state:
     st.session_state.bet_log = pd.DataFrame(columns=[
         "bet_id", "added_at", "player", "market", "book", "odds", "line",
         "stake", "score", "tier", "units", "game", "bet_side", "result",
-        "profit", "notes"
+        "profit", "notes", "risk_mode", "bankroll_snapshot",
+        "model_projection", "model_price_ev", "model_risk", "model_market", "model_history",
+        "multi_ai_score", "clv_closing_line", "clv_direction", "clv_diff", "clv_win"
     ])
 
 # ---------- HELPERS ----------
@@ -144,6 +146,25 @@ def settle_profit(odds, stake, result):
         return 0.0
     return np.nan
 
+def sample_data():
+    rows = [
+        ["Stephen Curry","Points Over",-115,27.5,"NBA","NBA","DraftKings",32.2,4.7,66.7,None,True,"GSW","LAL","GSW @ LAL"],
+        ["Stephen Curry","Points Over",-108,27.0,"NBA","NBA","Caesars",32.2,5.2,66.7,None,True,"GSW","LAL","GSW @ LAL"],
+        ["Stephen Curry","Points Under",-105,30.5,"NBA","NBA","BetMGM",26.9,3.6,58.5,None,True,"GSW","LAL","GSW @ LAL"],
+        ["LeBron James","PRA Over",-110,38.5,"NBA","NBA","FanDuel",43.8,5.3,64.8,None,True,"LAL","GSW","GSW @ LAL"],
+        ["LeBron James","PRA Under",102,41.5,"NBA","NBA","DraftKings",39.6,1.9,55.0,None,True,"LAL","GSW","GSW @ LAL"],
+        ["Anthony Davis","Rebounds Over",-125,11.5,"NBA","NBA","Caesars",13.2,1.7,59.4,None,True,"LAL","GSW","GSW @ LAL"],
+        ["Anthony Davis","Rebounds Under",110,13.5,"NBA","NBA","FanDuel",11.8,1.7,57.0,None,True,"LAL","GSW","GSW @ LAL"],
+        ["Tyrese Haliburton","Assists Over",105,8.5,"NBA","NBA","BetMGM",10.1,1.6,58.3,None,True,"IND","MIL","MIL @ IND"],
+        ["Tyrese Haliburton","Assists Under",-102,10.5,"NBA","NBA","DraftKings",8.9,1.6,56.0,None,True,"IND","MIL","MIL @ IND"],
+        ["Jayson Tatum","Points Over",120,29.5,"NBA","NBA","FanDuel",31.4,1.9,57.5,None,True,"BOS","MIA","BOS @ MIA"],
+        ["Jayson Tatum","Points Under",-105,31.5,"NBA","NBA","Caesars",29.8,1.7,55.8,None,True,"BOS","MIA","BOS @ MIA"],
+    ]
+    return pd.DataFrame(
+        rows,
+        columns=["player","market","odds","point","sport","league","book","projection","edge","hit_pct","score","is_starter","team","opponent","game"]
+    )
+
 def build_engine(df):
     df = normalize_columns(df)
     df = to_numeric_safe(df, ["odds", "point", "projection", "edge", "hit_pct", "score", "ev_edge", "units"])
@@ -183,6 +204,45 @@ def build_engine(df):
         axis=1,
     )
 
+    # Multi-AI foundation
+    if "model_projection" not in df.columns:
+        df["model_projection"] = np.clip(50 + df["edge"].fillna(0) * 8, 0, 100)
+    if "model_price_ev" not in df.columns:
+        df["model_price_ev"] = np.clip(50 + df["ev_edge"].fillna(0) * 1.8, 0, 100)
+    if "model_risk" not in df.columns:
+        base_risk = 60.0
+        if "odds" in df.columns:
+            base_risk = np.where(df["odds"].fillna(0) >= 120, 48, np.where(df["odds"].fillna(0) <= -170, 68, 58))
+        df["model_risk"] = np.clip(base_risk + np.where(df.get("is_starter", False).astype(str).str.lower().isin(["true","1","yes"]), 6, 0), 0, 100)
+    if "model_market" not in df.columns:
+        df["model_market"] = np.clip(
+            50
+            + (df["break_even_pct"].fillna(50) - df["implied_prob"].fillna(50)) * 0.0
+            + (df["hit_pct"].fillna(50) - df["break_even_pct"].fillna(50)) * 2.0,
+            0, 100
+        )
+    if "model_history" not in df.columns:
+        df["model_history"] = np.select(
+            [df["score"].fillna(0) >= 82, df["score"].fillna(0) >= 70, df["score"].fillna(0) >= 58],
+            [72, 62, 54],
+            default=45
+        )
+
+    weights = {
+        "model_projection": 0.30,
+        "model_price_ev": 0.25,
+        "model_risk": 0.15,
+        "model_market": 0.15,
+        "model_history": 0.15,
+    }
+    df["multi_ai_score"] = (
+        df["model_projection"].fillna(50) * weights["model_projection"] +
+        df["model_price_ev"].fillna(50) * weights["model_price_ev"] +
+        df["model_risk"].fillna(50) * weights["model_risk"] +
+        df["model_market"].fillna(50) * weights["model_market"] +
+        df["model_history"].fillna(50) * weights["model_history"]
+    )
+
     if "score" not in df.columns:
         df["score"] = np.nan
 
@@ -193,10 +253,19 @@ def build_engine(df):
     starter_bonus = 0
     if "is_starter" in df.columns:
         starter_bonus = df["is_starter"].apply(clean_bool).astype(int) * 4
-    df.loc[need_score, "score"] = np.clip(45 + edge_component[need_score] + hit_component[need_score] + ev_component[need_score] + starter_bonus[need_score], 1, 99)
+
+    df.loc[need_score, "score"] = np.clip(
+        0.55 * df.loc[need_score, "multi_ai_score"].fillna(50)
+        + 20
+        + edge_component[need_score]
+        + hit_component[need_score]
+        + ev_component[need_score]
+        + starter_bonus[need_score],
+        1, 99
+    )
 
     df["tier"] = np.select(
-        [df["score"] >= 82, df["score"] >= 70, df["score"] >= 58],
+        [df["score"] >= 84, df["score"] >= 72, df["score"] >= 60],
         ["🟢 Tier 1", "🟡 Tier 2", "⚪ Tier 3"],
         default="🔴 Pass",
     )
@@ -204,10 +273,10 @@ def build_engine(df):
     if "units" not in df.columns:
         df["units"] = np.nan
     need_units = df["units"].isna()
-    df.loc[need_units & (df["score"] >= 82), "units"] = 1.0
-    df.loc[need_units & (df["score"] >= 70) & (df["score"] < 82), "units"] = 0.5
-    df.loc[need_units & (df["score"] >= 58) & (df["score"] < 70), "units"] = 0.25
-    df.loc[need_units & (df["score"] < 58), "units"] = 0.0
+    df.loc[need_units & (df["score"] >= 84), "units"] = 1.0
+    df.loc[need_units & (df["score"] >= 72) & (df["score"] < 84), "units"] = 0.5
+    df.loc[need_units & (df["score"] >= 60) & (df["score"] < 72), "units"] = 0.25
+    df.loc[need_units & (df["score"] < 60), "units"] = 0.0
 
     return df
 
@@ -222,9 +291,40 @@ def nba_only(df):
 def best_bets(df):
     out = df.copy()
     out = out[out["units"].fillna(0) > 0].copy()
-    return out.sort_values(["score", "ev_edge", "edge"], ascending=False)
+    return out.sort_values(["multi_ai_score", "score", "ev_edge", "edge"], ascending=False)
 
-def add_bet_to_log(row, stake):
+def recommended_unit_multiplier(risk_mode, bankroll, drawdown_pct, roi_pct):
+    base = {"Conservative": 0.75, "Balanced": 1.00, "Aggressive": 1.25}.get(risk_mode, 1.0)
+    bankroll_factor = 1.00
+    if bankroll < 100:
+        bankroll_factor = 0.75
+    elif bankroll >= 500:
+        bankroll_factor = 1.10
+
+    drawdown_factor = 1.00
+    if drawdown_pct >= 15:
+        drawdown_factor = 0.70
+    elif drawdown_pct >= 8:
+        drawdown_factor = 0.85
+
+    performance_factor = 1.00
+    if roi_pct >= 8:
+        performance_factor = 1.10
+    elif roi_pct <= -8:
+        performance_factor = 0.85
+
+    return round(base * bankroll_factor * drawdown_factor * performance_factor, 2)
+
+def suggested_stake_from_units(base_units, bankroll, risk_mode, drawdown_pct, roi_pct):
+    try:
+        base_units = float(base_units)
+    except Exception:
+        base_units = 0.0
+    unit_pct = {"Conservative": 0.01, "Balanced": 0.015, "Aggressive": 0.02}.get(risk_mode, 0.015)
+    mult = recommended_unit_multiplier(risk_mode, bankroll, drawdown_pct, roi_pct)
+    return round(max(1.0, bankroll * unit_pct * base_units * mult), 2)
+
+def add_bet_to_log(row, stake, risk_mode, bankroll_snapshot):
     log = st.session_state.bet_log.copy()
     bet_id = f"BET-{len(log) + 1:04d}"
     new_row = {
@@ -244,6 +344,18 @@ def add_bet_to_log(row, stake):
         "result": "Pending",
         "profit": np.nan,
         "notes": "",
+        "risk_mode": risk_mode,
+        "bankroll_snapshot": round(float(bankroll_snapshot), 2),
+        "model_projection": row.get("model_projection", np.nan),
+        "model_price_ev": row.get("model_price_ev", np.nan),
+        "model_risk": row.get("model_risk", np.nan),
+        "model_market": row.get("model_market", np.nan),
+        "model_history": row.get("model_history", np.nan),
+        "multi_ai_score": row.get("multi_ai_score", np.nan),
+        "clv_closing_line": np.nan,
+        "clv_direction": row.get("bet_side", ""),
+        "clv_diff": np.nan,
+        "clv_win": "",
     }
     st.session_state.bet_log = pd.concat([log, pd.DataFrame([new_row])], ignore_index=True)
 
@@ -287,30 +399,37 @@ def refresh_bet_log_metrics():
         "win_rate": round(win_rate, 2),
     }
 
-def sample_data():
-    rows = [
-        ["Stephen Curry","Points Over",-115,27.5,"NBA","NBA","DraftKings",32.2,4.7,66.7,None,True,"GSW","LAL","GSW @ LAL"],
-        ["Stephen Curry","Points Over",-108,27.0,"NBA","NBA","Caesars",32.2,5.2,66.7,None,True,"GSW","LAL","GSW @ LAL"],
-        ["Stephen Curry","Points Under",-105,30.5,"NBA","NBA","BetMGM",26.9,3.6,58.5,None,True,"GSW","LAL","GSW @ LAL"],
-        ["LeBron James","PRA Over",-110,38.5,"NBA","NBA","FanDuel",43.8,5.3,64.8,None,True,"LAL","GSW","GSW @ LAL"],
-        ["LeBron James","PRA Under",102,41.5,"NBA","NBA","DraftKings",39.6,1.9,55.0,None,True,"LAL","GSW","GSW @ LAL"],
-        ["Anthony Davis","Rebounds Over",-125,11.5,"NBA","NBA","Caesars",13.2,1.7,59.4,None,True,"LAL","GSW","GSW @ LAL"],
-        ["Anthony Davis","Rebounds Under",110,13.5,"NBA","NBA","FanDuel",11.8,1.7,57.0,None,True,"LAL","GSW","GSW @ LAL"],
-        ["Tyrese Haliburton","Assists Over",105,8.5,"NBA","NBA","BetMGM",10.1,1.6,58.3,None,True,"IND","MIL","MIL @ IND"],
-        ["Tyrese Haliburton","Assists Under",-102,10.5,"NBA","NBA","DraftKings",8.9,1.6,56.0,None,True,"IND","MIL","MIL @ IND"],
-        ["Jayson Tatum","Points Over",120,29.5,"NBA","NBA","FanDuel",31.4,1.9,57.5,None,True,"BOS","MIA","BOS @ MIA"],
-        ["Jayson Tatum","Points Under",-105,31.5,"NBA","NBA","Caesars",29.8,1.7,55.8,None,True,"BOS","MIA","BOS @ MIA"],
-    ]
-    return pd.DataFrame(
-        rows,
-        columns=["player","market","odds","point","sport","league","book","projection","edge","hit_pct","score","is_starter","team","opponent","game"]
-    )
+def clv_result(row):
+    try:
+        open_line = float(row.get("line"))
+        close_line = float(row.get("clv_closing_line"))
+    except Exception:
+        return np.nan, ""
+    side = str(row.get("bet_side", "")).lower()
+    if side == "over":
+        diff = round(close_line - open_line, 2)
+        return diff, "Beat Close" if diff > 0 else ("Lost Close" if diff < 0 else "Push Close")
+    if side == "under":
+        diff = round(open_line - close_line, 2)
+        return diff, "Beat Close" if diff > 0 else ("Lost Close" if diff < 0 else "Push Close")
+    return np.nan, ""
+
+path = "/mnt/data/streamlit_app_v11.py"
 
 # ---------- APP ----------
-st.title("Sports AI Dashboard V10 Tracker")
-st.caption("Mobile-proof version with V9 engine plus manual bet tracking, grading, and performance dashboard.")
+st.title("Sports AI Dashboard V11")
+st.caption("V11 adds Auto Unit Scaling AI, CLV tracking, and a Multi-AI model foundation without live APIs.")
 
-tabs = st.tabs(["Dashboard", "Data Input", "NBA Props", "Bet Slip Builder", "Bet Tracker", "Performance"])
+tabs = st.tabs([
+    "Dashboard",
+    "Data Input",
+    "NBA Props",
+    "Auto Unit AI",
+    "CLV Tracker",
+    "Bet Tracker",
+    "Performance",
+    "Multi-AI Lab",
+])
 
 with tabs[0]:
     st.write("Active Source:", st.session_state.active_source)
@@ -327,18 +446,15 @@ with tabs[0]:
     else:
         df = nba_only(st.session_state.active_df)
         top = best_bets(df).head(5)
-
         st.subheader("Top Plays of the Day")
         if top.empty:
             st.info("No qualified plays yet.")
         else:
-            for _, r in top.iterrows():
-                st.write(
-                    f"{r.get('player','')} — {r.get('market','')} | {r.get('book','')} | "
-                    f"Odds {r.get('odds','')} | Score {r.get('score', np.nan):.1f} | "
-                    f"{r.get('tier','')} | {r.get('units',0):.2f}u"
-                )
-            show_cols = [c for c in ["player","market","book","odds","line","edge","hit_pct","ev_edge","score","tier","units","game"] if c in top.columns]
+            show_cols = [c for c in [
+                "player","market","book","odds","line","edge","hit_pct","ev_edge",
+                "model_projection","model_price_ev","model_risk","model_market","model_history",
+                "multi_ai_score","score","tier","units","game"
+            ] if c in top.columns]
             st.dataframe(top[show_cols], use_container_width=True)
 
 with tabs[1]:
@@ -384,7 +500,7 @@ LeBron James,PRA Over,-110,38.5,NBA,NBA,FanDuel,43.8,5.3,64.8,True,LAL,GSW,GSW @
         st.download_button(
             "Download Sample CSV",
             data=sample_data().to_csv(index=False).encode("utf-8"),
-            file_name="v10_sample.csv",
+            file_name="v11_sample.csv",
             mime="text/csv",
             use_container_width=True
         )
@@ -399,7 +515,6 @@ with tabs[2]:
         st.info("Load data first.")
     else:
         df = nba_only(st.session_state.active_df)
-
         c1, c2, c3, c4 = st.columns(4)
         with c1:
             odds_min, odds_max = st.slider("Odds range", -300, 200, (-300, 200))
@@ -407,7 +522,7 @@ with tabs[2]:
             market_options = sorted(df["market"].dropna().astype(str).unique().tolist()) if "market" in df.columns else []
             selected_markets = st.multiselect("Markets", market_options, default=market_options[:min(6, len(market_options))])
         with c3:
-            min_score = st.slider("Min score", 0, 100, 58)
+            min_score = st.slider("Min score", 0, 100, 60)
         with c4:
             starters_only = st.toggle("Starters only", value=False) if "is_starter" in df.columns else False
 
@@ -419,58 +534,101 @@ with tabs[2]:
         filtered = filtered[filtered["score"].fillna(0) >= min_score]
         if starters_only and "is_starter" in filtered.columns:
             filtered = filtered[filtered["is_starter"].apply(clean_bool)]
-        filtered = filtered.sort_values(["score", "ev_edge", "edge"], ascending=False)
+        filtered = filtered.sort_values(["multi_ai_score", "score", "ev_edge"], ascending=False)
 
-        c5, c6, c7, c8 = st.columns(4)
-        c5.metric("Filtered Props", len(filtered))
-        c6.metric("Tier 1", int((filtered["tier"] == "🟢 Tier 1").sum()) if "tier" in filtered.columns else 0)
-        c7.metric("Positive EV", int((filtered["ev_edge"].fillna(0) > 0).sum()) if "ev_edge" in filtered.columns else 0)
-        c8.metric("Avg Score", f"{filtered['score'].mean():.1f}" if len(filtered) else "0.0")
-
-        show_cols = [c for c in ["player","market","book","odds","line","projection","edge","hit_pct","break_even_pct","ev_edge","score","tier","units","team","opponent","game"] if c in filtered.columns]
+        show_cols = [c for c in [
+            "player","market","book","odds","line","edge","hit_pct","ev_edge",
+            "multi_ai_score","score","tier","units","game"
+        ] if c in filtered.columns]
         st.dataframe(filtered[show_cols], use_container_width=True)
-        st.download_button("Download Filtered Props CSV", filtered.to_csv(index=False).encode("utf-8"), "v10_filtered_props.csv", "text/csv")
 
 with tabs[3]:
+    st.subheader("Auto Unit Scaling AI")
+    metrics = refresh_bet_log_metrics()
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        bankroll = st.number_input("Current bankroll ($)", min_value=25.0, value=250.0, step=25.0)
+    with c2:
+        risk_mode = st.selectbox("Risk mode", ["Conservative", "Balanced", "Aggressive"], index=1)
+    with c3:
+        drawdown_pct = st.number_input("Current drawdown %", min_value=0.0, max_value=100.0, value=0.0, step=1.0)
+    with c4:
+        roi_input = st.number_input("Current ROI %", value=float(metrics["roi"]), step=0.5)
+
+    mult = recommended_unit_multiplier(risk_mode, bankroll, drawdown_pct, roi_input)
+    st.success(f"Recommended unit multiplier: {mult}x")
+
     if st.session_state.active_df is None:
-        st.info("Load data first.")
+        st.info("Load data first to get suggested stakes.")
     else:
         df = best_bets(nba_only(st.session_state.active_df)).reset_index(drop=True)
-
         if df.empty:
-            st.info("No qualified bets available.")
+            st.info("No qualified plays available.")
         else:
-            st.subheader("Quick Add Bets")
-            st.caption("Choose a recommended play and add it to your manual bet tracker.")
+            ai_df = df.copy()
+            ai_df["suggested_stake"] = ai_df["units"].apply(lambda u: suggested_stake_from_units(u, bankroll, risk_mode, drawdown_pct, roi_input))
+            show_cols = [c for c in [
+                "player","market","book","odds","units","suggested_stake","multi_ai_score","score","tier","game"
+            ] if c in ai_df.columns]
+            st.dataframe(ai_df[show_cols].head(20), use_container_width=True)
 
             selected_idx = st.selectbox(
-                "Select a play",
-                options=list(df.index),
-                format_func=lambda i: f"{df.loc[i, 'player']} — {df.loc[i, 'market']} | {df.loc[i, 'book']} | Odds {df.loc[i, 'odds']} | Score {df.loc[i, 'score']:.1f}"
+                "Select play to add with AI stake",
+                options=list(ai_df.index),
+                format_func=lambda i: f"{ai_df.loc[i, 'player']} — {ai_df.loc[i, 'market']} | {ai_df.loc[i, 'book']} | ${ai_df.loc[i, 'suggested_stake']:.2f}"
             )
-            default_stake = float(df.loc[selected_idx, "units"] if pd.notna(df.loc[selected_idx, "units"]) else 1.0) * 10.0
-            stake = st.number_input("Stake ($)", min_value=1.0, value=max(1.0, round(default_stake, 2)), step=1.0)
-
-            if st.button("Add Selected Bet to Tracker", use_container_width=True):
-                add_bet_to_log(df.loc[selected_idx], stake)
-                st.success("Bet added to tracker.")
-
-            st.markdown("### Recommended Plays")
-            show_cols = [c for c in ["player","market","book","odds","line","score","tier","units","ev_edge","game"] if c in df.columns]
-            st.dataframe(df[show_cols].head(20), use_container_width=True)
+            if st.button("Add Selected AI-Sized Bet to Tracker", use_container_width=True):
+                chosen = ai_df.loc[selected_idx].to_dict()
+                add_bet_to_log(chosen, ai_df.loc[selected_idx, "suggested_stake"], risk_mode, bankroll)
+                st.success("AI-sized bet added to tracker.")
 
 with tabs[4]:
-    st.subheader("Bet Tracker")
+    st.subheader("Closing Line Value (CLV) Tracker")
+    log = st.session_state.bet_log.copy()
 
+    if log.empty:
+        st.info("No tracked bets yet.")
+    else:
+        editable_idx = st.selectbox(
+            "Select tracked bet",
+            options=list(log.index),
+            format_func=lambda i: f"{log.loc[i, 'bet_id']} — {log.loc[i, 'player']} {log.loc[i, 'market']} | Open {log.loc[i, 'line']}"
+        )
+        current = log.loc[editable_idx]
+
+        c1, c2 = st.columns(2)
+        with c1:
+            closing_line = st.number_input("Closing line", value=float(current["clv_closing_line"]) if pd.notna(current["clv_closing_line"]) else float(current["line"]) if pd.notna(current["line"]) else 0.0, step=0.5)
+        with c2:
+            st.write(f"Bet side: {current['bet_side']}")
+
+        if st.button("Save CLV", use_container_width=True):
+            st.session_state.bet_log.loc[editable_idx, "clv_closing_line"] = closing_line
+            diff, result = clv_result(st.session_state.bet_log.loc[editable_idx])
+            st.session_state.bet_log.loc[editable_idx, "clv_diff"] = diff
+            st.session_state.bet_log.loc[editable_idx, "clv_win"] = result
+            st.success("CLV updated.")
+
+        clv_ready = st.session_state.bet_log.copy()
+        st.dataframe(
+            clv_ready[[
+                c for c in [
+                    "bet_id","player","market","bet_side","line","clv_closing_line","clv_diff","clv_win","book","result"
+                ] if c in clv_ready.columns
+            ]],
+            use_container_width=True
+        )
+
+with tabs[5]:
+    st.subheader("Bet Tracker")
     log = st.session_state.bet_log.copy()
     if log.empty:
-        st.info("No bets tracked yet. Add bets from Bet Slip Builder.")
+        st.info("No bets tracked yet.")
     else:
-        st.caption("Update results manually after games finish.")
-
         for i in range(len(log)):
             with st.expander(f"{log.loc[i, 'bet_id']} — {log.loc[i, 'player']} {log.loc[i, 'market']} ({log.loc[i, 'book']})", expanded=False):
-                st.write(f"Odds: {log.loc[i, 'odds']} | Stake: ${log.loc[i, 'stake']:.2f} | Game: {log.loc[i, 'game']}")
+                st.write(f"Odds: {log.loc[i, 'odds']} | Stake: ${float(log.loc[i, 'stake']):.2f} | Game: {log.loc[i, 'game']}")
                 result = st.selectbox(
                     f"Result for {log.loc[i, 'bet_id']}",
                     ["Pending", "Win", "Loss", "Push"],
@@ -484,57 +642,73 @@ with tabs[4]:
                     log.loc[i, "profit"] = settle_profit(log.loc[i, "odds"], log.loc[i, "stake"], result)
                     st.session_state.bet_log = log.copy()
                     st.success("Bet updated.")
-
-        st.markdown("### Current Log")
         st.dataframe(st.session_state.bet_log, use_container_width=True)
         st.download_button(
             "Download Bet Log CSV",
             st.session_state.bet_log.to_csv(index=False).encode("utf-8"),
-            "v10_bet_log.csv",
+            "v11_bet_log.csv",
             "text/csv"
         )
 
-with tabs[5]:
+with tabs[6]:
     st.subheader("Performance Dashboard")
-
     metrics = refresh_bet_log_metrics()
+
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Settled Bets", metrics["settled_bets"])
-    c2.metric("Wins-Losses-Pushes", f"{metrics['wins']}-{metrics['losses']}-{metrics['pushes']}")
-    c3.metric("Profit", f"${metrics['profit']:.2f}")
-    c4.metric("ROI", f"{metrics['roi']:.2f}%")
-
-    c5, c6, c7, c8 = st.columns(4)
-    c5.metric("Pending", metrics["pending"])
-    c6.metric("Total Staked", f"${metrics['total_staked']:.2f}")
-    c7.metric("Win Rate", f"{metrics['win_rate']:.2f}%")
-    c8.metric("Tracked Bets", metrics["total_bets"])
+    c2.metric("Profit", f"${metrics['profit']:.2f}")
+    c3.metric("ROI", f"{metrics['roi']:.2f}%")
+    c4.metric("Win Rate", f"{metrics['win_rate']:.2f}%")
 
     log = st.session_state.bet_log.copy()
     if log.empty:
         st.info("No tracking data yet.")
     else:
         settled = log[log["result"].isin(["Win", "Loss", "Push"])].copy()
-
-        st.markdown("### Performance by Market")
-        if not settled.empty and "market" in settled.columns:
-            market_perf = settled.groupby("market", dropna=False).agg(
+        if not settled.empty:
+            st.markdown("### Performance by Tier")
+            tier_perf = settled.groupby("tier", dropna=False).agg(
                 bets=("bet_id", "count"),
                 profit=("profit", "sum"),
-                avg_stake=("stake", "mean"),
+                avg_score=("score", "mean"),
+                avg_multi_ai=("multi_ai_score", "mean"),
             ).reset_index().sort_values("profit", ascending=False)
-            st.dataframe(market_perf, use_container_width=True)
+            st.dataframe(tier_perf, use_container_width=True)
 
-        st.markdown("### Performance by Book")
-        if not settled.empty and "book" in settled.columns:
-            book_perf = settled.groupby("book", dropna=False).agg(
-                bets=("bet_id", "count"),
-                profit=("profit", "sum"),
-                avg_stake=("stake", "mean"),
-            ).reset_index().sort_values("profit", ascending=False)
-            st.dataframe(book_perf, use_container_width=True)
+            st.markdown("### CLV Summary")
+            clv_df = settled[settled["clv_win"].astype(str) != ""].copy()
+            if clv_df.empty:
+                st.info("Add closing lines in CLV Tracker to see CLV summary.")
+            else:
+                clv_summary = clv_df.groupby("clv_win", dropna=False).agg(
+                    bets=("bet_id", "count"),
+                    avg_clv=("clv_diff", "mean"),
+                    profit=("profit", "sum"),
+                ).reset_index()
+                st.dataframe(clv_summary, use_container_width=True)
 
-        st.markdown("### Full Settled Log")
-        st.dataframe(settled, use_container_width=True)
+with tabs[7]:
+    st.subheader("Multi-AI Lab")
+    if st.session_state.active_df is None:
+        st.info("Load data first.")
+    else:
+        df = best_bets(nba_only(st.session_state.active_df)).reset_index(drop=True)
+        if df.empty:
+            st.info("No qualified plays available.")
+        else:
+            st.markdown("### Multi-AI Model Scores")
+            show_cols = [c for c in [
+                "player","market","book",
+                "model_projection","model_price_ev","model_risk","model_market","model_history",
+                "multi_ai_score","score","tier","units"
+            ] if c in df.columns]
+            st.dataframe(df[show_cols], use_container_width=True)
 
-st.success("V10 Tracker ready.")
+            st.markdown("### What each model means")
+            st.write("Projection: how far projection beats the line.")
+            st.write("Price/EV: how good the price looks versus expected hit rate.")
+            st.write("Risk: lower-volatility profile and starter support.")
+            st.write("Market: how much margin exists over break-even.")
+            st.write("History: placeholder weighting until your tracked sample grows.")
+
+st.success("V11 ready.")

@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Sports AI Dashboard V14 Results + CLV Intelligence", layout="wide")
+st.set_page_config(page_title="Sports AI Dashboard V15A Line Movement Intelligence", layout="wide")
 
 BET_LOG_FILE = Path("bet_log_auto.csv")
 PARLAY_LOG_FILE = Path("parlay_log_auto.csv")
@@ -26,7 +26,7 @@ if "bet_log" not in st.session_state:
         "bet_id", "added_at", "bet_date", "mode", "entry_type", "sport", "player", "market", "book", "odds", "line", "stake",
         "score", "adjusted_score", "tier", "units", "game", "bet_side", "market_type", "result", "profit", "notes", "risk_mode",
         "bankroll_snapshot", "model_projection", "model_price_ev", "model_risk", "model_market", "model_history", "multi_ai_score",
-        "ai_votes_for", "ai_consensus", "clv_closing_line", "clv_direction", "clv_diff", "clv_win"
+        "ai_votes_for", "ai_consensus", "clv_closing_line", "clv_direction", "clv_diff", "clv_win", "open_line", "current_line", "open_odds", "current_odds", "line_movement", "odds_movement", "steam_move", "sharp_signal", "market_timing_edge", "market_intel_edge"
     ])
 if "parlay_log" not in st.session_state:
     st.session_state.parlay_log = pd.DataFrame(columns=[
@@ -83,6 +83,11 @@ if "launch_settings" not in st.session_state:
         "results_clv_auto_mode": True,
         "results_clv_min_samples": 5,
         "results_clv_weight": 0.16,
+        "market_intel_auto_mode": True,
+        "market_intel_min_samples": 5,
+        "market_intel_weight": 0.14,
+        "steam_move_threshold": 1.5,
+        "line_move_threshold": 0.75,
         "auto_track_enabled": False,
         "auto_track_singles": True,
         "auto_track_parlays": True,
@@ -111,6 +116,30 @@ def to_numeric_safe(df, cols):
 
 def clean_bool(x):
     return str(x).strip().lower() in ["true", "1", "yes", "y"]
+
+def first_existing_value(row, names, default=np.nan):
+    for name in names:
+        try:
+            val = row.get(name, np.nan) if hasattr(row, "get") else np.nan
+        except Exception:
+            val = np.nan
+        if pd.notna(val):
+            return val
+    return default
+
+
+def movement_bucket(value):
+    v = safe_float(value, 0.0)
+    if v >= 2.0:
+        return "2.0+"
+    if v >= 1.0:
+        return "1.0-1.99"
+    if v <= -2.0:
+        return "-2.0 or less"
+    if v <= -1.0:
+        return "-1.0 to -1.99"
+    return "-0.99 to 0.99"
+
 
 
 def american_to_decimal(odds):
@@ -707,6 +736,41 @@ def build_engine(df):
     df["sport_min_score"] = df["sport"].apply(sport_min_score)
     df["market_min_score"] = df.apply(lambda r: market_min_score(r.get("market_type"), r.get("sport")), axis=1)
     df["units"] = (df["units"].fillna(0) * df["sport_unit_mult"]).round(2)
+
+    df["open_line"] = df.apply(lambda r: first_existing_value(r, ["open_line", "opening_line", "line_open", "opening"]), axis=1)
+    df["current_line"] = df.apply(lambda r: first_existing_value(r, ["current_line", "live_line", "line_current", "current", "line"]), axis=1)
+    df["open_odds"] = df.apply(lambda r: first_existing_value(r, ["open_odds", "opening_odds", "odds_open"]), axis=1)
+    df["current_odds"] = df.apply(lambda r: first_existing_value(r, ["current_odds", "live_odds", "odds_current", "odds"]), axis=1)
+    df["line_movement"] = pd.to_numeric(df["current_line"], errors="coerce") - pd.to_numeric(df["open_line"], errors="coerce")
+    df["odds_movement"] = pd.to_numeric(df["current_odds"], errors="coerce") - pd.to_numeric(df["open_odds"], errors="coerce")
+    df["steam_move"] = pd.to_numeric(df["line_movement"], errors="coerce").abs().fillna(0) >= float(st.session_state.launch_settings.get("steam_move_threshold", 1.5))
+    df["line_move_bucket"] = df["line_movement"].apply(movement_bucket)
+
+    def _sharp_signal(row):
+        side = str(row.get("bet_side", "")).lower()
+        move = safe_float(row.get("line_movement"), 0.0)
+        odds_move = safe_float(row.get("odds_movement"), 0.0)
+        market_type = str(row.get("market_type", ""))
+        if market_type == "Mainline":
+            if odds_move <= -10:
+                return "Sharp Support"
+            if odds_move >= 10:
+                return "Market Fade"
+            return "Neutral"
+        if side == "over":
+            return "Sharp Support" if move > 0 else ("Market Fade" if move < 0 else "Neutral")
+        if side == "under":
+            return "Sharp Support" if move < 0 else ("Market Fade" if move > 0 else "Neutral")
+        if side == "side":
+            return "Sharp Support" if abs(move) >= float(st.session_state.launch_settings.get("line_move_threshold", 0.75)) else "Neutral"
+        return "Neutral"
+
+    df["sharp_signal"] = df.apply(_sharp_signal, axis=1)
+    df["market_timing_edge"] = 0.0
+    df.loc[df["sharp_signal"] == "Sharp Support", "market_timing_edge"] += 2.0
+    df.loc[df["sharp_signal"] == "Market Fade", "market_timing_edge"] -= 2.0
+    df.loc[df["steam_move"] == True, "market_timing_edge"] += np.where(df["sharp_signal"] == "Sharp Support", 1.5, np.where(df["sharp_signal"] == "Market Fade", -1.0, 0.5))
+    df["market_timing_note"] = np.where(df["steam_move"], "Steam move detected", "Normal move")
     return df
 
 
@@ -1482,12 +1546,132 @@ def adaptive_single_thresholds():
     return out
 
 
+def settled_market_intelligence_summary():
+    log = get_settled_log()
+    out = {
+        "samples": 0,
+        "mode": "Warm-up",
+        "overall_roi": 0.0,
+        "sharp_signal_roi": {},
+        "move_bucket_roi": {},
+        "steam_roi": {},
+        "notes": [],
+    }
+    if log.empty:
+        return out
+
+    work = log.copy()
+    for col in ["line_movement", "odds_movement", "market_timing_edge", "market_intel_edge"]:
+        if col not in work.columns:
+            work[col] = np.nan
+    if "steam_move" not in work.columns:
+        work["steam_move"] = False
+    if "sharp_signal" not in work.columns:
+        work["sharp_signal"] = "Neutral"
+    work["line_move_bucket"] = work["line_movement"].apply(movement_bucket)
+    out["samples"] = len(work)
+    total_profit = pd.to_numeric(work["profit"], errors="coerce").fillna(0).sum()
+    total_stake = pd.to_numeric(work["stake"], errors="coerce").fillna(0).sum()
+    out["overall_roi"] = round((total_profit / total_stake * 100), 2) if total_stake > 0 else 0.0
+    if len(work) >= int(st.session_state.launch_settings.get("market_intel_min_samples", 5)):
+        out["mode"] = "Adaptive"
+
+    def build_map(col):
+        mapping = {}
+        for key, grp in work.groupby(col, dropna=False):
+            if len(grp) < 2:
+                continue
+            stake = pd.to_numeric(grp["stake"], errors="coerce").fillna(0).sum()
+            profit = pd.to_numeric(grp["profit"], errors="coerce").fillna(0).sum()
+            wl = grp["result"].isin(["Win", "Loss"])
+            wins = (grp["result"] == "Win").sum()
+            mapping[str(key)] = {
+                "samples": int(len(grp)),
+                "roi": round((profit / stake * 100), 2) if stake > 0 else 0.0,
+                "win_rate": round((wins / max(1, wl.sum())) * 100, 2),
+            }
+        return mapping
+
+    out["sharp_signal_roi"] = build_map("sharp_signal")
+    out["move_bucket_roi"] = build_map("line_move_bucket")
+    work["steam_label"] = np.where(work["steam_move"], "Steam", "Non-Steam")
+    out["steam_roi"] = build_map("steam_label")
+    if out["overall_roi"] >= 8:
+        out["notes"].append("Recent results support current market timing signals.")
+    elif out["overall_roi"] <= -8:
+        out["notes"].append("Recent results suggest tightening around weak line-move profiles.")
+    return out
+
+
+def market_intelligence_rank_modifier(row):
+    settings = st.session_state.launch_settings
+    if not bool(settings.get("market_intel_auto_mode", True)):
+        return 0.0, ["Disabled"]
+
+    summary = settled_market_intelligence_summary()
+    mods = 0.0
+    notes = []
+    sharp_signal = str(row.get("sharp_signal", "Neutral"))
+    move_bucket_key = str(row.get("line_move_bucket", movement_bucket(row.get("line_movement", 0))))
+    steam_key = "Steam" if clean_bool(row.get("steam_move")) else "Non-Steam"
+    weight = float(settings.get("market_intel_weight", 0.14))
+
+    if sharp_signal == "Sharp Support":
+        mods += 1.2
+        notes.append("Market move supports direction.")
+    elif sharp_signal == "Market Fade":
+        mods -= 1.2
+        notes.append("Market moved against direction.")
+
+    if clean_bool(row.get("steam_move")) and sharp_signal == "Sharp Support":
+        mods += 0.8
+        notes.append("Steam confirmation.")
+    elif clean_bool(row.get("steam_move")) and sharp_signal == "Market Fade":
+        mods -= 0.8
+        notes.append("Steam against bet.")
+
+    if summary.get("samples", 0) >= int(settings.get("market_intel_min_samples", 5)):
+        def apply_hist(mapping, key, scale, label):
+            nonlocal mods, notes
+            info = mapping.get(str(key))
+            if not info:
+                return
+            roi = safe_float(info.get("roi"), 0.0)
+            samples = safe_float(info.get("samples"), 0.0)
+            bump = np.clip((roi / 10.0) * scale * min(1.0, samples / 10.0), -2.5, 2.5)
+            mods += bump
+            if abs(bump) >= 0.2:
+                notes.append(f"{label} history {'helps' if bump > 0 else 'hurts'}.")
+
+        apply_hist(summary.get("sharp_signal_roi", {}), sharp_signal, 1.5, "Sharp-signal")
+        apply_hist(summary.get("move_bucket_roi", {}), move_bucket_key, 1.0, "Move-bucket")
+        apply_hist(summary.get("steam_roi", {}), steam_key, 0.8, "Steam")
+    else:
+        notes.append("Market intelligence warming up.")
+
+    return round(mods * (1 + weight), 2), notes
+
+
+def apply_market_intelligence(df):
+    out = df.copy()
+    mods = out.apply(lambda r: market_intelligence_rank_modifier(r), axis=1)
+    out["market_intel_edge"] = [m[0] for m in mods]
+    out["market_intel_notes"] = [", ".join(m[1]) if m[1] else "Neutral" for m in mods]
+    return out
+
+
 def apply_results_clv_intelligence(df):
     out = df.copy()
     mods = out.apply(lambda r: results_clv_rank_modifier(r), axis=1)
     out["results_clv_edge"] = [m[0] for m in mods]
     out["results_clv_notes"] = [", ".join(m[1]) if m[1] else "Neutral" for m in mods]
-    out["selection_score"] = np.clip(out["adjusted_score"].fillna(0) + out["results_clv_edge"].fillna(0), 1, 99)
+    out = apply_market_intelligence(out)
+    out["selection_score"] = np.clip(
+        out["adjusted_score"].fillna(0)
+        + out["results_clv_edge"].fillna(0)
+        + out["market_intel_edge"].fillna(0),
+        1, 99
+    )
     return out
 
 
@@ -1807,6 +1991,16 @@ def add_bet_to_log(row, stake, risk_mode, bankroll_snapshot, mode):
         "clv_direction": row.get("bet_side", ""),
         "clv_diff": np.nan,
         "clv_win": "",
+        "open_line": row.get("open_line", np.nan),
+        "current_line": row.get("current_line", np.nan),
+        "open_odds": row.get("open_odds", np.nan),
+        "current_odds": row.get("current_odds", np.nan),
+        "line_movement": row.get("line_movement", np.nan),
+        "odds_movement": row.get("odds_movement", np.nan),
+        "steam_move": row.get("steam_move", False),
+        "sharp_signal": row.get("sharp_signal", ""),
+        "market_timing_edge": row.get("market_timing_edge", np.nan),
+        "market_intel_edge": row.get("market_intel_edge", np.nan),
     }
     st.session_state.bet_log = pd.concat([log, pd.DataFrame([new_row])], ignore_index=True)
     save_full_auto_state()
@@ -1949,7 +2143,7 @@ def render_mobile_bet_picker(df, bankroll, risk_mode, drawdown_pct, roi_pct, key
         st.write(f"{row.get('market_type', '')} | {row.get('book', '')} | Odds: {row.get('odds', '')} | Line: {row.get('line', '')}")
         st.write(f"Score: {row.get('score', 0):.1f} | Adjusted: {row.get('adjusted_score', 0):.1f} | Multi-AI: {row.get('multi_ai_score', 0):.1f}")
         st.write(f"{row.get('tier', '')} | Units: {row.get('units', 0):.2f}u | Debate: {int(row.get('ai_votes_for', 0))}/5 | Suggested Stake: ${row.get('suggested_stake', 0):.2f}")
-        st.write(f"Game: {row.get('game', '')} | Sport Mult: {row.get('sport_unit_mult', 1.0):.2f}x")
+        st.write(f"Game: {row.get('game', '')} | Sport Mult: {row.get('sport_unit_mult', 1.0):.2f}x | Sharp: {row.get('sharp_signal', 'Neutral')} | Steam: {'Yes' if clean_bool(row.get('steam_move')) else 'No'}")
         c1, c2 = st.columns([1, 1])
         with c1:
             custom_stake = st.number_input("Stake", min_value=1.0, value=float(max(1.0, row.get("suggested_stake", 1.0))), step=1.0, key=f"{key_prefix}_stake_{i}")
@@ -2071,7 +2265,7 @@ st.caption("Adaptive portfolio intelligence for Mainline, Spread, and Total sing
 tabs = st.tabs([
     "Dashboard", "Data Input", "Launch Settings", "All-Market Board", "High-Probability Singles", "AI Parlay Builder",
     "Bet Slip", "CLV Tracker", "Singles Tracker", "Parlay Tracker", "Performance", "All-Market Stats", "30-Day Test",
-    "Multi-AI Lab", "Learning Dashboard", "Adaptive Edge AI", "Results + CLV AI", "Import / Export"
+    "Multi-AI Lab", "Learning Dashboard", "Adaptive Edge AI", "Results + CLV AI", "Line Movement AI", "Import / Export"
 ])
 
 maybe_run_auto_track()
@@ -2170,6 +2364,13 @@ with tabs[2]:
     settings["adaptive_weight"] = a2.slider("Adaptive weight", 0.05, 0.40, float(settings.get("adaptive_weight", 0.18)), 0.01)
     settings["adaptive_min_samples"] = a3.selectbox("Adaptive min samples", [3, 5, 8, 10], index=[3, 5, 8, 10].index(int(settings.get("adaptive_min_samples", 5))))
 
+    st.markdown("**Market Intelligence**")
+    m1, m2, m3, m4 = st.columns(4)
+    settings["market_intel_auto_mode"] = m1.toggle("Enable market intel", value=bool(settings.get("market_intel_auto_mode", True)))
+    settings["market_intel_min_samples"] = m2.number_input("Market intel min samples", min_value=2, max_value=50, value=int(settings.get("market_intel_min_samples", 5)), step=1)
+    settings["market_intel_weight"] = m3.slider("Market intel weight", 0.0, 0.5, float(settings.get("market_intel_weight", 0.14)), step=0.01)
+    settings["steam_move_threshold"] = m4.slider("Steam move threshold", 0.5, 3.0, float(settings.get("steam_move_threshold", 1.5)), step=0.25)
+
     st.markdown("**Auto-Track + Auto-Save**")
     t1, t2, t3, t4 = st.columns(4)
     settings["auto_track_enabled"] = t1.toggle("Enable auto-track", value=bool(settings.get("auto_track_enabled", False)))
@@ -2212,7 +2413,7 @@ with tabs[3]:
         filtered = filtered[filtered["odds"].fillna(0).between(odds_min, odds_max)]
         filtered = best_bets(filtered)
         st.dataframe(filtered[[c for c in [
-            "sport", "market_type", "game", "market", "book", "odds", "line", "hit_pct", "ev_edge", "score", "adjusted_score", "selection_score", "results_clv_edge", "ai_consensus", "ai_consensus_label", "tier", "units"
+            "sport", "market_type", "game", "market", "book", "odds", "line", "open_line", "current_line", "line_movement", "sharp_signal", "steam_move", "hit_pct", "ev_edge", "score", "adjusted_score", "selection_score", "results_clv_edge", "market_intel_edge", "ai_consensus", "ai_consensus_label", "tier", "units"
         ] if c in filtered.columns]], use_container_width=True)
 
 with tabs[4]:
@@ -2412,7 +2613,7 @@ with tabs[13]:
         df = best_bets(filtered_launch_ready(st.session_state.active_df)).reset_index(drop=True)
         st.dataframe(df[[c for c in [
             "sport", "market_type", "player", "game", "market", "book", "odds", "line", "model_projection", "model_price_ev", "model_risk",
-            "model_market", "model_history", "ai_votes_for", "ai_consensus_label", "multi_ai_score", "score", "learning_boost", "adjusted_score", "results_clv_edge", "selection_score",
+            "model_market", "model_history", "ai_votes_for", "ai_consensus_label", "multi_ai_score", "score", "learning_boost", "adjusted_score", "line_movement", "sharp_signal", "steam_move", "results_clv_edge", "market_intel_edge", "selection_score",
             "sport_unit_mult", "market_min_score", "tier", "units"
         ] if c in df.columns]], use_container_width=True)
 
@@ -2492,12 +2693,37 @@ with tabs[16]:
     map_to_df_v14("By Odds Bucket", summary.get("odds_roi", {}), "odds_bucket")
 
 with tabs[17]:
+    st.subheader("Line Movement AI")
+    market_summary = settled_market_intelligence_summary()
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Market Intel Mode", market_summary.get("mode", "Warm-up"))
+    c2.metric("Tracked Samples", market_summary.get("samples", 0))
+    c3.metric("Singles ROI", f"{safe_float(market_summary.get('overall_roi'), 0.0):.2f}%")
+    c4.metric("Steam Threshold", f"{safe_float(st.session_state.launch_settings.get('steam_move_threshold', 1.5), 1.5):.2f}")
+    for note in market_summary.get("notes", []):
+        st.caption("• " + str(note))
+
+    def movement_map_df(title, mapping, key_name):
+        rows = []
+        for k, v in mapping.items():
+            rows.append({key_name: k, "samples": v.get("samples", 0), "roi": v.get("roi", 0.0), "win_rate": v.get("win_rate", 0.0)})
+        st.markdown(f"**{title}**")
+        if rows:
+            st.dataframe(pd.DataFrame(rows).sort_values(["roi", "win_rate"], ascending=False), use_container_width=True)
+        else:
+            st.info("Not enough settled bets yet.")
+
+    movement_map_df("By Sharp Signal", market_summary.get("sharp_signal_roi", {}), "sharp_signal")
+    movement_map_df("By Line-Move Bucket", market_summary.get("move_bucket_roi", {}), "line_move_bucket")
+    movement_map_df("By Steam / Non-Steam", market_summary.get("steam_roi", {}), "steam_label")
+
+with tabs[18]:
     st.subheader("Import / Export")
     export_text = export_state_json()
     st.download_button(
         "Download Session State JSON",
         data=export_text,
-        file_name="sports_ai_v14_state.json",
+        file_name="sports_ai_v15a_state.json",
         mime="application/json",
         use_container_width=True,
     )
@@ -2519,4 +2745,4 @@ with tabs[17]:
             maybe_restore_full_auto_state()
             st.success("Saved logs reloaded.")
 
-st.success("V14 Results + CLV Intelligence ready.")
+st.success("V15A Line Movement Intelligence ready.")

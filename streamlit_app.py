@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Sports AI Dashboard V13.1 Auto-Track + Auto-Save", layout="wide")
+st.set_page_config(page_title="Sports AI Dashboard V14 Results + CLV Intelligence", layout="wide")
 
 BET_LOG_FILE = Path("bet_log_auto.csv")
 PARLAY_LOG_FILE = Path("parlay_log_auto.csv")
@@ -80,6 +80,9 @@ if "launch_settings" not in st.session_state:
         "adaptive_auto_mode": True,
         "adaptive_weight": 0.18,
         "adaptive_min_samples": 5,
+        "results_clv_auto_mode": True,
+        "results_clv_min_samples": 5,
+        "results_clv_weight": 0.16,
         "auto_track_enabled": False,
         "auto_track_singles": True,
         "auto_track_parlays": True,
@@ -710,6 +713,7 @@ def build_engine(df):
 def filtered_launch_ready(df):
     out = build_engine(df)
     out = apply_learning_layer(out)
+    out = apply_results_clv_intelligence(out)
     out = out[out["adjusted_score"] >= out["market_min_score"]].copy()
     return out
 
@@ -717,15 +721,18 @@ def filtered_launch_ready(df):
 def best_bets(df):
     out = df.copy()
     out = out[out["units"].fillna(0) > 0].copy()
-    return out.sort_values(["adjusted_score", "ai_consensus", "multi_ai_score", "score", "ev_edge"], ascending=False)
+    sort_cols = [c for c in ["selection_score", "adjusted_score", "ai_consensus", "multi_ai_score", "score", "ev_edge"] if c in out.columns]
+    return out.sort_values(sort_cols, ascending=False)
 
 
 def high_probability_singles(df):
     settings = st.session_state.launch_settings
+    adaptive = adaptive_single_thresholds()
     out = best_bets(df)
     out = out[out["market_type"].isin(["Mainline", "Spread", "Total"])].copy()
-    out = out[out["ai_consensus"] >= int(settings["singles_min_consensus"])]
-    out = out[out["adjusted_score"] >= float(settings["singles_min_confidence"])]
+    out = out[out["ai_consensus"] >= int(adaptive["min_consensus"])]
+    score_col = "selection_score" if "selection_score" in out.columns else "adjusted_score"
+    out = out[out[score_col] >= float(adaptive["min_confidence"])]
     out = out[out["odds"].fillna(0).between(float(settings["singles_min_odds"]), float(settings["singles_max_odds"]))]
     return out
 
@@ -915,14 +922,15 @@ def candidate_parlay_pool(df):
     settings = st.session_state.launch_settings
     out = best_bets(df)
     out = out[out["market_type"].isin(["Mainline", "Spread", "Total"])].copy()
-    out = out[out["adjusted_score"] >= float(settings["parlay_min_leg_adjusted"])]
+    threshold_col = "selection_score" if "selection_score" in out.columns else "adjusted_score"
+    out = out[out[threshold_col] >= float(settings["parlay_min_leg_adjusted"])]
     out = out[out["ai_consensus"] >= int(settings["parlay_min_leg_consensus"])]
     out = out[out["odds"].notna()].copy()
     out["leg_key"] = out.apply(lambda r: parlay_leg_key(r), axis=1)
     out["team_token"] = out.apply(lambda r: normalized_team_token(r), axis=1)
     out["market_family_norm"] = out["market_family"].astype(str).str.lower()
     out = out.sort_values(
-        ["adjusted_score", "ai_consensus", "multi_ai_score", "ev_edge", "hit_pct"],
+        ["selection_score", "adjusted_score", "ai_consensus", "multi_ai_score", "ev_edge", "hit_pct"],
         ascending=False
     ).head(int(settings.get("parlay_pool_size", 16)))
     return out.reset_index(drop=True)
@@ -1278,6 +1286,209 @@ def adaptive_rank_modifier(combo_df, slip_profile, combined_odds, consensus_text
         notes.append("best odds-band match")
 
     return round(float(np.clip(modifier, -12, 12)), 2), notes
+
+
+def singles_odds_bucket(odds):
+    odds = safe_float(odds, 0.0)
+    if odds <= -170:
+        return "-170 or shorter"
+    if odds <= -110:
+        return "-169 to -110"
+    if odds <= -101:
+        return "-109 to -101"
+    if odds < 100:
+        return "Even-ish"
+    if odds <= 150:
+        return "+100 to +150"
+    return "+151+"
+
+
+def settled_singles_intelligence_summary():
+    settings = st.session_state.launch_settings
+    settled = get_settled_log().copy()
+    default = {
+        "samples": 0,
+        "overall_roi": 0.0,
+        "overall_clv": 0.0,
+        "sport_market_roi": {},
+        "consensus_roi": {},
+        "odds_roi": {},
+        "best_sport_market": None,
+        "best_consensus": None,
+        "best_odds_bucket": None,
+        "mode": "Warm-up",
+        "notes": ["Settle more singles to activate results and CLV intelligence."],
+    }
+    if settled.empty:
+        return default
+
+    settled["stake"] = pd.to_numeric(settled["stake"], errors="coerce").fillna(0)
+    settled["profit"] = pd.to_numeric(settled["profit"], errors="coerce").fillna(0)
+    settled["ai_consensus"] = pd.to_numeric(settled.get("ai_consensus"), errors="coerce").fillna(0).astype(int)
+    settled["clv_diff"] = pd.to_numeric(settled.get("clv_diff"), errors="coerce")
+    settled["sport_market"] = settled["sport"].astype(str) + " | " + settled["market_type"].astype(str)
+    settled["odds_bucket"] = settled["odds"].apply(singles_odds_bucket)
+    settled["consensus_bucket"] = settled["ai_consensus"].astype(str) + "/5"
+
+    def build_map(col):
+        out = {}
+        for key, g in settled.groupby(col, dropna=False):
+            stake = g["stake"].sum()
+            roi = (g["profit"].sum() / stake * 100) if stake > 0 else 0.0
+            out[str(key)] = {
+                "samples": int(len(g)),
+                "roi": round(float(roi), 2),
+                "win_rate": round(float((g["result"] == "Win").mean() * 100), 2),
+                "avg_clv": round(float(pd.to_numeric(g.get("clv_diff"), errors="coerce").mean()), 2) if "clv_diff" in g.columns else 0.0,
+                "beat_close_rate": round(float((g.get("clv_win", pd.Series(index=g.index)).astype(str) == "Beat Close").mean() * 100), 2) if "clv_win" in g.columns else 0.0,
+            }
+        return out
+
+    sport_market_roi = build_map("sport_market")
+    consensus_roi = build_map("consensus_bucket")
+    odds_roi = build_map("odds_bucket")
+    min_samples = int(settings.get("results_clv_min_samples", 5))
+
+    def best_key(d):
+        eligible = {k: v for k, v in d.items() if int(v.get("samples", 0)) >= min_samples}
+        if not eligible:
+            return None
+        return max(eligible.items(), key=lambda kv: (kv[1].get("roi", 0.0), kv[1].get("beat_close_rate", 0.0), kv[1].get("avg_clv", 0.0)))[0]
+
+    total_stake = settled["stake"].sum()
+    overall_roi = (settled["profit"].sum() / total_stake * 100) if total_stake > 0 else 0.0
+    overall_clv = float(pd.to_numeric(settled.get("clv_diff"), errors="coerce").fillna(0).mean()) if "clv_diff" in settled.columns else 0.0
+    notes = []
+    if best_key(sport_market_roi):
+        notes.append(f"Best single profile so far: {best_key(sport_market_roi)}")
+    if best_key(consensus_roi):
+        notes.append(f"Best consensus so far: {best_key(consensus_roi)}")
+    if best_key(odds_roi):
+        notes.append(f"Best odds band so far: {best_key(odds_roi)}")
+    if overall_clv > 0:
+        notes.append("Singles are beating the close overall.")
+    elif overall_clv < 0:
+        notes.append("Singles are losing the close overall.")
+    if not notes:
+        notes.append("Results + CLV engine is collecting evidence.")
+
+    mode = "Neutral"
+    if overall_roi >= 8 and overall_clv >= 0:
+        mode = "Press proven singles"
+    elif overall_roi <= -8 or overall_clv <= -0.5:
+        mode = "Tighten singles"
+
+    return {
+        "samples": int(len(settled)),
+        "overall_roi": round(float(overall_roi), 2),
+        "overall_clv": round(float(overall_clv), 2),
+        "sport_market_roi": sport_market_roi,
+        "consensus_roi": consensus_roi,
+        "odds_roi": odds_roi,
+        "best_sport_market": best_key(sport_market_roi),
+        "best_consensus": best_key(consensus_roi),
+        "best_odds_bucket": best_key(odds_roi),
+        "mode": mode,
+        "notes": notes,
+    }
+
+
+def results_clv_rank_modifier(row):
+    settings = st.session_state.launch_settings
+    if not bool(settings.get("results_clv_auto_mode", True)):
+        return 0.0, []
+    summary = settled_singles_intelligence_summary()
+    min_samples = int(settings.get("results_clv_min_samples", 5))
+    if int(summary.get("samples", 0)) < min_samples:
+        return 0.0, ["results warm-up"]
+
+    weight = safe_float(settings.get("results_clv_weight", 0.16), 0.16)
+    modifier = 0.0
+    notes = []
+    sport_market = f"{row.get('sport', '')} | {row.get('market_type', '')}"
+    consensus_bucket = f"{int(safe_float(row.get('ai_consensus'), 0))}/5"
+    odds_bucket = singles_odds_bucket(row.get("odds"))
+
+    maps = [
+        (summary.get("sport_market_roi", {}), sport_market, 0.18, sport_market),
+        (summary.get("consensus_roi", {}), consensus_bucket, 0.16, consensus_bucket),
+        (summary.get("odds_roi", {}), odds_bucket, 0.14, odds_bucket),
+    ]
+    for mapping, key, scale, label in maps:
+        item = mapping.get(str(key))
+        if not item or int(item.get("samples", 0)) < min_samples:
+            continue
+        roi = safe_float(item.get("roi", 0.0), 0.0)
+        clv = safe_float(item.get("avg_clv", 0.0), 0.0)
+        beat = safe_float(item.get("beat_close_rate", 0.0), 50.0)
+        adj = np.clip((roi * scale + clv * 1.5 + (beat - 50) * 0.05) * weight, -6, 6)
+        modifier += float(adj)
+        if adj > 0.2:
+            notes.append(f"{label} tailwind")
+        elif adj < -0.2:
+            notes.append(f"{label} headwind")
+
+    if sport_market == str(summary.get("best_sport_market")):
+        modifier += 0.9
+        notes.append("best single profile")
+    if consensus_bucket == str(summary.get("best_consensus")):
+        modifier += 0.7
+        notes.append("best consensus")
+    if odds_bucket == str(summary.get("best_odds_bucket")):
+        modifier += 0.55
+        notes.append("best odds band")
+
+    if safe_float(summary.get("overall_clv"), 0.0) <= -0.5:
+        modifier -= 0.6
+        notes.append("poor recent CLV")
+    elif safe_float(summary.get("overall_clv"), 0.0) >= 0.5:
+        modifier += 0.6
+        notes.append("strong recent CLV")
+
+    return round(float(np.clip(modifier, -8, 8)), 2), notes
+
+
+def adaptive_single_thresholds():
+    settings = st.session_state.launch_settings
+    base_conf = float(settings.get("singles_min_confidence", 70))
+    base_cons = int(settings.get("singles_min_consensus", 3))
+    summary = settled_singles_intelligence_summary()
+    min_samples = int(settings.get("results_clv_min_samples", 5))
+    out = {
+        "min_confidence": base_conf,
+        "min_consensus": base_cons,
+        "notes": ["Base singles filters in use."],
+    }
+    if not bool(settings.get("results_clv_auto_mode", True)) or int(summary.get("samples", 0)) < min_samples:
+        return out
+
+    roi = safe_float(summary.get("overall_roi"), 0.0)
+    clv = safe_float(summary.get("overall_clv"), 0.0)
+    notes = []
+    conf_adj = 0
+    cons_adj = 0
+    if roi <= -8 or clv <= -0.5:
+        conf_adj += 3
+        if base_cons < 5:
+            cons_adj += 1
+        notes.append("Tightened singles due to weak results/CLV.")
+    elif roi >= 8 and clv >= 0.3:
+        conf_adj -= 2
+        notes.append("Slightly loosened singles due to proven results + CLV.")
+
+    out["min_confidence"] = float(np.clip(base_conf + conf_adj, 55, 95))
+    out["min_consensus"] = int(np.clip(base_cons + cons_adj, 3, 5))
+    out["notes"] = notes or ["Singles filters aligned with recent results."]
+    return out
+
+
+def apply_results_clv_intelligence(df):
+    out = df.copy()
+    mods = out.apply(lambda r: results_clv_rank_modifier(r), axis=1)
+    out["results_clv_edge"] = [m[0] for m in mods]
+    out["results_clv_notes"] = [", ".join(m[1]) if m[1] else "Neutral" for m in mods]
+    out["selection_score"] = np.clip(out["adjusted_score"].fillna(0) + out["results_clv_edge"].fillna(0), 1, 99)
+    return out
 
 
 def existing_parlay_fingerprints():
@@ -1854,13 +2065,13 @@ def render_ai_parlay_builder(df, bankroll, risk_mode, drawdown_pct, roi_pct):
         st.divider()
 
 # ---------- APP ----------
-st.title("Sports AI Dashboard V13.1 Auto-Track + Auto-Save")
+st.title("Sports AI Dashboard V14 Results + CLV Intelligence")
 st.caption("Adaptive portfolio intelligence for Mainline, Spread, and Total singles plus self-adjusting AI-built consensus parlays.")
 
 tabs = st.tabs([
     "Dashboard", "Data Input", "Launch Settings", "All-Market Board", "High-Probability Singles", "AI Parlay Builder",
     "Bet Slip", "CLV Tracker", "Singles Tracker", "Parlay Tracker", "Performance", "All-Market Stats", "30-Day Test",
-    "Multi-AI Lab", "Learning Dashboard", "Adaptive Edge AI", "Import / Export"
+    "Multi-AI Lab", "Learning Dashboard", "Adaptive Edge AI", "Results + CLV AI", "Import / Export"
 ])
 
 maybe_run_auto_track()
@@ -2001,7 +2212,7 @@ with tabs[3]:
         filtered = filtered[filtered["odds"].fillna(0).between(odds_min, odds_max)]
         filtered = best_bets(filtered)
         st.dataframe(filtered[[c for c in [
-            "sport", "market_type", "game", "market", "book", "odds", "line", "hit_pct", "ev_edge", "score", "adjusted_score", "ai_consensus", "ai_consensus_label", "tier", "units"
+            "sport", "market_type", "game", "market", "book", "odds", "line", "hit_pct", "ev_edge", "score", "adjusted_score", "selection_score", "results_clv_edge", "ai_consensus", "ai_consensus_label", "tier", "units"
         ] if c in filtered.columns]], use_container_width=True)
 
 with tabs[4]:
@@ -2014,7 +2225,7 @@ with tabs[4]:
         risk_mode_quick = st.selectbox("Risk mode", ["Conservative", "Balanced", "Aggressive"], index=["Conservative", "Balanced", "Aggressive"].index(st.session_state.launch_settings["risk_mode"]), key="singles_risk")
         drawdown_quick = st.number_input("Drawdown %", min_value=0.0, max_value=100.0, value=0.0, step=1.0, key="singles_drawdown")
         roi_quick = st.number_input("ROI %", value=float(refresh_bet_log_metrics()["roi"]), step=0.5, key="singles_roi")
-        st.caption("Only Mainline, Spread, and Total bets with AI debate 3/5+ and odds inside your singles range are shown here.")
+        st.caption("Only Mainline, Spread, and Total bets that pass your base filters plus the V14 results + CLV intelligence layer are shown here.")
         render_mobile_bet_picker(singles, bankroll_quick, risk_mode_quick, drawdown_quick, roi_quick, "high_prob_singles")
 
 with tabs[5]:
@@ -2201,7 +2412,7 @@ with tabs[13]:
         df = best_bets(filtered_launch_ready(st.session_state.active_df)).reset_index(drop=True)
         st.dataframe(df[[c for c in [
             "sport", "market_type", "player", "game", "market", "book", "odds", "line", "model_projection", "model_price_ev", "model_risk",
-            "model_market", "model_history", "ai_votes_for", "ai_consensus_label", "multi_ai_score", "score", "learning_boost", "adjusted_score",
+            "model_market", "model_history", "ai_votes_for", "ai_consensus_label", "multi_ai_score", "score", "learning_boost", "adjusted_score", "results_clv_edge", "selection_score",
             "sport_unit_mult", "market_min_score", "tier", "units"
         ] if c in df.columns]], use_container_width=True)
 
@@ -2249,12 +2460,44 @@ with tabs[15]:
     map_to_df("Adaptive by Consensus", adaptive.get("consensus_roi", {}), "consensus")
 
 with tabs[16]:
+    st.subheader("Results + CLV AI")
+    summary = settled_singles_intelligence_summary()
+    adaptive_single = adaptive_single_thresholds()
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Singles Mode", summary.get("mode", "Warm-up"))
+    c2.metric("Settled Singles", summary.get("samples", 0))
+    c3.metric("Singles ROI", f"{safe_float(summary.get('overall_roi'), 0.0):.2f}%")
+    c4.metric("Avg CLV", f"{safe_float(summary.get('overall_clv'), 0.0):.2f}")
+    for note in summary.get("notes", []):
+        st.caption("• " + str(note))
+    st.markdown("**Current Adaptive Singles Filters**")
+    f1, f2 = st.columns(2)
+    f1.metric("Min Confidence", f"{safe_float(adaptive_single.get('min_confidence'), 0.0):.1f}")
+    f2.metric("Min Consensus", f"{int(adaptive_single.get('min_consensus', 3))}/5")
+    for note in adaptive_single.get("notes", []):
+        st.caption("• " + str(note))
+
+    def map_to_df_v14(title, mapping, key_name):
+        rows = []
+        for k, v in mapping.items():
+            rows.append({key_name: k, "samples": v.get("samples", 0), "roi": v.get("roi", 0.0), "win_rate": v.get("win_rate", 0.0), "avg_clv": v.get("avg_clv", 0.0), "beat_close_rate": v.get("beat_close_rate", 0.0)})
+        st.markdown(f"**{title}**")
+        if rows:
+            st.dataframe(pd.DataFrame(rows).sort_values(["roi", "beat_close_rate", "avg_clv"], ascending=False), use_container_width=True)
+        else:
+            st.info("Not enough settled singles yet.")
+
+    map_to_df_v14("By Sport + Market Type", summary.get("sport_market_roi", {}), "sport_market")
+    map_to_df_v14("By Consensus", summary.get("consensus_roi", {}), "consensus")
+    map_to_df_v14("By Odds Bucket", summary.get("odds_roi", {}), "odds_bucket")
+
+with tabs[17]:
     st.subheader("Import / Export")
     export_text = export_state_json()
     st.download_button(
         "Download Session State JSON",
         data=export_text,
-        file_name="sports_ai_v13_state.json",
+        file_name="sports_ai_v14_state.json",
         mime="application/json",
         use_container_width=True,
     )
@@ -2276,4 +2519,4 @@ with tabs[16]:
             maybe_restore_full_auto_state()
             st.success("Saved logs reloaded.")
 
-st.success("V13.1 Auto-Track + Auto-Save ready.")
+st.success("V14 Results + CLV Intelligence ready.")

@@ -1581,6 +1581,191 @@ def closing_intel_summary(df):
     }
 
 
+def save_current_vote_snapshot(df_with_votes):
+    if len(df_with_votes) == 0:
+        return 0
+    hist = load_model_votes_history()
+    save_cols = [
+        "bet_id", "sport", "event", "market_bucket", "selection", "bet_type", "book", "odds",
+        "Model_A_prob", "Model_A_vote", "Model_B_prob", "Model_B_vote",
+        "Model_C_prob", "Model_C_vote", "Model_D_prob", "Model_D_vote",
+        "Model_E_prob", "Model_E_vote"
+    ]
+    snap = ensure_columns(df_with_votes.copy(), save_cols + ["result"])
+    snap = snap[save_cols + ["result"]].copy()
+    snap["saved_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    hist = pd.concat([hist, snap], ignore_index=True)
+    hist = hist.drop_duplicates(subset=["bet_id"], keep="last")
+    save_model_votes_history(hist)
+    return len(snap)
+
+
+# =========================
+# MODEL ADJUSTMENTS
+# =========================
+
+def build_consensus_parlays(df, settings):
+    if len(df) == 0:
+        return pd.DataFrame()
+    df = df.copy().sort_values(["weighted_consensus_ratio", "model_yes_votes", "priority_score", "score", "ev"], ascending=[False, False, False, False, False]).head(16)
+    rows = []
+    for leg_count in range(int(settings["min_parlay_legs"]), int(settings["max_parlay_legs"]) + 1):
+        for combo in itertools.combinations(df.index.tolist(), leg_count):
+            legs = df.loc[list(combo)].copy()
+            if (legs["model_yes_votes"] < 3).any():
+                continue
+            dec_odds = legs["odds"].apply(american_to_decimal)
+            if dec_odds.isna().any():
+                continue
+            parlay_dec = float(dec_odds.prod())
+            parlay_american = decimal_to_american(parlay_dec)
+            if pd.isna(parlay_american) or parlay_american < 200:
+                continue
+            joint_prob = float(legs["calibrated_prob"].clip(lower=0.01, upper=0.99).prod())
+            implied = american_implied_prob(parlay_american)
+            ev = compute_ev(joint_prob, parlay_american)
+            penalty, penalty_reason = parlay_correlation_penalty(legs)
+            raw_score = legs["priority_score"].mean() * 0.38 + legs["weighted_consensus_ratio"].mean() * 25.0 + legs["model_yes_votes"].mean() * 4.0 + max(0, (joint_prob - implied) * 100) * 0.9 + min(10, len(legs))
+            final_score = raw_score - penalty if settings.get("correlation_penalty_on", True) else raw_score
+            rows.append({
+                "legs": len(legs),
+                "avg_debate_votes": round(legs["model_yes_votes"].mean(), 2),
+                "avg_weighted_ratio": round(legs["weighted_consensus_ratio"].mean(), 3),
+                "parlay_odds": int(parlay_american),
+                "joint_prob": joint_prob,
+                "implied_prob": implied,
+                "ev": ev,
+                "score": round(final_score, 2),
+                "correlation_note": penalty_reason,
+                "summary": " + ".join(legs["selection"].astype(str) + " " + legs["bet_type"].astype(str)),
+                "events": " | ".join(legs["event"].astype(str)),
+            })
+    out = pd.DataFrame(rows)
+    if len(out) == 0:
+        return out
+    return out.sort_values(["avg_weighted_ratio", "avg_debate_votes", "score", "ev"], ascending=[False, False, False, False]).drop_duplicates(subset=["summary"]).head(12)
+
+
+# =========================
+# EXECUTION / SETTLEMENT
+# =========================
+
+def build_execution_board(singles_df, parlays_df, settings):
+    rows = []
+    created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    auto_lock = bool(settings.get("execution_auto_lock_elite", False))
+    if len(singles_df) > 0:
+        singles = singles_df.copy().sort_values(["weighted_consensus_ratio", "model_yes_votes", "priority_score"], ascending=[False, False, False]).head(int(settings["execution_max_singles"]))
+        for i, (_, row) in enumerate(singles.iterrows(), start=1):
+            exec_priority = build_execution_priority(row)
+            status = "locked" if auto_lock and int(row.get("model_yes_votes", 0)) == 5 else "review"
+            rows.append({
+                "execution_id": f"S-{datetime.now().strftime('%Y%m%d%H%M%S')}-{i}",
+                "created_at": created_at,
+                "bet_id": row.get("bet_id", ""),
+                "ticket_type": "single",
+                "slip_group": f"SINGLES-{created_at[:10]}",
+                "sport": row.get("sport", ""),
+                "event": row.get("event", ""),
+                "market_bucket": row.get("market_bucket", ""),
+                "selection": row.get("selection", ""),
+                "bet_type": row.get("bet_type", ""),
+                "book": row.get("book", ""),
+                "odds": row.get("odds", np.nan),
+                "line": row.get("line", np.nan) if "line" in row else np.nan,
+                "calibrated_prob": row.get("calibrated_prob", np.nan),
+                "ev": row.get("ev", np.nan),
+                "score": row.get("score", np.nan),
+                "priority_score": row.get("priority_score", np.nan),
+                "model_yes_votes": row.get("model_yes_votes", np.nan),
+                "weighted_consensus_ratio": row.get("weighted_consensus_ratio", np.nan),
+                "recommended_units": row.get("recommended_units", np.nan),
+                "approved_units": row.get("recommended_units", np.nan),
+                "execution_priority": exec_priority,
+                "status": status,
+                "locked_flag": 1 if status == "locked" else 0,
+                "review_flag": 1 if status == "review" else 0,
+                "placed_flag": 0,
+                "ai_recommended": 1,
+                "user_placed": 0,
+                "difference_flag": 0,
+                "notes": "",
+            })
+    if len(parlays_df) > 0:
+        parlays = parlays_df.copy().sort_values(["avg_weighted_ratio", "avg_debate_votes", "score", "ev"], ascending=[False, False, False, False]).head(int(settings["execution_max_parlays"]))
+        for i, (_, row) in enumerate(parlays.iterrows(), start=1):
+            exec_priority = round(float(row.get("score", 0)) * 0.75 + float(row.get("avg_weighted_ratio", 0)) * 20 + float(row.get("ev", 0)) * 100 * 0.2, 2)
+            rows.append({
+                "execution_id": f"P-{datetime.now().strftime('%Y%m%d%H%M%S')}-{i}",
+                "created_at": created_at,
+                "bet_id": f"PARLAY|{i}|{normalize_text(row.get('summary', ''))}",
+                "ticket_type": "parlay",
+                "slip_group": f"PARLAYS-{created_at[:10]}",
+                "sport": "MULTI",
+                "event": row.get("events", ""),
+                "market_bucket": "Parlay",
+                "selection": row.get("summary", ""),
+                "bet_type": f"{int(row.get('legs', 0))}-Leg Parlay",
+                "book": "Best Available",
+                "odds": row.get("parlay_odds", np.nan),
+                "line": np.nan,
+                "calibrated_prob": row.get("joint_prob", np.nan),
+                "ev": row.get("ev", np.nan),
+                "score": row.get("score", np.nan),
+                "priority_score": row.get("score", np.nan),
+                "model_yes_votes": row.get("avg_debate_votes", np.nan),
+                "weighted_consensus_ratio": row.get("avg_weighted_ratio", np.nan),
+                "recommended_units": 0.5,
+                "approved_units": 0.5,
+                "execution_priority": exec_priority,
+                "status": "review",
+                "locked_flag": 0,
+                "review_flag": 1,
+                "placed_flag": 0,
+                "ai_recommended": 1,
+                "user_placed": 0,
+                "difference_flag": 0,
+                "notes": row.get("correlation_note", ""),
+            })
+    board = pd.DataFrame(rows)
+    if len(board) == 0:
+        return board
+    board = board[board["execution_priority"] >= float(settings.get("execution_min_priority", 75.0))].copy()
+    return board.sort_values(["execution_priority", "ticket_type"], ascending=[False, True]).reset_index(drop=True)
+
+def merge_execution_board(new_board, existing_board):
+    if len(new_board) == 0:
+        return existing_board.copy()
+    existing = existing_board.copy()
+    if len(existing) == 0:
+        return new_board.copy()
+    key_cols = ["bet_id", "ticket_type"]
+    existing_keys = set(existing[key_cols].astype(str).agg("|".join, axis=1).tolist())
+    keep = new_board[~new_board[key_cols].astype(str).agg("|".join, axis=1).isin(existing_keys)].copy()
+    return pd.concat([existing, keep], ignore_index=True)
+
+def execution_summary(board_df):
+    if len(board_df) == 0:
+        return {"total": 0, "locked": 0, "review": 0, "placed": 0, "singles": 0, "parlays": 0}
+    return {
+        "total": len(board_df),
+        "locked": int((board_df["status"].astype(str) == "locked").sum()),
+        "review": int((board_df["status"].astype(str) == "review").sum()),
+        "placed": int((board_df["status"].astype(str) == "placed").sum()),
+        "singles": int((board_df["ticket_type"].astype(str) == "single").sum()),
+        "parlays": int((board_df["ticket_type"].astype(str) == "parlay").sum()),
+    }
+
+def settlement_detail_table(settlement_df):
+    if len(settlement_df) == 0:
+        return settlement_df
+    return settlement_df.sort_values(["status_at_execution", "placement_alignment", "event"], ascending=[True, True, True])
+
+
+# =========================
+# LIVE ODDS / REFRESH
+# =========================
+
 # =========================
 # METRICS / FORMATTING
 # =========================

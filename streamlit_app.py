@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Sports AI Dashboard V12.8 Parlay Optimization Engine", layout="wide")
+st.set_page_config(page_title="Sports AI Dashboard V12.9 Portfolio Intelligence Engine", layout="wide")
 
 # ---------- SESSION ----------
 if "active_df" not in st.session_state:
@@ -27,7 +27,8 @@ if "parlay_log" not in st.session_state:
         "parlay_id", "added_at", "bet_date", "mode", "builder", "sport_mix", "legs", "combined_odds", "stake", "target_min_odds",
         "avg_leg_score", "min_leg_score", "avg_leg_adjusted", "avg_leg_consensus", "consensus_label", "same_game_overlap",
         "same_team_overlap", "result", "profit", "notes", "leg_keys_json", "legs_preview", "parlay_rank", "parlay_grade",
-        "parlay_expected_roi", "duplication_penalty", "correlation_penalty", "slip_profile"
+        "parlay_expected_roi", "duplication_penalty", "correlation_penalty", "slip_profile", "portfolio_share",
+        "portfolio_target_stake", "estimated_hit_rate", "diversity_score"
     ])
 if "learning_state" not in st.session_state:
     st.session_state.learning_state = {
@@ -66,6 +67,10 @@ if "launch_settings" not in st.session_state:
         "parlay_pool_size": 16,
         "parlay_max_leg_reuse": 2,
         "parlay_allow_same_market_family_same_game": False,
+        "portfolio_best_share": 0.55,
+        "portfolio_support_share": 0.45,
+        "portfolio_max_total_pct": 0.025,
+        "portfolio_min_slip_prob": 0.05,
     }
 
 # ---------- HELPERS ----------
@@ -954,6 +959,82 @@ def smart_parlay_stake(combo_df, bankroll, risk_mode, drawdown_pct, roi_pct_inpu
     return suggested_stake_from_units(final_units, bankroll, risk_mode, drawdown_pct, roi_pct_input)
 
 
+def build_portfolio_plan(final_slips, bankroll, risk_mode, drawdown_pct, roi_pct_input):
+    settings = st.session_state.launch_settings
+    if not final_slips:
+        return final_slips
+
+    max_total_pct = safe_float(settings.get("portfolio_max_total_pct", 0.025), 0.025)
+    best_share = safe_float(settings.get("portfolio_best_share", 0.55), 0.55)
+    support_share = safe_float(settings.get("portfolio_support_share", 0.45), 0.45)
+    total_budget = max(3.0, round(float(bankroll) * max_total_pct, 2))
+
+    best_slips = [s for s in final_slips if s.get("is_best")]
+    support_slips = [s for s in final_slips if not s.get("is_best")]
+
+    if best_slips:
+        best = best_slips[0]
+        best_target = round(total_budget * best_share, 2)
+        best["portfolio_share"] = round(best_share * 100, 1)
+        best["portfolio_target_stake"] = best_target
+
+    if support_slips:
+        support_budget = round(total_budget * support_share, 2)
+        raw_weights = []
+        for slip in support_slips:
+            weight = max(0.1, safe_float(slip.get("rank_score"), 75.0) / 100.0)
+            weight *= max(0.2, 1 - (safe_float(slip.get("duplication_penalty"), 0.0) / 15.0))
+            weight *= max(0.2, 1 - (safe_float(slip.get("correlation_penalty"), 0.0) / 20.0))
+            raw_weights.append(weight)
+        total_weight = sum(raw_weights) or 1.0
+        for slip, weight in zip(support_slips, raw_weights):
+            share = support_share * (weight / total_weight)
+            slip["portfolio_share"] = round(share * 100, 1)
+            slip["portfolio_target_stake"] = round(support_budget * (weight / total_weight), 2)
+
+    for slip in final_slips:
+        combo_df = pd.DataFrame(slip["legs_rows"])
+        base_stake = smart_parlay_stake(
+            combo_df,
+            bankroll,
+            risk_mode,
+            drawdown_pct,
+            roi_pct_input,
+            slip["expected_roi_pct"],
+            slip["parlay_rank"],
+            is_best_slip=slip.get("is_best", False),
+        )
+        target_stake = safe_float(slip.get("portfolio_target_stake"), base_stake)
+        slip["stake"] = round(max(1.0, min(base_stake, target_stake) if target_stake > 0 else base_stake), 2)
+    return final_slips
+
+
+def existing_parlay_fingerprints():
+    log = st.session_state.parlay_log.copy()
+    if log.empty or "leg_keys_json" not in log.columns:
+        return set()
+    fingerprints = set()
+    for _, row in log.iterrows():
+        raw = row.get("leg_keys_json", "[]")
+        try:
+            keys = tuple(sorted(json.loads(raw)))
+            if keys:
+                fingerprints.add(keys)
+        except Exception:
+            continue
+    return fingerprints
+
+
+def is_duplicate_parlay_in_tracker(slip):
+    try:
+        keys = tuple(sorted(json.loads(slip.get("leg_keys_json", "[]"))))
+    except Exception:
+        return False
+    if not keys:
+        return False
+    return keys in existing_parlay_fingerprints()
+
+
 def optimize_ai_parlay_slips(df, bankroll, risk_mode, drawdown_pct, roi_pct):
     settings = st.session_state.launch_settings
     pool = candidate_parlay_pool(df)
@@ -1013,6 +1094,10 @@ def optimize_ai_parlay_slips(df, bankroll, risk_mode, drawdown_pct, roi_pct):
             if min_consensus < int(settings["parlay_min_leg_consensus"]):
                 continue
 
+            expected_hit_rate = estimate_parlay_success(combo)
+            min_hit_rate = float(settings.get("portfolio_min_slip_prob", 0.05))
+            if expected_hit_rate < min_hit_rate:
+                continue
             expected_roi_pct = estimate_parlay_roi_pct(combo, combined_odds)
             if expected_roi_pct < -2:
                 continue
@@ -1125,27 +1210,26 @@ def optimize_ai_parlay_slips(df, bankroll, risk_mode, drawdown_pct, roi_pct):
         for lk in leg_keys:
             leg_use_count[lk] = leg_use_count.get(lk, 0) + 1
 
+    seen_sports = []
     for i, slip in enumerate(final_slips, start=1):
         combo_df = pd.DataFrame(slip["legs_rows"])
         slip["parlay_rank"] = i
         slip["is_best"] = i == 1
-        slip["stake"] = smart_parlay_stake(
-            combo_df,
-            bankroll,
-            risk_mode,
-            drawdown_pct,
-            roi_pct,
-            slip["expected_roi_pct"],
-            i,
-            is_best_slip=(i == 1),
-        )
         slip["parlay_grade"] = parlay_grade(slip["rank_score"])
-        slip["builder"] = "AI Hybrid Optimizer" if style == "Hybrid" else f"AI {style} Optimizer"
+        slip["builder"] = "AI Portfolio Optimizer" if style == "Hybrid" else f"AI {style} Portfolio Optimizer"
+        slip["estimated_hit_rate"] = round(estimate_parlay_success(combo_df) * 100, 1)
+        unique_sports = combo_df["sport"].astype(str).nunique() if not combo_df.empty and "sport" in combo_df.columns else 1
+        repeated_sports = sum(1 for s in combo_df.get("sport", pd.Series(dtype=str)).astype(str).tolist() if s in seen_sports)
+        slip["diversity_score"] = round(max(0.0, (unique_sports * 20) + (10 if repeated_sports == 0 else 0) - (safe_float(slip.get("duplication_penalty"), 0.0) * 1.2)), 1)
+        seen_sports.extend(combo_df.get("sport", pd.Series(dtype=str)).astype(str).tolist())
 
+    final_slips = build_portfolio_plan(final_slips, bankroll, risk_mode, drawdown_pct, roi_pct)
     return final_slips
 
 
 def add_ai_parlay_to_log(slip, mode):
+    if is_duplicate_parlay_in_tracker(slip):
+        return False, "This parlay is already in your tracker."
     log = st.session_state.parlay_log.copy()
     parlay_id = f"PARLAY-{len(log)+1:04d}"
     new_row = {
@@ -1177,8 +1261,13 @@ def add_ai_parlay_to_log(slip, mode):
         "duplication_penalty": slip.get("duplication_penalty", np.nan),
         "correlation_penalty": slip.get("correlation_penalty", np.nan),
         "slip_profile": slip.get("slip_profile", ""),
+        "portfolio_share": slip.get("portfolio_share", np.nan),
+        "portfolio_target_stake": slip.get("portfolio_target_stake", np.nan),
+        "estimated_hit_rate": slip.get("estimated_hit_rate", np.nan),
+        "diversity_score": slip.get("diversity_score", np.nan),
     }
     st.session_state.parlay_log = pd.concat([log, pd.DataFrame([new_row])], ignore_index=True)
+    return True, parlay_id
 
 # ---------- TRACKER ----------
 def add_bet_to_log(row, stake, risk_mode, bankroll_snapshot, mode):
@@ -1376,7 +1465,7 @@ def render_ai_parlay_builder(df, bankroll, risk_mode, drawdown_pct, roi_pct):
         st.warning("No optimized parlay today. The AI optimizer did not find enough strong, low-correlation combinations above your thresholds.")
         return
 
-    st.success("Hybrid mode active: 1 best parlay plus supporting slips.")
+    st.success("Balanced portfolio mode active: 1 best parlay plus supporting slips with bankroll allocation.")
     for i, slip in enumerate(slips):
         header_prefix = "🔥 Best AI Parlay" if slip.get("is_best") else f"Support Slip {slip.get('parlay_rank', i+1)}"
         st.markdown(
@@ -1384,9 +1473,13 @@ def render_ai_parlay_builder(df, bankroll, risk_mode, drawdown_pct, roi_pct):
             f"{slip['legs']}-Leg AI Slip | Combined Odds: {slip['combined_odds']:+}**"
         )
         st.write(
-            f"Stake: ${slip['stake']:.2f} | Rank Score: {slip['rank_score']:.1f} | "
-            f"Expected ROI: {slip['expected_roi_pct']:.1f}% | Avg Adjusted: {slip['avg_leg_adjusted']:.1f} | "
-            f"Avg Consensus: {slip['avg_leg_consensus']:.2f}"
+            f"Stake: ${slip['stake']:.2f} | Portfolio Share: {safe_float(slip.get('portfolio_share'), 0.0):.1f}% | "
+            f"Rank Score: {slip['rank_score']:.1f} | Expected ROI: {slip['expected_roi_pct']:.1f}% | "
+            f"Hit Rate: {safe_float(slip.get('estimated_hit_rate'), 0.0):.1f}%"
+        )
+        st.write(
+            f"Avg Adjusted: {slip['avg_leg_adjusted']:.1f} | Avg Consensus: {slip['avg_leg_consensus']:.2f} | "
+            f"Diversity Score: {safe_float(slip.get('diversity_score'), 0.0):.1f}"
         )
         st.write(
             f"Profile: {slip['slip_profile']} | Sports: {slip['sport_mix']} | "
@@ -1406,14 +1499,17 @@ def render_ai_parlay_builder(df, bankroll, risk_mode, drawdown_pct, roi_pct):
             if st.button(f"Add AI Slip {i+1} To Tracker", key=f"ai_parlay_add_{i}", use_container_width=True):
                 slip_copy = slip.copy()
                 slip_copy["stake"] = float(custom_stake)
-                add_ai_parlay_to_log(slip_copy, mode)
-                st.success("AI-built parlay added to tracker.")
-                st.rerun()
+                ok, msg = add_ai_parlay_to_log(slip_copy, mode)
+                if ok:
+                    st.success(f"AI-built parlay added to tracker: {msg}")
+                    st.rerun()
+                else:
+                    st.warning(msg)
         st.divider()
 
 # ---------- APP ----------
-st.title("Sports AI Dashboard V12.8 Parlay Optimization Engine")
-st.caption("Hybrid all-market board for Mainline, Spread, and Total singles plus optimized AI-built consensus parlays.")
+st.title("Sports AI Dashboard V12.9 Portfolio Intelligence Engine")
+st.caption("Balanced portfolio intelligence for Mainline, Spread, and Total singles plus optimized AI-built consensus parlays.")
 
 tabs = st.tabs([
     "Dashboard", "Data Input", "Launch Settings", "All-Market Board", "High-Probability Singles", "AI Parlay Builder",
@@ -1501,6 +1597,13 @@ with tabs[2]:
     settings["parlay_support_slips"] = q2.selectbox("Support slips", [1, 2, 3, 4], index=[1, 2, 3, 4].index(int(settings.get("parlay_support_slips", 3))))
     settings["parlay_pool_size"] = q3.selectbox("Optimizer pool size", [10, 12, 14, 16, 18], index=[10, 12, 14, 16, 18].index(int(settings.get("parlay_pool_size", 16))))
     settings["parlay_max_leg_reuse"] = q4.selectbox("Max leg reuse", [1, 2, 3], index=[1, 2, 3].index(int(settings.get("parlay_max_leg_reuse", 2))))
+
+    r1, r2, r3, r4 = st.columns(4)
+    settings["portfolio_best_share"] = r1.slider("Best slip share", 0.35, 0.75, float(settings.get("portfolio_best_share", 0.55)), 0.05)
+    settings["portfolio_support_share"] = round(1.0 - float(settings["portfolio_best_share"]), 2)
+    settings["portfolio_max_total_pct"] = r2.slider("Max parlay portfolio % bankroll", 0.01, 0.05, float(settings.get("portfolio_max_total_pct", 0.025)), 0.005)
+    settings["portfolio_min_slip_prob"] = r3.slider("Min slip hit rate %", 1.0, 15.0, float(settings.get("portfolio_min_slip_prob", 5.0)), 0.5) / 100.0
+    r4.metric("Support share", f"{float(settings['portfolio_support_share'])*100:.0f}%")
 
     settings["allow_same_game_parlays"] = st.toggle("Allow same-game parlays", value=bool(settings["allow_same_game_parlays"]))
     settings["parlay_allow_same_market_family_same_game"] = st.toggle(
@@ -1773,4 +1876,4 @@ with tabs[15]:
         except Exception as e:
             st.error(f"Import failed: {e}")
 
-st.success("V12.8 Parlay Optimization Engine ready.")
+st.success("V12.9 Portfolio Intelligence Engine ready.")

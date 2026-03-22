@@ -6,10 +6,10 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Sports Betting AI Dashboard V28.3", layout="wide")
+st.set_page_config(page_title="Sports Betting AI Dashboard V29", layout="wide")
 
-APP_TITLE = "🔥 Sports Betting AI Dashboard V28.3"
-APP_SUBTITLE = "Profit Optimization Engine"
+APP_TITLE = "🔥 Sports Betting AI Dashboard V29"
+APP_SUBTITLE = "Adaptive Intelligence Engine"
 BET_LOG_PATH = Path("bet_log.csv")
 LEARNING_PROFILE_PATH = Path("learning_profile.csv")
 SNAPSHOT_PATH = Path("snapshot.csv")
@@ -20,6 +20,10 @@ MAX_TIER_A = 3
 MAX_ACTIVE_PLAYS = 3
 MAX_TOTAL_UNITS = 3.5
 SCORE_CAP = 100.0
+ADAPTIVE_MIN_SAMPLE = 5
+HOT_STREAK_BONUS = 0.20
+COLD_STREAK_PENALTY = 0.20
+DEFAULT_MAX_SINGLE_BET = 1.15
 
 
 # -----------------------------
@@ -75,6 +79,92 @@ def consensus_bucket(n):
     if n == 3:
         return "3of5"
     return "lt3"
+
+
+
+def build_adaptive_context(log_df):
+    context = {
+        "market_map": {},
+        "bucket_map": {},
+        "streak": 0,
+        "recent_win_rate": 0.0,
+        "risk_label": "Neutral",
+        "edge_multiplier": 1.0,
+        "unit_multiplier": 1.0,
+        "max_total_units": MAX_TOTAL_UNITS,
+        "max_single_bet": DEFAULT_MAX_SINGLE_BET,
+    }
+    if log_df is None or log_df.empty:
+        return context
+
+    temp = log_df.copy()
+    temp["result"] = temp["result"].astype(str).str.lower()
+    settled = temp[temp["result"].isin(["win", "loss", "push"])].copy()
+    if settled.empty:
+        return context
+
+    # Market and bucket performance maps
+    settled["odds_bucket"] = settled["bet_odds"].apply(odds_bucket)
+    settled["consensus_bucket"] = settled["consensus_count"].apply(consensus_bucket)
+    settled["is_win"] = settled["result"].eq("win").astype(int)
+
+    market_perf = (
+        settled.groupby("market", dropna=False)
+        .agg(bets=("result", "count"), win_rate=("is_win", "mean"))
+        .reset_index()
+    )
+    for _, row in market_perf.iterrows():
+        adj = 0.0
+        if safe_float(row["bets"]) >= ADAPTIVE_MIN_SAMPLE:
+            adj = (safe_float(row["win_rate"]) - 0.50) * 12.0
+        context["market_map"][str(row["market"])] = round(adj, 3)
+
+    bucket_perf = (
+        settled.groupby(["market", "odds_bucket", "consensus_bucket"], dropna=False)
+        .agg(bets=("result", "count"), win_rate=("is_win", "mean"))
+        .reset_index()
+    )
+    for _, row in bucket_perf.iterrows():
+        key = (str(row["market"]), str(row["odds_bucket"]), str(row["consensus_bucket"]))
+        adj = 0.0
+        if safe_float(row["bets"]) >= ADAPTIVE_MIN_SAMPLE:
+            adj = (safe_float(row["win_rate"]) - 0.50) * 16.0
+        context["bucket_map"][key] = round(adj, 3)
+
+    # Streak detection from latest graded bets
+    settled["timestamp_dt"] = pd.to_datetime(settled["timestamp"], errors="coerce")
+    settled = settled.sort_values("timestamp_dt").copy()
+    recent = settled.tail(8)
+    context["recent_win_rate"] = round(float(recent["is_win"].mean()), 3) if not recent.empty else 0.0
+
+    streak = 0
+    for result in reversed(settled["result"].tolist()):
+        if result == "push":
+            continue
+        if streak == 0:
+            streak = 1 if result == "win" else -1
+            continue
+        if (streak > 0 and result == "win") or (streak < 0 and result == "loss"):
+            streak = streak + 1 if streak > 0 else streak - 1
+        else:
+            break
+    context["streak"] = streak
+
+    if streak >= 3:
+        context["risk_label"] = "Hot"
+        context["edge_multiplier"] = 0.96
+        context["unit_multiplier"] = 1.06
+        context["max_total_units"] = round(MAX_TOTAL_UNITS * (1 + HOT_STREAK_BONUS), 2)
+    elif streak <= -3:
+        context["risk_label"] = "Cold"
+        context["edge_multiplier"] = 1.08
+        context["unit_multiplier"] = 0.82
+        context["max_total_units"] = round(MAX_TOTAL_UNITS * (1 - COLD_STREAK_PENALTY), 2)
+        context["max_single_bet"] = 0.90
+    else:
+        context["risk_label"] = "Neutral"
+
+    return context
 
 
 # -----------------------------
@@ -275,8 +365,9 @@ def default_live_rows():
 # -----------------------------
 # Board building
 # -----------------------------
-def prepare_rows(df):
+def prepare_rows(df, adaptive_context=None):
     df = df.copy()
+    adaptive_context = adaptive_context or {}
     if df.empty:
         return df
 
@@ -294,6 +385,11 @@ def prepare_rows(df):
     df["sharp_component"] = np.clip((df["sharp_score"].fillna(0) - 35) * 1.35, 0, 40)
     df["edge_component"] = np.clip(df["edge_pct"].fillna(0) * 11.5, -20, 45)
     df["raw_score"] = 26 + df["edge_component"] + df["sharp_component"] + df["consensus_boost"] + df["clv_boost"] + df["disagreement_boost"]
+    df["market_adaptive_adj"] = df["market"].astype(str).map(adaptive_context.get("market_map", {})).fillna(0.0)
+    df["bucket_key"] = list(zip(df["market"].astype(str), df["odds_bucket"].astype(str), df["consensus_bucket"].astype(str)))
+    df["bucket_adaptive_adj"] = df["bucket_key"].map(adaptive_context.get("bucket_map", {})).fillna(0.0)
+    df["adaptive_adj"] = (df["market_adaptive_adj"] + df["bucket_adaptive_adj"]).round(3)
+    df["raw_score"] = df["raw_score"] + df["adaptive_adj"]
     max_raw = max(float(df["raw_score"].max()), 1.0)
     min_raw = float(df["raw_score"].min())
     spread = max(max_raw - min_raw, 1.0)
@@ -311,6 +407,7 @@ def prepare_rows(df):
         lambda r: f"{r['selection']} {r['line']}" if pd.notna(r.get("line")) and str(r.get("market")) != "moneyline" else str(r["selection"]),
         axis=1,
     )
+    df["adaptive_flag"] = np.where(df["adaptive_adj"] > 1.5, "Boosted", np.where(df["adaptive_adj"] < -1.5, "Cautious", "Neutral"))
     return df
 
 
@@ -387,7 +484,8 @@ def final_rank_score(row):
     edge = max(0.0, safe_float(row.get("edge_pct")))
     clv = max(0.0, safe_float(row.get("clv_projection")))
     consensus = min(5.0, max(0.0, safe_float(row.get("consensus_count"))))
-    score = (edge * 0.5) + (clv * 0.3) + (consensus * 0.2)
+    adaptive = safe_float(row.get("adaptive_adj"), 0.0)
+    score = (edge * 0.45) + (clv * 0.30) + (consensus * 0.15) + (adaptive * 0.10)
     return round(score, 3)
 
 
@@ -419,7 +517,8 @@ def apply_variance_control(df, max_total_units=MAX_TOTAL_UNITS):
     return df
 
 
-def dynamic_units(row):
+def dynamic_units(row, adaptive_context=None):
+    adaptive_context = adaptive_context or {}
     tier = str(row.get("tier"))
     status = str(row.get("status"))
     edge = safe_float(row.get("edge_pct"))
@@ -430,12 +529,15 @@ def dynamic_units(row):
 
     if tier == "A":
         units = 0.75 + min(0.50, max(0.0, (edge - 3.0) * 0.12) + max(0.0, (score - 86.0) * 0.01))
+        units = min(adaptive_context.get("max_single_bet", DEFAULT_MAX_SINGLE_BET), units * adaptive_context.get("unit_multiplier", 1.0))
         return round(min(1.25, units), 2)
     if tier == "B":
         units = 0.40 + min(0.35, max(0.0, (edge - 1.8) * 0.10) + max(0.0, (score - 74.0) * 0.008))
+        units = min(adaptive_context.get("max_single_bet", DEFAULT_MAX_SINGLE_BET), units * adaptive_context.get("unit_multiplier", 1.0))
         return round(min(0.75, units), 2)
     if tier == "C":
         units = 0.10 + min(0.30, max(0.0, (edge - 1.0) * 0.08) + max(0.0, (score - 62.0) * 0.006))
+        units = min(adaptive_context.get("max_single_bet", DEFAULT_MAX_SINGLE_BET), units * adaptive_context.get("unit_multiplier", 1.0))
         return round(min(0.40, units), 2)
     return 0.00
 
@@ -450,8 +552,10 @@ def resolve_board(
     elite_only=False,
     max_active_plays=MAX_ACTIVE_PLAYS,
     max_total_units=MAX_TOTAL_UNITS,
+    adaptive_context=None,
 ):
-    df = prepare_rows(df)
+    adaptive_context = adaptive_context or {}
+    df = prepare_rows(df, adaptive_context=adaptive_context)
     if df.empty:
         return df
 
@@ -469,7 +573,8 @@ def resolve_board(
     df["best_bet_tag"] = ""
     df["skip_game"] = False
 
-    candidates = df[(df["tier"].isin(["A", "B", "C"])) & (df["edge_pct"].fillna(-999) >= MIN_ACTIVE_EDGE)].copy()
+    effective_min_edge = MIN_ACTIVE_EDGE * safe_float(adaptive_context.get("edge_multiplier"), 1.0)
+    candidates = df[(df["tier"].isin(["A", "B", "C"])) & (df["edge_pct"].fillna(-999) >= effective_min_edge)].copy()
     if elite_only:
         candidates = candidates[candidates["tier"].isin(["A", "B"]) & (candidates["score"] >= 75)].copy()
 
@@ -510,13 +615,18 @@ def resolve_board(
         for idx in best_pool.head(best_bet_cap).index:
             df.loc[idx, "best_bet_tag"] = "🏆 Best Bet"
 
-    df.loc[df["edge_pct"].fillna(-999) < MIN_ACTIVE_EDGE, "status"] = "Watch"
+    df.loc[df["edge_pct"].fillna(-999) < effective_min_edge, "status"] = "Watch"
     df.loc[df["skip_game"], "status"] = "Watch"
 
-    df["units"] = df.apply(dynamic_units, axis=1)
+    df["units"] = df.apply(lambda r: dynamic_units(r, adaptive_context=adaptive_context), axis=1)
     df = apply_correlation_risk_adjustment(df)
-    df = apply_variance_control(df, max_total_units=max_total_units)
+    variance_cap = min(max_total_units, safe_float(adaptive_context.get("max_total_units"), max_total_units))
+    df = apply_variance_control(df, max_total_units=variance_cap)
     df["confidence"] = df.apply(confidence_label, axis=1)
+    boost_mask = df["adaptive_flag"].eq("Boosted")
+    caution_mask = df["adaptive_flag"].eq("Cautious")
+    df.loc[boost_mask, "why"] = df.loc[boost_mask, "why"].astype(str) + " • adaptive boost"
+    df.loc[caution_mask, "why"] = df.loc[caution_mask, "why"].astype(str) + " • adaptive caution"
 
     watch_mask = df["status"].eq("Watch")
     df.loc[watch_mask & (df["why"] == "watch only"), "why"] = "watch only"
@@ -558,7 +668,8 @@ def build_ai_bet_slip(board_df):
     if active.empty:
         return None
 
-    active = active.sort_values(["final_rank", "score", "edge_pct", "clv_projection", "consensus_count"], ascending=False)
+    active["slip_rank"] = active["final_rank"] + active["clv_projection"].fillna(0)*0.08 + active["adaptive_adj"].fillna(0)*0.05
+    active = active.sort_values(["slip_rank", "score", "edge_pct", "clv_projection", "consensus_count"], ascending=False)
 
     picks = []
     used_games = set()
@@ -618,7 +729,7 @@ def ensure_bet_log():
     cols = [
         "timestamp", "game", "market", "selection", "line", "book", "bet_odds", "prev_odds",
         "consensus_price", "consensus_count", "closing_odds", "result", "units", "tier",
-        "score", "edge_pct", "status", "why", "auto_logged"
+        "score", "edge_pct", "status", "why", "adaptive_adj", "adaptive_flag", "auto_logged"
     ]
     if BET_LOG_PATH.exists():
         try:
@@ -669,6 +780,8 @@ def auto_log_active_plays(board_df):
             "edge_pct": row.get("edge_pct"),
             "status": row.get("status"),
             "why": row.get("why"),
+            "adaptive_adj": row.get("adaptive_adj"),
+            "adaptive_flag": row.get("adaptive_flag"),
             "auto_logged": True,
         })
 
@@ -722,6 +835,33 @@ def build_learning_profile(log_df):
 # -----------------------------
 # UI helpers
 # -----------------------------
+
+def render_risk_summary(board_df, adaptive_context):
+    active = board_df[board_df["status"].eq("Active")].copy()
+    total_units = safe_float(active["units"].sum()) if not active.empty else 0.0
+    games = int(active["game"].nunique()) if not active.empty else 0
+    streak = int(adaptive_context.get("streak", 0))
+    risk_label = adaptive_context.get("risk_label", "Neutral")
+    if total_units >= 3.0:
+        exposure = "High"
+    elif total_units >= 1.75:
+        exposure = "Medium"
+    else:
+        exposure = "Low"
+    st.markdown(
+        f"""
+        <div class='summary-card'>
+            <div class='summary-title'>💰 Daily Risk Summary</div>
+            <div class='stat-label'>Total Units: <b>{total_units:.2f}u</b></div>
+            <div class='stat-label'>Games Involved: <b>{games}</b></div>
+            <div class='stat-label'>Risk Level: <b>{exposure}</b></div>
+            <div class='stat-label'>Adaptive State: <b>{risk_label}</b> {'(streak ' + str(streak) + ')' if streak else ''}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def inject_css():
     st.markdown(
         """
@@ -851,7 +991,7 @@ st.title(APP_TITLE)
 st.caption(APP_SUBTITLE)
 
 with st.sidebar:
-    st.header("V28.3 Controls")
+    st.header("V29 Controls")
     aggressive = st.toggle("Aggressive mode", value=True)
     auto_log = st.toggle("Auto-log active plays", value=True)
     elite_only = st.toggle("Elite plays only", value=False)
@@ -1024,5 +1164,5 @@ st.download_button("Download Learning Profile CSV", profile_buf.getvalue(), file
 st.download_button("Download Snapshot CSV", snap_buf.getvalue(), file_name="snapshot.csv", mime="text/csv")
 
 st.caption(
-    "V28.3 adds CLV-weighted ranking, elite-only mode, overbet protection, correlation risk adjustment, variance control, and a smarter AI bet slip builder."
+    "V29 adds CLV-weighted ranking, elite-only mode, overbet protection, correlation risk adjustment, variance control, and a smarter AI bet slip builder."
 )

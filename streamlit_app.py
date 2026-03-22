@@ -6,16 +6,17 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Sports Betting AI Dashboard V28.1", layout="wide")
+st.set_page_config(page_title="Sports Betting AI Dashboard V28.2", layout="wide")
 
-APP_TITLE = "🔥 Sports Betting AI Dashboard V28.1"
-APP_SUBTITLE = "Profit Optimization Layer"
+APP_TITLE = "🔥 Sports Betting AI Dashboard V28.2"
+APP_SUBTITLE = "Precision Ranking + Bet Slip Builder"
 BET_LOG_PATH = Path("bet_log.csv")
 LEARNING_PROFILE_PATH = Path("learning_profile.csv")
 SNAPSHOT_PATH = Path("snapshot.csv")
 
 MIN_ACTIVE_EDGE = 1.75
 MAX_BEST_BETS = 3
+MAX_TIER_A = 3
 SCORE_CAP = 100.0
 
 
@@ -290,8 +291,12 @@ def prepare_rows(df):
     df["disagreement_boost"] = df["book_disagreement"].fillna(0) * 6.5
     df["sharp_component"] = np.clip((df["sharp_score"].fillna(0) - 35) * 1.35, 0, 40)
     df["edge_component"] = np.clip(df["edge_pct"].fillna(0) * 11.5, -20, 45)
-    raw_score = 26 + df["edge_component"] + df["sharp_component"] + df["consensus_boost"] + df["clv_boost"] + df["disagreement_boost"]
-    df["score"] = np.clip(raw_score, 0, SCORE_CAP).round(1)
+    df["raw_score"] = 26 + df["edge_component"] + df["sharp_component"] + df["consensus_boost"] + df["clv_boost"] + df["disagreement_boost"]
+    max_raw = max(float(df["raw_score"].max()), 1.0)
+    min_raw = float(df["raw_score"].min())
+    spread = max(max_raw - min_raw, 1.0)
+    normalized = 35 + ((df["raw_score"] - min_raw) / spread) * 65
+    df["score"] = np.clip(normalized, 0, SCORE_CAP).round(1)
 
     def conflict_key(row):
         line = row.get("line")
@@ -337,6 +342,18 @@ def correlation_tag(row):
         return "Favorite side" if odds < 0 else "Dog side"
     return "Neutral"
 
+
+
+
+def confidence_label(row):
+    score = safe_float(row.get("score"))
+    if score >= 90:
+        return "Elite"
+    if score >= 75:
+        return "High"
+    if score >= 60:
+        return "Medium"
+    return "Low"
 
 def explainability(row):
     reasons = []
@@ -385,17 +402,25 @@ def dynamic_units(row):
     return 0.00
 
 
-def resolve_board(df, aggressive=True, keep_per_game=2, best_bet_cap=MAX_BEST_BETS):
+def resolve_board(df, aggressive=True, keep_per_game=2, best_bet_cap=MAX_BEST_BETS, max_tier_a=MAX_TIER_A, skip_games_without_ab=True):
     df = prepare_rows(df)
     if df.empty:
         return df
 
     df["tier"] = df.apply(assign_tier, axis=1)
+    # Cap Tier A across the slate; demote overflow to B.
+    tier_a_rank = df[df["tier"].eq("A")].sort_values(["score", "edge_pct", "consensus_count"], ascending=False)
+    if len(tier_a_rank) > max_tier_a:
+        demote_idxs = tier_a_rank.iloc[max_tier_a:].index
+        df.loc[demote_idxs, "tier"] = "B"
+
     df["why"] = df.apply(explainability, axis=1)
     df["correlation"] = df.apply(correlation_tag, axis=1)
+    df["confidence"] = df.apply(confidence_label, axis=1)
     df = compute_stackable(df)
     df["status"] = "Watch"
     df["best_bet_tag"] = ""
+    df["skip_game"] = False
 
     # Candidate set must clear minimum edge floor to become active.
     candidates = df[(df["tier"].isin(["A", "B", "C"])) & (df["edge_pct"].fillna(-999) >= MIN_ACTIVE_EDGE)].copy()
@@ -406,6 +431,10 @@ def resolve_board(df, aggressive=True, keep_per_game=2, best_bet_cap=MAX_BEST_BE
 
     for game, grp in candidates.groupby("game", dropna=False):
         grp = grp.sort_values(["score", "edge_pct", "consensus_count", "market_priority"], ascending=False)
+        if skip_games_without_ab and not grp["tier"].isin(["A", "B"]).any():
+            df.loc[df["game"].eq(game), "skip_game"] = True
+            continue
+
         selected = []
         used_conflicts = set()
 
@@ -430,10 +459,12 @@ def resolve_board(df, aggressive=True, keep_per_game=2, best_bet_cap=MAX_BEST_BE
 
     # Low edge rows are always watch-only, even if score is decent.
     df.loc[df["edge_pct"].fillna(-999) < MIN_ACTIVE_EDGE, "status"] = "Watch"
+    df.loc[df["skip_game"], "status"] = "Watch"
     df["units"] = df.apply(dynamic_units, axis=1)
 
     # Improve watch labeling.
     watch_mask = df["status"].eq("Watch")
+    df.loc[watch_mask & df["skip_game"], "why"] = "skip game • no Tier A/B edge"
     df.loc[watch_mask & (df["why"] == "watch only"), "why"] = "watch only"
 
     tier_sort = {"A": 0, "B": 1, "C": 2, "Watch": 3}
@@ -442,6 +473,83 @@ def resolve_board(df, aggressive=True, keep_per_game=2, best_bet_cap=MAX_BEST_BE
     df = df.sort_values(["status_sort", "tier_sort", "score", "edge_pct"], ascending=[True, True, False, False]).drop(columns=["tier_sort", "status_sort"])
     return df.reset_index(drop=True)
 
+
+
+
+def parlay_payout_multiplier(odds):
+    odds = safe_float(odds, 0)
+    if odds > 0:
+        return 1 + (odds / 100.0)
+    if odds < 0:
+        return 1 + (100.0 / abs(odds))
+    return 1.0
+
+
+def payout_to_american(mult):
+    mult = safe_float(mult, 1.0)
+    if mult <= 1:
+        return 0
+    profit = mult - 1
+    if profit >= 1:
+        return int(round(profit * 100))
+    return int(round(-100 / profit))
+
+
+def build_ai_bet_slip(board_df):
+    active = board_df[(board_df["status"] == "Active") & (board_df["best_bet_tag"] != "")].copy()
+    if active.empty:
+        return None
+    active = active.sort_values(["score", "edge_pct", "consensus_count"], ascending=False)
+
+    picks = []
+    used_games = set()
+    used_conflicts = set()
+    for _, row in active.iterrows():
+        if row["game"] in used_games:
+            continue
+        if row["conflict_key"] in used_conflicts:
+            continue
+        if not bool(row.get("stackable", False)) and picks:
+            continue
+        picks.append(row)
+        used_games.add(row["game"])
+        used_conflicts.add(row["conflict_key"])
+        if len(picks) >= 2:
+            break
+
+    if len(picks) < 2:
+        remaining = board_df[(board_df["status"] == "Active") & (board_df["confidence"].isin(["Elite", "High"]))].sort_values(["score", "edge_pct"], ascending=False)
+        for _, row in remaining.iterrows():
+            if row["game"] in used_games or row["conflict_key"] in used_conflicts:
+                continue
+            picks.append(row)
+            break
+
+    if not picks:
+        return None
+
+    mult = 1.0
+    min_conf = 999
+    for row in picks:
+        mult *= parlay_payout_multiplier(row["odds"])
+        min_conf = min(min_conf, safe_float(row["score"], 0))
+    parlay_odds = payout_to_american(mult) if len(picks) >= 2 else int(safe_float(picks[0]["odds"], 0))
+
+    if min_conf >= 90:
+        slip_conf = "Elite"
+    elif min_conf >= 75:
+        slip_conf = "High"
+    elif min_conf >= 60:
+        slip_conf = "Medium"
+    else:
+        slip_conf = "Low"
+
+    return {
+        "picks": picks,
+        "parlay_odds": parlay_odds,
+        "confidence": slip_conf,
+        "stackable_ok": len(picks) >= 2,
+    }
 
 # -----------------------------
 # Persistence
@@ -663,8 +771,10 @@ def render_play_cards(df, title):
                     <div>Edge: <b>{safe_float(row['edge_pct']):.2f}%</b></div>
                     <div>Consensus: <b>{int(safe_float(row['consensus_count']))} books</b></div>
                     <div>Stackable: <b>{'Yes' if bool(row['stackable']) else 'No'}</b></div>
+                    <div>Confidence: <b>{row['confidence']}</b></div>
                     <div>Correlation: <b>{row['correlation']}</b></div>
                     <div>CLV Proj: <b>{safe_float(row['clv_projection']):.1f}</b></div>
+                    <div>Skip Game: <b>{'Yes' if bool(row.get('skip_game', False)) else 'No'}</b></div>
                 </div>
                 <div class='why'>{row['why']}</div>
             </div>
@@ -681,7 +791,7 @@ st.title(APP_TITLE)
 st.caption(APP_SUBTITLE)
 
 with st.sidebar:
-    st.header("V28.1 Controls")
+    st.header("V28.2 Controls")
     aggressive = st.toggle("Aggressive mode", value=True)
     auto_log = st.toggle("Auto-log active plays", value=True)
     keep_per_game = st.selectbox("Max active plays per game", [1, 2, 3], index=1)
@@ -690,16 +800,18 @@ with st.sidebar:
     upload = st.file_uploader("Live rows CSV", type=["csv"])
 
 raw_df = load_csv(upload, default_live_rows())
-board_df = resolve_board(raw_df, aggressive=aggressive, keep_per_game=keep_per_game, best_bet_cap=best_bet_cap)
+board_df = resolve_board(raw_df, aggressive=aggressive, keep_per_game=keep_per_game, best_bet_cap=best_bet_cap, max_tier_a=max_tier_a, skip_games_without_ab=skip_games_without_ab)
 
 render_summary(board_df, "Aggressive" if aggressive else "Standard")
 
 with st.expander("🎛️ Adaptive Thresholds"):
     st.write(f"• Minimum active edge: {MIN_ACTIVE_EDGE:.2f}%")
     st.write(f"• Best bet cap: {best_bet_cap}")
-    st.write("• Scores normalized to 0–100")
+    st.write(f"• Max Tier A plays: {max_tier_a}")
+    st.write("• Scores dynamically ranked across the current slate")
     st.write("• Dynamic units scale by tier, edge, and score")
     st.write("• Correlation tags help spot side/total combinations")
+    st.write(f"• Skip games without Tier A/B: {'On' if skip_games_without_ab else 'Off'}")
 
 active_df = board_df[(board_df["status"] == "Active") & (board_df["tier"] != "Watch")].copy()
 watch_df = board_df[board_df["status"] != "Active"].copy()
@@ -707,10 +819,29 @@ watch_df = board_df[board_df["status"] != "Active"].copy()
 render_play_cards(active_df, "🎯 Compact Top Plays")
 render_play_cards(watch_df, "👀 Compact Watchlist")
 
+
+slip = build_ai_bet_slip(board_df)
+if slip:
+    st.markdown("<div class='section-h'>🎯 AI Bet Slip</div>", unsafe_allow_html=True)
+    lines = []
+    for i, row in enumerate(slip["picks"], start=1):
+        lines.append(f"{i}. {row['selection_label']} ({row['game']})")
+    slip_text = "<br>".join(lines)
+    parlay_display = f"+{slip['parlay_odds']}" if slip['parlay_odds'] > 0 else str(slip['parlay_odds'])
+    st.markdown(f"""
+        <div class='summary-card'>
+            <div class='summary-title'>Recommended Slip</div>
+            <div class='stat-label'>{slip_text}</div>
+            <div class='stat-label' style='margin-top:8px;'>Projected Odds: <span class='stat-value'>{parlay_display}</span></div>
+            <div class='stat-label'>Confidence: <span class='stat-value'>{slip['confidence']}</span></div>
+            <div class='stat-label'>Type: <span class='stat-value'>{'Parlay' if slip['stackable_ok'] else 'Single best bet'}</span></div>
+        </div>
+    """, unsafe_allow_html=True)
+
 st.markdown("<div class='section-h'>✅ Quick Table</div>", unsafe_allow_html=True)
 quick_cols = [
     "tier", "status", "game", "market", "selection_label", "book", "odds", "units",
-    "score", "edge_pct", "consensus_count", "best_bet_tag", "stackable", "correlation"
+    "score", "edge_pct", "confidence", "consensus_count", "best_bet_tag", "stackable", "correlation", "skip_game"
 ]
 st.dataframe(board_df[quick_cols].rename(columns={"selection_label": "selection"}), use_container_width=True, hide_index=True)
 
@@ -825,5 +956,5 @@ st.download_button("Download Learning Profile CSV", profile_buf.getvalue(), file
 st.download_button("Download Snapshot CSV", snap_buf.getvalue(), file_name="snapshot.csv", mime="text/csv")
 
 st.caption(
-    "V28.1 adds capped best bets, normalized 0–100 scoring, dynamic unit sizing, a minimum active edge filter, and correlation tagging."
+    "V28.2 adds capped best bets, normalized 0–100 scoring, dynamic unit sizing, a minimum active edge filter, and correlation tagging."
 )

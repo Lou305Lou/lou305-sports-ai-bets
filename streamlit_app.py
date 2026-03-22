@@ -1,3 +1,4 @@
+
 import io
 import json
 import itertools
@@ -7,7 +8,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Sports AI Dashboard V12.7 All-Market AI", layout="wide")
+st.set_page_config(page_title="Sports AI Dashboard V12.8 Parlay Optimization Engine", layout="wide")
 
 # ---------- SESSION ----------
 if "active_df" not in st.session_state:
@@ -25,7 +26,8 @@ if "parlay_log" not in st.session_state:
     st.session_state.parlay_log = pd.DataFrame(columns=[
         "parlay_id", "added_at", "bet_date", "mode", "builder", "sport_mix", "legs", "combined_odds", "stake", "target_min_odds",
         "avg_leg_score", "min_leg_score", "avg_leg_adjusted", "avg_leg_consensus", "consensus_label", "same_game_overlap",
-        "same_team_overlap", "result", "profit", "notes", "leg_keys_json", "legs_preview"
+        "same_team_overlap", "result", "profit", "notes", "leg_keys_json", "legs_preview", "slip_profile", "rank_score",
+        "expected_value_score", "correlation_flag", "diversity_score"
     ])
 if "learning_state" not in st.session_state:
     st.session_state.learning_state = {
@@ -59,6 +61,10 @@ if "launch_settings" not in st.session_state:
         "parlay_min_leg_consensus": 4,
         "parlay_max_legs": 3,
         "allow_same_game_parlays": False,
+        "parlay_support_slips": 3,
+        "parlay_slip_reuse_cap": 2,
+        "parlay_prefer_diverse_sports": True,
+        "parlay_best_slip_min_odds": 200,
     }
 
 # ---------- HELPERS ----------
@@ -259,6 +265,27 @@ def clv_result(row):
         return diff, "Beat Close" if diff > 0 else ("Lost Close" if diff < 0 else "Push Close")
     return np.nan, ""
 
+
+def safe_text(x):
+    return "" if pd.isna(x) else str(x).strip()
+
+
+def normalized_team_pair(game):
+    text = safe_text(game).upper()
+    if "@" not in text:
+        return tuple()
+    parts = [p.strip() for p in text.split("@", 1)]
+    return tuple(sorted(parts))
+
+
+def same_game_key(row):
+    return "|".join(normalized_team_pair(row.get("game", "")))
+
+
+def row_market_signature(row):
+    return f"{safe_text(row.get('sport'))}|{safe_text(row.get('game'))}|{safe_text(row.get('market_type'))}|{safe_text(row.get('bet_side'))}"
+
+
 # ---------- SAMPLE DATA ----------
 def sample_data():
     rows = [
@@ -276,6 +303,7 @@ def sample_data():
         rows,
         columns=["sport", "player", "market", "odds", "point", "book", "projection", "edge", "hit_pct", "score", "is_starter", "team", "opponent", "game"],
     )
+
 
 # ---------- LEARNING ----------
 def get_settled_log():
@@ -334,7 +362,6 @@ def update_learning_weights_from_history():
     if total <= 0:
         return
     new_weights = {k: round(v / total, 4) for k, v in perf.items()}
-    # keep weights stable
     old_weights = st.session_state.learning_state.get("weights", {}).copy()
     blended = {}
     for k in new_weights:
@@ -400,6 +427,7 @@ def apply_learning_layer(df):
     out["adjusted_score"] = np.clip(out["score"].fillna(0) + out["learning_boost"], 1, 99)
     out["learning_state"] = learn["hot_cold"]
     return out
+
 
 # ---------- SPORT / MARKET ENGINE ----------
 def sport_unit_multiplier(sport):
@@ -494,7 +522,6 @@ def build_engine(df):
     spread_mask = df["market_type"] == "Spread"
     total_mask = df["market_type"] == "Total"
 
-    # fill hit rate by market type
     missing = df["hit_pct"].isna()
     df.loc[missing & prop_mask, "hit_pct"] = np.clip(50 + df.loc[missing & prop_mask, "edge"].fillna(0) * 3.5, 35, 75)
     df.loc[missing & mainline_mask, "hit_pct"] = np.clip(df.loc[missing & mainline_mask, "break_even_pct"].fillna(50) + df.loc[missing & mainline_mask, "edge"].fillna(0) * 2.2, 38, 72)
@@ -510,7 +537,6 @@ def build_engine(df):
         axis=1,
     )
 
-    # model components
     if "model_projection" not in df.columns:
         df["model_projection"] = 50.0
         df.loc[prop_mask, "model_projection"] = np.clip(50 + df.loc[prop_mask, "edge"].fillna(0) * 8, 0, 100)
@@ -544,7 +570,6 @@ def build_engine(df):
         df["model_history"].fillna(50) * weights["model_history"]
     )
 
-    # AI debate voting
     vote_thresholds = {
         "model_projection": 56,
         "model_price_ev": 54,
@@ -615,6 +640,7 @@ def high_probability_singles(df):
     out = out[out["adjusted_score"] >= float(settings["singles_min_confidence"])]
     out = out[out["odds"].fillna(0).between(float(settings["singles_min_odds"]), float(settings["singles_max_odds"]))]
     return out
+
 
 # ---------- SLIP / RULES ----------
 def recommended_unit_multiplier(risk_mode, bankroll, drawdown_pct, roi_pct):
@@ -769,14 +795,23 @@ def confirm_slip_to_tracker(mode):
     clear_slip()
     return count
 
-# ---------- AI PARLAY ENGINE ----------
+
+# ---------- AI PARLAY ENGINE V12.8 ----------
 def candidate_parlay_pool(df):
     settings = st.session_state.launch_settings
     out = best_bets(df)
     out = out[out["market_type"].isin(["Mainline", "Spread", "Total"])].copy()
     out = out[out["adjusted_score"] >= float(settings["parlay_min_leg_adjusted"])]
     out = out[out["ai_consensus"] >= int(settings["parlay_min_leg_consensus"])]
-    out = out.sort_values(["adjusted_score", "ai_consensus", "multi_ai_score", "ev_edge"], ascending=False).head(14)
+    out["game_key"] = out.apply(same_game_key, axis=1)
+    out["market_signature"] = out.apply(row_market_signature, axis=1)
+    out["leg_value_score"] = (
+        out["adjusted_score"].fillna(0) * 0.45
+        + out["ai_consensus"].fillna(0) * 8.0
+        + out["ev_edge"].fillna(0) * 0.8
+        + out["hit_pct"].fillna(50) * 0.15
+    )
+    out = out.sort_values(["leg_value_score", "adjusted_score", "ai_consensus", "multi_ai_score", "ev_edge"], ascending=False).head(18)
     return out.reset_index(drop=True)
 
 
@@ -788,16 +823,129 @@ def parlay_overlap_penalty(combo_df):
     return same_game_overlap, same_team_overlap
 
 
+def correlation_conflict_reason(combo_df, allow_same_game):
+    games = combo_df["game"].astype(str).tolist() if "game" in combo_df.columns else []
+    if not allow_same_game and len(set(games)) < len(games):
+        return "Blocked same-game parlay"
+
+    # Stronger same-game correlation guard
+    for game in sorted(set(games)):
+        sub = combo_df[combo_df["game"].astype(str) == game].copy()
+        if len(sub) <= 1:
+            continue
+        market_types = sub["market_type"].astype(str).tolist()
+        bet_sides = sub["bet_side"].astype(str).str.lower().tolist()
+        if "Mainline" in market_types and "Spread" in market_types:
+            return "Moneyline/spread same-game overlap"
+        if market_types.count("Total") >= 2:
+            return "Multiple totals from one game"
+        if "Total" in market_types and ("Mainline" in market_types or "Spread" in market_types):
+            return "Side/total same-game correlation"
+        if bet_sides.count("over") >= 2 or bet_sides.count("under") >= 2:
+            return "Same-game directional clustering"
+    return ""
+
+
+def parlay_expected_value_score(combo_df, combined_odds):
+    avg_hit = float(pd.to_numeric(combo_df["hit_pct"], errors="coerce").fillna(50).mean())
+    avg_adj = float(pd.to_numeric(combo_df["adjusted_score"], errors="coerce").fillna(0).mean())
+    avg_cons = float(pd.to_numeric(combo_df["ai_consensus"], errors="coerce").fillna(0).mean())
+    ev_edge = float(pd.to_numeric(combo_df["ev_edge"], errors="coerce").fillna(0).mean())
+    odds_bonus = min(max((float(combined_odds) - 200) / 40.0, 0), 12) if pd.notna(combined_odds) else 0
+    return round(avg_adj * 0.50 + avg_hit * 0.18 + avg_cons * 6.0 + ev_edge * 0.55 + odds_bonus, 2)
+
+
+def parlay_diversity_score(combo_df):
+    sports_n = int(combo_df["sport"].astype(str).nunique()) if "sport" in combo_df.columns else 1
+    games_n = int(combo_df["game"].astype(str).nunique()) if "game" in combo_df.columns else len(combo_df)
+    market_n = int(combo_df["market_type"].astype(str).nunique()) if "market_type" in combo_df.columns else 1
+    return round(sports_n * 5 + games_n * 4 + market_n * 3, 2)
+
+
+def parlay_profile_name(rank_position):
+    if rank_position == 1:
+        return "Best AI Parlay"
+    if rank_position == 2:
+        return "Support Slip A"
+    if rank_position == 3:
+        return "Support Slip B"
+    return "Support Slip C"
+
+
+def optimized_parlay_stake(combo_df, bankroll, risk_mode, drawdown_pct, roi_pct, combined_odds, profile_name):
+    avg_adj = float(pd.to_numeric(combo_df["adjusted_score"], errors="coerce").fillna(0).mean())
+    avg_consensus = float(pd.to_numeric(combo_df["ai_consensus"], errors="coerce").fillna(0).mean())
+    leg_count = len(combo_df)
+
+    base_units = 0.30 if leg_count == 2 else 0.22
+    if avg_adj >= 92:
+        base_units += 0.18
+    elif avg_adj >= 88:
+        base_units += 0.12
+    elif avg_adj >= 84:
+        base_units += 0.07
+
+    if avg_consensus >= 4.5:
+        base_units += 0.08
+    elif avg_consensus >= 4.0:
+        base_units += 0.04
+
+    if pd.notna(combined_odds):
+        if combined_odds >= 600:
+            base_units -= 0.06
+        elif combined_odds >= 400:
+            base_units -= 0.03
+        elif 200 <= combined_odds <= 320:
+            base_units += 0.03
+
+    if profile_name != "Best AI Parlay":
+        base_units *= 0.85
+
+    base_units = float(np.clip(base_units, 0.15, 0.70))
+    return suggested_stake_from_units(base_units, bankroll, risk_mode, drawdown_pct, roi_pct)
+
+
+def slip_rank_score(combo_df, combined_odds, min_combined_odds, correlation_penalty, diversity_score):
+    avg_adj = float(pd.to_numeric(combo_df["adjusted_score"], errors="coerce").fillna(0).mean())
+    min_adj = float(pd.to_numeric(combo_df["adjusted_score"], errors="coerce").fillna(0).min())
+    avg_consensus = float(pd.to_numeric(combo_df["ai_consensus"], errors="coerce").fillna(0).mean())
+    avg_ev = float(pd.to_numeric(combo_df["ev_edge"], errors="coerce").fillna(0).mean())
+    hit_avg = float(pd.to_numeric(combo_df["hit_pct"], errors="coerce").fillna(50).mean())
+    odds_bonus = min(max((float(combined_odds) - min_combined_odds) / 35.0, 0), 12) if pd.notna(combined_odds) else 0
+    return round(
+        avg_adj * 0.60
+        + min_adj * 0.20
+        + avg_consensus * 5.5
+        + avg_ev * 0.75
+        + hit_avg * 0.08
+        + odds_bonus
+        + diversity_score
+        - correlation_penalty,
+        2,
+    )
+
+
+def slip_usage_counts(selected_slips):
+    counts = {}
+    for slip in selected_slips:
+        for leg_key in json.loads(slip["leg_keys_json"]):
+            counts[leg_key] = counts.get(leg_key, 0) + 1
+    return counts
+
+
 def build_ai_parlay_slips(df, bankroll, risk_mode, drawdown_pct, roi_pct):
     settings = st.session_state.launch_settings
     pool = candidate_parlay_pool(df)
-    slips = []
+    candidate_slips = []
     if len(pool) < 2:
-        return slips
+        return candidate_slips
 
     max_legs = int(settings["parlay_max_legs"])
     allow_same_game = bool(settings["allow_same_game_parlays"])
     min_combined_odds = float(settings["parlay_min_combined_odds"])
+    max_support = int(settings.get("parlay_support_slips", 3))
+    reuse_cap = int(settings.get("parlay_slip_reuse_cap", 2))
+    prefer_diverse_sports = bool(settings.get("parlay_prefer_diverse_sports", True))
 
     for leg_count in [2, 3]:
         if leg_count > max_legs:
@@ -805,23 +953,25 @@ def build_ai_parlay_slips(df, bankroll, risk_mode, drawdown_pct, roi_pct):
         for idxs in itertools.combinations(pool.index.tolist(), leg_count):
             combo = pool.loc[list(idxs)].copy().reset_index(drop=True)
             same_game_overlap, same_team_overlap = parlay_overlap_penalty(combo)
-            if not allow_same_game and same_game_overlap > 0:
+            conflict_reason = correlation_conflict_reason(combo, allow_same_game)
+            if conflict_reason:
                 continue
+
             combined_odds = combined_parlay_odds(combo["odds"].tolist())
             if pd.isna(combined_odds) or combined_odds < min_combined_odds:
                 continue
+
             avg_score = float(pd.to_numeric(combo["score"], errors="coerce").fillna(0).mean())
             avg_adj = float(pd.to_numeric(combo["adjusted_score"], errors="coerce").fillna(0).mean())
             min_adj = float(pd.to_numeric(combo["adjusted_score"], errors="coerce").fillna(0).min())
             avg_consensus = float(pd.to_numeric(combo["ai_consensus"], errors="coerce").fillna(0).mean())
-            min_consensus = int(pd.to_numeric(combo["ai_consensus"], errors="coerce").fillna(0).min())
-            # committee approval of final slip
+
             committee_votes = 0
             if avg_adj >= 78:
                 committee_votes += 1
             if min_adj >= float(settings["parlay_min_leg_adjusted"]):
                 committee_votes += 1
-            if avg_consensus >= 4.2:
+            if avg_consensus >= 4.0:
                 committee_votes += 1
             if same_game_overlap == 0:
                 committee_votes += 1
@@ -831,14 +981,20 @@ def build_ai_parlay_slips(df, bankroll, risk_mode, drawdown_pct, roi_pct):
             if committee_votes < int(settings["parlay_min_leg_consensus"]):
                 continue
 
-            stake_base_units = 0.35 if leg_count == 2 else 0.25
-            stake = suggested_stake_from_units(stake_base_units, bankroll, risk_mode, drawdown_pct, roi_pct)
+            diversity_score = parlay_diversity_score(combo)
+            if prefer_diverse_sports and combo["sport"].astype(str).nunique() > 1:
+                diversity_score += 3
+
+            correlation_penalty = same_game_overlap * 10 + same_team_overlap * 5
+            expected_value_score = parlay_expected_value_score(combo, combined_odds)
+            rank_score = slip_rank_score(combo, combined_odds, min_combined_odds, correlation_penalty, diversity_score)
+
             slip = {
                 "slip_id": f"AI-PARLAY-{leg_count}-{'-'.join(map(str, idxs))}",
-                "builder": "AI Committee",
+                "builder": "AI Committee Optimizer",
                 "legs": leg_count,
                 "combined_odds": combined_odds,
-                "stake": stake,
+                "stake": 0.0,
                 "avg_leg_score": round(avg_score, 2),
                 "min_leg_score": round(float(pd.to_numeric(combo["score"], errors="coerce").fillna(0).min()), 2),
                 "avg_leg_adjusted": round(avg_adj, 2),
@@ -856,23 +1012,65 @@ def build_ai_parlay_slips(df, bankroll, risk_mode, drawdown_pct, roi_pct):
                 ]),
                 "legs_rows": combo.to_dict("records"),
                 "leg_keys_json": json.dumps([slip_key(r) for r in combo.to_dict("records")]),
-                "rank_score": round(avg_adj + (committee_votes * 4) - (same_game_overlap * 8) + min((combined_odds - min_combined_odds) / 20, 8), 2),
+                "rank_score": rank_score,
+                "expected_value_score": expected_value_score,
+                "diversity_score": diversity_score,
+                "correlation_flag": "Clean" if correlation_penalty == 0 else "Watch",
+                "slip_profile": "",
+                "game_keys": combo["game_key"].astype(str).tolist() if "game_key" in combo.columns else [],
             }
-            slips.append(slip)
+            candidate_slips.append(slip)
 
-    slips = sorted(slips, key=lambda x: (x["rank_score"], x["avg_leg_adjusted"], x["combined_odds"]), reverse=True)
+    candidate_slips = sorted(
+        candidate_slips,
+        key=lambda x: (x["rank_score"], x["expected_value_score"], x["avg_leg_adjusted"], x["combined_odds"]),
+        reverse=True,
+    )
 
-    # de-duplicate mostly similar slips
-    final_slips = []
-    seen_keys = set()
-    for slip in slips:
-        key = tuple(sorted(json.loads(slip["leg_keys_json"])))
-        if key in seen_keys:
+    if not candidate_slips:
+        return []
+
+    selected = []
+    used_leg_counts = {}
+    used_game_counts = {}
+
+    for slip in candidate_slips:
+        leg_keys = json.loads(slip["leg_keys_json"])
+        game_keys = [g for g in slip.get("game_keys", []) if g]
+        if selected:
+            overlap_with_best = len(set(leg_keys) & set(json.loads(selected[0]["leg_keys_json"])))
+            if overlap_with_best >= max(2, slip["legs"] - 1):
+                continue
+
+        if any(used_leg_counts.get(k, 0) >= reuse_cap for k in leg_keys):
             continue
-        seen_keys.add(key)
-        final_slips.append(slip)
-        if len(final_slips) >= 8:
+        if any(used_game_counts.get(g, 0) >= 2 for g in game_keys):
+            continue
+
+        selected.append(slip)
+        for k in leg_keys:
+            used_leg_counts[k] = used_leg_counts.get(k, 0) + 1
+        for g in game_keys:
+            used_game_counts[g] = used_game_counts.get(g, 0) + 1
+
+        if len(selected) >= 1 + max_support:
             break
+
+    final_slips = []
+    for idx, slip in enumerate(selected, start=1):
+        profile = parlay_profile_name(idx)
+        slip["slip_profile"] = profile
+        slip["stake"] = optimized_parlay_stake(
+            pd.DataFrame(slip["legs_rows"]),
+            bankroll,
+            risk_mode,
+            drawdown_pct,
+            roi_pct,
+            slip["combined_odds"],
+            profile,
+        )
+        final_slips.append(slip)
+
     return final_slips
 
 
@@ -884,7 +1082,7 @@ def add_ai_parlay_to_log(slip, mode):
         "added_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "bet_date": str(date.today()),
         "mode": mode,
-        "builder": slip.get("builder", "AI Committee"),
+        "builder": slip.get("builder", "AI Committee Optimizer"),
         "sport_mix": slip.get("sport_mix", ""),
         "legs": int(slip.get("legs", 0)),
         "combined_odds": slip.get("combined_odds", np.nan),
@@ -902,8 +1100,14 @@ def add_ai_parlay_to_log(slip, mode):
         "notes": "",
         "leg_keys_json": slip.get("leg_keys_json", "[]"),
         "legs_preview": slip.get("legs_preview", ""),
+        "slip_profile": slip.get("slip_profile", ""),
+        "rank_score": slip.get("rank_score", np.nan),
+        "expected_value_score": slip.get("expected_value_score", np.nan),
+        "correlation_flag": slip.get("correlation_flag", ""),
+        "diversity_score": slip.get("diversity_score", np.nan),
     }
     st.session_state.parlay_log = pd.concat([log, pd.DataFrame([new_row])], ignore_index=True)
+
 
 # ---------- TRACKER ----------
 def add_bet_to_log(row, stake, risk_mode, bankroll_snapshot, mode):
@@ -996,6 +1200,7 @@ def refresh_bet_log_metrics():
         "win_rate": round(float(win_rate), 2),
     }
 
+
 # ---------- EXPORT / IMPORT ----------
 def export_state_json():
     payload = {
@@ -1019,6 +1224,7 @@ def import_state_json(text):
         merged = st.session_state.launch_settings.copy()
         merged.update(payload["launch_settings"])
         st.session_state.launch_settings = merged
+
 
 # ---------- RENDER ----------
 def render_mobile_bet_picker(df, bankroll, risk_mode, drawdown_pct, roi_pct, key_prefix):
@@ -1098,20 +1304,32 @@ def render_ai_parlay_builder(df, bankroll, risk_mode, drawdown_pct, roi_pct):
     slips = build_ai_parlay_slips(df, bankroll, risk_mode, drawdown_pct, roi_pct)
     st.session_state.ai_parlay_slips = slips
     if not slips:
-        st.warning("No parlay today. The AI committee did not find enough strong, non-diluted combinations above your threshold.")
+        st.warning("No parlay today. The optimizer did not find enough strong, diversified combinations above your threshold.")
         return
+
+    st.caption("Hybrid mode: 1 Best AI Parlay plus supporting slips with tighter anti-duplication and correlation control.")
     for i, slip in enumerate(slips):
-        st.markdown(f"**{slip['consensus_label']} | {slip['legs']}-Leg AI Slip | Combined Odds: {slip['combined_odds']:+}**")
-        st.write(f"Stake: ${slip['stake']:.2f} | Avg Adjusted: {slip['avg_leg_adjusted']:.1f} | Avg Consensus: {slip['avg_leg_consensus']:.2f} | Sports: {slip['sport_mix']}")
+        header = f"{slip['slip_profile']} | {slip['consensus_label']} | {slip['legs']}-Leg AI Slip | Combined Odds: {slip['combined_odds']:+}"
+        st.markdown(f"**{header}**")
+        st.write(
+            f"Stake: ${slip['stake']:.2f} | Rank: {slip['rank_score']:.1f} | EV Score: {slip['expected_value_score']:.1f} | "
+            f"Avg Adjusted: {slip['avg_leg_adjusted']:.1f} | Avg Consensus: {slip['avg_leg_consensus']:.2f}"
+        )
+        st.write(
+            f"Sports: {slip['sport_mix']} | Diversity: {slip['diversity_score']:.1f} | "
+            f"Correlation: {slip['correlation_flag']}"
+        )
         st.write(f"Legs: {slip['legs_preview']}")
-        if slip["same_game_overlap"] > 0:
-            st.warning("Same-game overlap present.")
+        if slip["slip_profile"] == "Best AI Parlay":
+            st.success("Primary optimized slip.")
+        else:
+            st.info("Supporting slip with reduced overlap.")
         b1, b2 = st.columns([1, 1])
         with b1:
             custom_stake = st.number_input("AI Parlay Stake", min_value=1.0, value=float(max(1.0, slip["stake"])), step=1.0, key=f"ai_parlay_stake_{i}")
         with b2:
             mode = st.selectbox("Mode", ["Paper", "Live"], index=0 if st.session_state.launch_settings["default_mode"] == "Paper" else 1, key=f"ai_parlay_mode_{i}")
-            if st.button(f"Add AI Slip {i+1} To Tracker", key=f"ai_parlay_add_{i}", use_container_width=True):
+            if st.button(f"Add {slip['slip_profile']} To Tracker", key=f"ai_parlay_add_{i}", use_container_width=True):
                 slip_copy = slip.copy()
                 slip_copy["stake"] = float(custom_stake)
                 add_ai_parlay_to_log(slip_copy, mode)
@@ -1119,9 +1337,10 @@ def render_ai_parlay_builder(df, bankroll, risk_mode, drawdown_pct, roi_pct):
                 st.rerun()
         st.divider()
 
+
 # ---------- APP ----------
-st.title("Sports AI Dashboard V12.7 All-Market AI + AI-Built Consensus Parlays")
-st.caption("True all-market board for Mainline, Spread, and Total singles plus AI-built consensus parlays.")
+st.title("Sports AI Dashboard V12.8 Parlay Optimization Engine")
+st.caption("Hybrid all-market AI for Mainline, Spread, and Total singles plus optimized AI-built consensus parlays.")
 
 tabs = st.tabs([
     "Dashboard", "Data Input", "Launch Settings", "All-Market Board", "High-Probability Singles", "AI Parlay Builder",
@@ -1204,6 +1423,11 @@ with tabs[2]:
     settings["parlay_min_leg_consensus"] = p3.selectbox("Min leg debate threshold", [3, 4, 5], index=[3, 4, 5].index(int(settings["parlay_min_leg_consensus"])))
     settings["parlay_max_legs"] = p4.selectbox("Max legs AI can build", [2, 3], index=[2, 3].index(int(settings["parlay_max_legs"])))
     settings["allow_same_game_parlays"] = st.toggle("Allow same-game parlays", value=bool(settings["allow_same_game_parlays"]))
+
+    q1, q2, q3 = st.columns(3)
+    settings["parlay_support_slips"] = q1.selectbox("Supporting slips", [1, 2, 3], index=[1, 2, 3].index(int(settings.get("parlay_support_slips", 3))))
+    settings["parlay_slip_reuse_cap"] = q2.selectbox("Max leg reuse across slips", [1, 2, 3], index=[1, 2, 3].index(int(settings.get("parlay_slip_reuse_cap", 2))))
+    settings["parlay_prefer_diverse_sports"] = q3.toggle("Prefer diverse sports in parlays", value=bool(settings.get("parlay_prefer_diverse_sports", True)))
     st.success("Settings saved in session.")
 
 with tabs[3]:
@@ -1316,9 +1540,19 @@ with tabs[9]:
         st.info("No AI parlays tracked yet.")
     else:
         for i in range(len(plog)):
-            with st.expander(f"{plog.loc[i, 'parlay_id']} | {plog.loc[i, 'mode']} | {int(plog.loc[i, 'legs'])}-Leg | {plog.loc[i, 'combined_odds']:+}", expanded=False):
+            label_bits = [
+                plog.loc[i, 'parlay_id'],
+                plog.loc[i, 'mode'],
+                safe_text(plog.loc[i, 'slip_profile']),
+                f"{int(plog.loc[i, 'legs'])}-Leg",
+                f"{plog.loc[i, 'combined_odds']:+}",
+            ]
+            with st.expander(" | ".join([x for x in label_bits if x]), expanded=False):
                 st.write(f"Builder: {plog.loc[i, 'builder']} | Stake: ${float(plog.loc[i, 'stake']):.2f} | Sports: {plog.loc[i, 'sport_mix']}")
-                st.write(f"Consensus: {plog.loc[i, 'consensus_label']} | Avg Leg Adjusted: {float(pd.to_numeric(pd.Series([plog.loc[i, 'avg_leg_adjusted']]), errors='coerce').fillna(0).iloc[0]):.1f}")
+                st.write(
+                    f"Profile: {safe_text(plog.loc[i, 'slip_profile'])} | Consensus: {plog.loc[i, 'consensus_label']} | "
+                    f"Avg Leg Adjusted: {float(pd.to_numeric(pd.Series([plog.loc[i, 'avg_leg_adjusted']]), errors='coerce').fillna(0).iloc[0]):.1f}"
+                )
                 st.write(f"Legs: {plog.loc[i, 'legs_preview']}")
                 result = st.selectbox(
                     f"Parlay Result for {plog.loc[i, 'parlay_id']}",
@@ -1360,11 +1594,12 @@ with tabs[10]:
             st.markdown("**Singles Performance**")
             st.dataframe(perf, use_container_width=True)
         if not settled_parlays.empty:
-            pperf = settled_parlays.groupby(["mode", "legs", "consensus_label"], dropna=False).agg(
+            pperf = settled_parlays.groupby(["mode", "legs", "consensus_label", "slip_profile"], dropna=False).agg(
                 parlays=("parlay_id", "count"),
                 profit=("profit", "sum"),
                 avg_odds=("combined_odds", "mean"),
                 avg_leg_adjusted=("avg_leg_adjusted", "mean"),
+                avg_rank=("rank_score", "mean"),
                 win_rate=("result", lambda s: round((s.eq("Win").sum() / max(1, s.isin(["Win", "Loss"]).sum())) * 100, 2)),
             ).reset_index()
             st.markdown("**AI Parlay Performance**")
@@ -1456,7 +1691,7 @@ with tabs[15]:
     st.download_button(
         "Download Session State JSON",
         data=export_text,
-        file_name="sports_ai_v12_7_state.json",
+        file_name="sports_ai_v12_8_state.json",
         mime="application/json",
         use_container_width=True,
     )
@@ -1468,4 +1703,4 @@ with tabs[15]:
         except Exception as e:
             st.error(f"Import failed: {e}")
 
-st.success("V12.7 All-Market AI + AI-Built Consensus Parlays ready.")
+st.success("V12.8 Parlay Optimization Engine ready.")

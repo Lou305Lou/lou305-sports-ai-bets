@@ -15,7 +15,7 @@ import streamlit as st
 # =========================
 # CONFIG
 # =========================
-APP_TITLE = "Sports AI Betting Dashboard — V17"
+APP_TITLE = "Sports AI Betting Dashboard — V17.1"
 DATA_DIR = Path("data")
 DATA_DIR.mkdir(exist_ok=True)
 
@@ -25,6 +25,7 @@ MODEL_MEMORY_PATH = DATA_DIR / "model_memory.csv"
 BOOK_PERF_PATH = DATA_DIR / "book_performance.csv"
 CALIBRATION_PATH = DATA_DIR / "calibration_profile.csv"
 PROFILE_PERF_PATH = DATA_DIR / "profile_performance.csv"
+PORTFOLIO_HISTORY_PATH = DATA_DIR / "portfolio_history.csv"
 
 
 # =========================
@@ -32,7 +33,7 @@ PROFILE_PERF_PATH = DATA_DIR / "profile_performance.csv"
 # =========================
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 st.title(APP_TITLE)
-st.caption("V17: true self-learning + CLV engine + confidence calibration + sharp mode + profile filtering")
+st.caption("V17.1: portfolio optimizer with exposure controls, diversification, risk caps, and AI-built allocation")
 
 
 # =========================
@@ -74,6 +75,13 @@ def ensure_columns(df: pd.DataFrame, required_cols):
         if c not in out.columns:
             out[c] = np.nan
     return out
+
+
+def pct(x):
+    try:
+        return f"{100 * float(x):.1f}%"
+    except Exception:
+        return "—"
 
 
 def american_to_decimal(odds):
@@ -118,11 +126,18 @@ def compute_ev(prob, odds):
         return np.nan
 
 
-def pct(x):
+def kelly_fraction(p, odds_american):
     try:
-        return f"{100 * float(x):.1f}%"
+        p = float(p)
+        dec = american_to_decimal(odds_american)
+        if np.isnan(dec) or dec <= 1:
+            return 0.0
+        b = dec - 1
+        q = 1 - p
+        k = (b * p - q) / b
+        return max(0.0, k)
     except Exception:
-        return "—"
+        return 0.0
 
 
 def score_to_emoji(score):
@@ -165,28 +180,6 @@ def tier_label(score):
     if s >= 65:
         return "Tier 3"
     return "Tier 4"
-
-
-def kelly_fraction(p, odds_american):
-    try:
-        p = float(p)
-        dec = american_to_decimal(odds_american)
-        if np.isnan(dec) or dec <= 1:
-            return 0.0
-        b = dec - 1
-        q = 1 - p
-        k = (b * p - q) / b
-        return max(0.0, k)
-    except Exception:
-        return 0.0
-
-
-def plus_money_range_ok(odds, min_odds=-200, max_odds=150):
-    try:
-        odds = float(odds)
-        return min_odds <= odds <= max_odds
-    except Exception:
-        return False
 
 
 def market_bucket(market_text):
@@ -247,9 +240,7 @@ def probability_bucket(prob):
         return "unknown"
     p = max(0.0, min(0.999, p))
     lower = math.floor(p * 10) / 10.0
-    upper = lower + 0.1
-    if upper > 1.0:
-        upper = 1.0
+    upper = min(1.0, lower + 0.1)
     return f"{lower:.1f}-{upper:.1f}"
 
 
@@ -314,6 +305,21 @@ def build_bet_id(row):
     return "|".join(parts)
 
 
+def score_to_risk_band(score):
+    try:
+        s = float(score)
+    except Exception:
+        return "High"
+    if s >= 85:
+        return "Low"
+    if s >= 75:
+        return "Medium"
+    return "High"
+
+
+# =========================
+# SETTINGS / STORAGE
+# =========================
 def load_settings():
     defaults = {
         "bankroll": 1000.0,
@@ -337,6 +343,13 @@ def load_settings():
         "sharp_mode_roi_threshold": 0.05,
         "suppress_losing_profiles": True,
         "max_profile_penalty": 0.18,
+        "portfolio_max_total_units": 8.0,
+        "portfolio_max_per_bet_units": 2.0,
+        "portfolio_max_per_event_units": 2.5,
+        "portfolio_max_per_market_pct": 0.40,
+        "portfolio_max_per_book_pct": 0.45,
+        "portfolio_max_bets": 8,
+        "portfolio_target_risk": "Balanced",
     }
     try:
         if SETTINGS_PATH.exists():
@@ -384,33 +397,34 @@ def save_model_memory(df):
     safe_write_csv(df, MODEL_MEMORY_PATH)
 
 
-def load_book_performance():
-    cols = ["sport", "book", "bets", "units", "profit_units", "roi", "win_rate", "avg_clv", "temperature"]
-    return safe_read_csv(BOOK_PERF_PATH, cols)
-
-
 def save_book_performance(df):
     safe_write_csv(df, BOOK_PERF_PATH)
-
-
-def load_calibration_profile():
-    cols = ["sport", "market_bucket", "prob_bucket", "bets", "pred_avg", "actual_win_rate", "delta", "multiplier"]
-    return safe_read_csv(CALIBRATION_PATH, cols)
 
 
 def save_calibration_profile(df):
     safe_write_csv(df, CALIBRATION_PATH)
 
 
-def load_profile_performance():
-    cols = ["profile_key", "sport", "market_bucket", "bets", "units", "profit_units", "roi", "win_rate", "avg_clv", "profile_signal"]
-    return safe_read_csv(PROFILE_PERF_PATH, cols)
-
-
 def save_profile_performance(df):
     safe_write_csv(df, PROFILE_PERF_PATH)
 
 
+def load_portfolio_history():
+    cols = [
+        "created_at", "portfolio_id", "bet_id", "sport", "event", "market_bucket", "book",
+        "selection", "bet_type", "odds", "calibrated_prob", "ev", "score", "priority_score",
+        "recommended_units", "portfolio_units", "allocation_pct", "risk_band", "portfolio_name"
+    ]
+    return safe_read_csv(PORTFOLIO_HISTORY_PATH, cols)
+
+
+def save_portfolio_history(df):
+    safe_write_csv(df, PORTFOLIO_HISTORY_PATH)
+
+
+# =========================
+# CORE DATA PREP
+# =========================
 def clean_input_df(df: pd.DataFrame):
     df = df.copy()
     df.columns = [str(c).strip().lower() for c in df.columns]
@@ -458,7 +472,7 @@ def clean_input_df(df: pd.DataFrame):
             df["model_prob"].fillna(0) * 55
             + df["edge"].fillna(0).clip(lower=0) * 4
             + df["consensus"].fillna(0) * 6
-            + df["odds"].apply(lambda x: 10 if plus_money_range_ok(x, -200, 150) else 0).fillna(0)
+            + df["odds"].apply(lambda x: 10 if -200 <= x <= 150 else 0).fillna(0)
         ).clip(0, 99)
 
     if df["consensus"].isna().all():
@@ -477,15 +491,13 @@ def clean_input_df(df: pd.DataFrame):
 # LEARNING TABLES
 # =========================
 def summarize_market_performance(memory_df, min_samples=15):
+    cols = ["sport", "market", "market_bucket", "bets", "units", "profit_units", "roi", "win_rate", "avg_clv", "market_signal"]
     if len(memory_df) == 0:
-        return pd.DataFrame(columns=["sport", "market", "market_bucket", "bets", "units", "profit_units", "roi", "win_rate", "avg_clv", "market_signal"])
-
+        return pd.DataFrame(columns=cols)
     m = ensure_columns(memory_df.copy(), ["sport", "market", "market_bucket", "units", "profit_units", "result", "clv"])
     settled = m[m["result"].astype(str).str.lower().isin(["win", "loss", "push", "void"])].copy()
-
     if len(settled) == 0:
-        return pd.DataFrame(columns=["sport", "market", "market_bucket", "bets", "units", "profit_units", "roi", "win_rate", "avg_clv", "market_signal"])
-
+        return pd.DataFrame(columns=cols)
     grp = (
         settled.groupby(["sport", "market", "market_bucket"], dropna=False)
         .agg(
@@ -507,14 +519,13 @@ def summarize_market_performance(memory_df, min_samples=15):
 
 
 def summarize_book_performance(memory_df, min_samples=10):
+    cols = ["sport", "book", "bets", "units", "profit_units", "roi", "win_rate", "avg_clv", "temperature"]
     if len(memory_df) == 0:
-        return pd.DataFrame(columns=["sport", "book", "bets", "units", "profit_units", "roi", "win_rate", "avg_clv", "temperature"])
-
+        return pd.DataFrame(columns=cols)
     m = ensure_columns(memory_df.copy(), ["sport", "book", "units", "profit_units", "result", "clv"])
     settled = m[m["result"].astype(str).str.lower().isin(["win", "loss", "push", "void"])].copy()
     if len(settled) == 0:
-        return pd.DataFrame(columns=["sport", "book", "bets", "units", "profit_units", "roi", "win_rate", "avg_clv", "temperature"])
-
+        return pd.DataFrame(columns=cols)
     grp = (
         settled.groupby(["sport", "book"], dropna=False)
         .agg(
@@ -539,13 +550,11 @@ def build_calibration_profile(memory_df, min_samples=20):
     cols = ["sport", "market_bucket", "prob_bucket", "bets", "pred_avg", "actual_win_rate", "delta", "multiplier"]
     if len(memory_df) == 0:
         return pd.DataFrame(columns=cols)
-
     m = ensure_columns(memory_df.copy(), ["sport", "market_bucket", "model_prob", "result"])
     m["actual_result"] = m["result"].apply(result_to_binary)
     m = m[m["actual_result"].notna() & m["model_prob"].notna()].copy()
     if len(m) == 0:
         return pd.DataFrame(columns=cols)
-
     m["prob_bucket"] = m["model_prob"].apply(probability_bucket)
     grp = (
         m.groupby(["sport", "market_bucket", "prob_bucket"], dropna=False)
@@ -565,8 +574,7 @@ def build_calibration_profile(memory_df, min_samples=20):
         actual = float(row["actual_win_rate"])
         if pred <= 0:
             return 1.0
-        raw = actual / pred
-        return float(np.clip(raw, 0.85, 1.15))
+        return float(np.clip(actual / pred, 0.85, 1.15))
 
     grp["multiplier"] = grp.apply(calc_multiplier, axis=1)
     return grp[cols]
@@ -576,12 +584,10 @@ def summarize_profile_performance(memory_df, min_samples=12):
     cols = ["profile_key", "sport", "market_bucket", "bets", "units", "profit_units", "roi", "win_rate", "avg_clv", "profile_signal"]
     if len(memory_df) == 0:
         return pd.DataFrame(columns=cols)
-
     m = ensure_columns(memory_df.copy(), ["profile_key", "sport", "market_bucket", "units", "profit_units", "result", "clv"])
     settled = m[m["result"].astype(str).str.lower().isin(["win", "loss", "push", "void"])].copy()
     if len(settled) == 0:
         return pd.DataFrame(columns=cols)
-
     grp = (
         settled.groupby(["profile_key", "sport", "market_bucket"], dropna=False)
         .agg(
@@ -605,15 +611,12 @@ def summarize_profile_performance(memory_df, min_samples=12):
 def evaluate_sharp_mode(memory_df, settings):
     if len(memory_df) == 0:
         return {"sharp_mode": False, "roi": np.nan, "avg_clv": np.nan, "samples": 0}
-
     settled = memory_df[memory_df["result"].astype(str).str.lower().isin(["win", "loss", "push", "void"])].copy()
     if len(settled) < max(int(settings["clv_min_samples"]), 8):
         return {"sharp_mode": False, "roi": np.nan, "avg_clv": np.nan, "samples": len(settled)}
-
     units = settled["units"].fillna(0).sum()
     roi = settled["profit_units"].fillna(0).sum() / max(units, 1e-9)
     avg_clv = settled["clv"].dropna().mean() if "clv" in settled.columns else np.nan
-
     sharp = (
         pd.notna(avg_clv) and
         avg_clv >= float(settings["sharp_mode_clv_threshold"]) and
@@ -623,12 +626,11 @@ def evaluate_sharp_mode(memory_df, settings):
 
 
 # =========================
-# ADJUSTMENT FUNCTIONS
+# MODEL ADJUSTMENTS
 # =========================
 def calibration_multiplier(row, calibration_df, settings):
     if len(calibration_df) == 0:
         return 1.0
-
     sport = normalize_text(row.get("sport", ""))
     mkt = normalize_text(row.get("market_bucket", ""))
     prob_b = probability_bucket(row.get("model_prob", np.nan))
@@ -639,7 +641,6 @@ def calibration_multiplier(row, calibration_df, settings):
     ]
     if len(seg) == 0:
         return 1.0
-
     rec = seg.iloc[0]
     if float(rec.get("bets", 0) or 0) < float(settings["calibration_min_samples"]):
         return 1.0
@@ -656,7 +657,6 @@ def apply_calibration(df, calibration_df, settings):
 def market_weight(row, market_perf_df, settings):
     if not settings.get("auto_prioritize_profitable_markets", True) or len(market_perf_df) == 0:
         return 1.0
-
     sport = normalize_text(row.get("sport", "")).lower()
     market = normalize_text(row.get("market", "")).lower()
     seg = market_perf_df[
@@ -665,14 +665,11 @@ def market_weight(row, market_perf_df, settings):
     ]
     if len(seg) == 0:
         return 1.0
-
     s = seg.iloc[0]
     if float(s.get("bets", 0) or 0) < float(settings["learning_min_samples"]):
         return 1.0
-
     roi = float(s.get("roi", 0) if pd.notna(s.get("roi", np.nan)) else 0)
     avg_clv = float(s.get("avg_clv", 0) if pd.notna(s.get("avg_clv", np.nan)) else 0)
-
     if roi > 0.08 and avg_clv > 0:
         return 1.14
     if roi > 0.03:
@@ -687,7 +684,6 @@ def market_weight(row, market_perf_df, settings):
 def book_weight(row, book_perf_df, settings):
     if len(book_perf_df) == 0:
         return 1.0
-
     sport = normalize_text(row.get("sport", "")).lower()
     book = normalize_text(row.get("book", "")).lower()
     seg = book_perf_df[
@@ -696,11 +692,9 @@ def book_weight(row, book_perf_df, settings):
     ]
     if len(seg) == 0:
         return 1.0
-
     s = seg.iloc[0]
     if float(s.get("bets", 0) or 0) < float(settings["book_min_samples"]):
         return 1.0
-
     temp = normalize_text(s.get("temperature", "Neutral"))
     avg_clv = float(s.get("avg_clv", 0) if pd.notna(s.get("avg_clv", np.nan)) else 0)
     if temp == "Hot" and avg_clv >= 0:
@@ -713,16 +707,13 @@ def book_weight(row, book_perf_df, settings):
 def profile_weight(row, profile_perf_df, settings):
     if len(profile_perf_df) == 0:
         return 1.0
-
     key = normalize_text(row.get("profile_key", ""))
     seg = profile_perf_df[profile_perf_df["profile_key"].astype(str).eq(key)]
     if len(seg) == 0:
         return 1.0
-
     s = seg.iloc[0]
     if float(s.get("bets", 0) or 0) < float(settings["profile_min_samples"]):
         return 1.0
-
     signal = normalize_text(s.get("profile_signal", "Neutral"))
     if signal == "Boost":
         return 1.08
@@ -779,8 +770,7 @@ def adjusted_priority_score(row, market_perf_df, book_perf_df, profile_perf_df, 
     p_w = profile_weight(row, profile_perf_df, settings)
     sharp_w = sharp_mode_weight(sharp_status, settings)
     ev_bonus = 12 * float(row.get("ev", 0) if pd.notna(row.get("ev", np.nan)) else 0)
-    clv_bonus = 0.0
-    return round(base_score * m_w * b_w * p_w * sharp_w + ev_bonus + clv_bonus, 2)
+    return round(base_score * m_w * b_w * p_w * sharp_w + ev_bonus, 2)
 
 
 def qualify_plays(df, settings):
@@ -793,10 +783,8 @@ def qualify_plays(df, settings):
         (out["odds"] >= settings["default_odds_min"]) &
         (out["odds"] <= settings["default_odds_max"])
     ].copy()
-
     if settings.get("suppress_losing_profiles", True) and "profile_signal" in out.columns:
         out = out[out["profile_signal"].astype(str) != "Suppress"].copy()
-
     return out
 
 
@@ -814,6 +802,7 @@ def add_model_features(df, calibration_df, market_perf_df, book_perf_df, profile
     out["priority_score"] = out.apply(
         lambda r: adjusted_priority_score(r, market_perf_df, book_perf_df, profile_perf_df, sharp_status, settings), axis=1
     )
+    out["risk_band"] = out["score"].apply(score_to_risk_band)
     return out
 
 
@@ -865,9 +854,7 @@ def build_consensus_parlays(df, settings):
     if len(df) == 0:
         return pd.DataFrame()
 
-    df = df.copy()
-    df = df.sort_values(["priority_score", "score", "ev"], ascending=[False, False, False]).head(14)
-
+    df = df.copy().sort_values(["priority_score", "score", "ev"], ascending=[False, False, False]).head(14)
     rows = []
     min_legs = int(settings["min_parlay_legs"])
     max_legs = int(settings["max_parlay_legs"])
@@ -875,11 +862,9 @@ def build_consensus_parlays(df, settings):
     for leg_count in range(min_legs, max_legs + 1):
         for combo in itertools.combinations(df.index.tolist(), leg_count):
             legs = df.loc[list(combo)].copy()
-
             dec_odds = legs["odds"].apply(american_to_decimal)
             if dec_odds.isna().any():
                 continue
-
             parlay_dec = float(dec_odds.prod())
             parlay_american = decimal_to_american(parlay_dec)
             if pd.isna(parlay_american) or parlay_american < 200:
@@ -888,8 +873,8 @@ def build_consensus_parlays(df, settings):
             joint_prob = float(legs["calibrated_prob"].clip(lower=0.01, upper=0.99).prod())
             implied = american_implied_prob(parlay_american)
             ev = compute_ev(joint_prob, parlay_american)
-
             penalty, penalty_reason = parlay_correlation_penalty(legs)
+
             raw_score = (
                 legs["priority_score"].mean() * 0.50
                 + legs["consensus"].mean() * 5.0
@@ -915,9 +900,190 @@ def build_consensus_parlays(df, settings):
     out = pd.DataFrame(rows)
     if len(out) == 0:
         return out
+    return out.sort_values(["score", "ev", "joint_prob"], ascending=[False, False, False]).drop_duplicates(subset=["summary"]).head(12)
 
-    out = out.sort_values(["score", "ev", "joint_prob"], ascending=[False, False, False]).drop_duplicates(subset=["summary"])
-    return out.head(12)
+
+# =========================
+# PORTFOLIO OPTIMIZER
+# =========================
+def risk_multiplier_from_target(target_risk):
+    t = normalize_text(target_risk).lower()
+    if t == "conservative":
+        return {"Low": 1.05, "Medium": 0.85, "High": 0.60}
+    if t == "aggressive":
+        return {"Low": 0.95, "Medium": 1.05, "High": 1.18}
+    return {"Low": 1.00, "Medium": 1.00, "High": 0.88}
+
+
+def portfolio_candidate_score(row, target_risk="Balanced"):
+    risk_mult = risk_multiplier_from_target(target_risk)
+    rb = normalize_text(row.get("risk_band", "High"))
+    mult = risk_mult.get(rb, 1.0)
+
+    ev = float(row.get("ev", 0) if pd.notna(row.get("ev", np.nan)) else 0)
+    pr = float(row.get("priority_score", 0) if pd.notna(row.get("priority_score", np.nan)) else 0)
+    cp = float(row.get("calibrated_prob", row.get("model_prob", 0)) if pd.notna(row.get("calibrated_prob", np.nan)) else 0)
+    base_units = float(row.get("recommended_units", 0) if pd.notna(row.get("recommended_units", np.nan)) else 0)
+
+    score = (pr * 0.60) + (ev * 100 * 0.25) + (cp * 100 * 0.10) + (base_units * 4 * 0.05)
+    return round(score * mult, 4)
+
+
+def build_portfolio(qualified_df, settings, target_risk="Balanced"):
+    cols = [
+        "bet_id", "sport", "event", "market_bucket", "book", "selection", "bet_type",
+        "odds", "calibrated_prob", "ev", "score", "priority_score", "recommended_units",
+        "portfolio_units", "allocation_pct", "risk_band", "portfolio_rank", "portfolio_reason"
+    ]
+    if len(qualified_df) == 0:
+        return pd.DataFrame(columns=cols), {
+            "selected_bets": 0,
+            "total_units": 0.0,
+            "avg_ev": np.nan,
+            "avg_prob": np.nan,
+            "diversification_score": np.nan,
+        }
+
+    max_total_units = float(settings["portfolio_max_total_units"])
+    max_per_bet_units = float(settings["portfolio_max_per_bet_units"])
+    max_per_event_units = float(settings["portfolio_max_per_event_units"])
+    max_per_market_pct = float(settings["portfolio_max_per_market_pct"])
+    max_per_book_pct = float(settings["portfolio_max_per_book_pct"])
+    max_bets = int(settings["portfolio_max_bets"])
+
+    df = qualified_df.copy()
+    df["risk_band"] = df.get("risk_band", df["score"].apply(score_to_risk_band))
+    df["portfolio_candidate_score"] = df.apply(lambda r: portfolio_candidate_score(r, target_risk), axis=1)
+    df = df.sort_values(["portfolio_candidate_score", "priority_score", "ev"], ascending=[False, False, False])
+
+    selected = []
+    total_units = 0.0
+    event_exposure = {}
+    market_exposure = {}
+    book_exposure = {}
+
+    for _, row in df.iterrows():
+        if len(selected) >= max_bets:
+            break
+
+        event = normalize_text(row.get("event", ""))
+        market = normalize_text(row.get("market_bucket", ""))
+        book = normalize_text(row.get("book", ""))
+        base_units = float(row.get("recommended_units", 0) if pd.notna(row.get("recommended_units", np.nan)) else 0)
+
+        proposed = min(max_per_bet_units, base_units)
+        remaining = max_total_units - total_units
+        if remaining <= 0:
+            break
+        proposed = min(proposed, remaining)
+
+        if event_exposure.get(event, 0.0) + proposed > max_per_event_units:
+            continue
+
+        market_cap_abs = max_total_units * max_per_market_pct
+        if market_exposure.get(market, 0.0) + proposed > market_cap_abs:
+            continue
+
+        book_cap_abs = max_total_units * max_per_book_pct
+        if book_exposure.get(book, 0.0) + proposed > book_cap_abs:
+            continue
+
+        # same exact pick duplicate block
+        duplicate = False
+        for s in selected:
+            if normalize_text(s["selection"]).lower() == normalize_text(row.get("selection", "")).lower() and normalize_text(s["bet_type"]).lower() == normalize_text(row.get("bet_type", "")).lower():
+                duplicate = True
+                break
+        if duplicate:
+            continue
+
+        reason_parts = [
+            f"priority {float(row.get('priority_score', 0)):.1f}",
+            f"EV {pct(row.get('ev', np.nan))}",
+            f"risk {normalize_text(row.get('risk_band', ''))}",
+        ]
+        if normalize_text(row.get("profile_signal", "Neutral")) == "Boost":
+            reason_parts.append("winning profile")
+        if normalize_text(row.get("sharp_flag", "Normal")) == "Sharp":
+            reason_parts.append("sharp mode")
+
+        r = row.to_dict()
+        r["portfolio_units"] = round(proposed, 2)
+        r["portfolio_reason"] = ", ".join(reason_parts)
+        selected.append(r)
+
+        total_units += proposed
+        event_exposure[event] = event_exposure.get(event, 0.0) + proposed
+        market_exposure[market] = market_exposure.get(market, 0.0) + proposed
+        book_exposure[book] = book_exposure.get(book, 0.0) + proposed
+
+    if len(selected) == 0:
+        return pd.DataFrame(columns=cols), {
+            "selected_bets": 0,
+            "total_units": 0.0,
+            "avg_ev": np.nan,
+            "avg_prob": np.nan,
+            "diversification_score": np.nan,
+        }
+
+    out = pd.DataFrame(selected)
+    out["allocation_pct"] = out["portfolio_units"] / max(out["portfolio_units"].sum(), 1e-9)
+    out["portfolio_rank"] = range(1, len(out) + 1)
+
+    market_div = out["market_bucket"].nunique() / max(len(out), 1)
+    book_div = out["book"].nunique() / max(len(out), 1)
+    event_div = out["event"].nunique() / max(len(out), 1)
+    diversification_score = (market_div * 0.35) + (book_div * 0.25) + (event_div * 0.40)
+
+    summary = {
+        "selected_bets": len(out),
+        "total_units": out["portfolio_units"].sum(),
+        "avg_ev": out["ev"].mean(),
+        "avg_prob": out["calibrated_prob"].mean(),
+        "diversification_score": diversification_score,
+    }
+
+    return out[cols], summary
+
+
+def build_portfolio_exposure_tables(portfolio_df):
+    if len(portfolio_df) == 0:
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+
+    by_event = portfolio_df.groupby("event", dropna=False).agg(
+        bets=("bet_id", "count"),
+        units=("portfolio_units", "sum"),
+        allocation_pct=("allocation_pct", "sum"),
+    ).reset_index().sort_values("units", ascending=False)
+
+    by_market = portfolio_df.groupby("market_bucket", dropna=False).agg(
+        bets=("bet_id", "count"),
+        units=("portfolio_units", "sum"),
+        allocation_pct=("allocation_pct", "sum"),
+    ).reset_index().sort_values("units", ascending=False)
+
+    by_book = portfolio_df.groupby("book", dropna=False).agg(
+        bets=("bet_id", "count"),
+        units=("portfolio_units", "sum"),
+        allocation_pct=("allocation_pct", "sum"),
+    ).reset_index().sort_values("units", ascending=False)
+
+    return by_event, by_market, by_book
+
+
+def save_portfolio_snapshot(portfolio_df, portfolio_name="V17.1 Portfolio"):
+    if len(portfolio_df) == 0:
+        return 0
+    hist = load_portfolio_history()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    portfolio_id = datetime.now().strftime("%Y%m%d%H%M%S")
+    snap = portfolio_df.copy()
+    snap["created_at"] = now
+    snap["portfolio_id"] = portfolio_id
+    snap["portfolio_name"] = portfolio_name
+    hist = pd.concat([hist, snap], ignore_index=True)
+    save_portfolio_history(hist)
+    return len(snap)
 
 
 # =========================
@@ -926,16 +1092,13 @@ def build_consensus_parlays(df, settings):
 def append_new_bets_to_log(candidates_df, bet_log_df):
     if len(candidates_df) == 0:
         return bet_log_df.copy(), 0
-
     base = ensure_columns(bet_log_df.copy(), ["bet_id"])
     new_rows = candidates_df.copy()
     new_rows["bet_id"] = new_rows.apply(build_bet_id, axis=1)
-
     existing = set(base["bet_id"].astype(str).tolist())
     to_add = new_rows[~new_rows["bet_id"].astype(str).isin(existing)].copy()
     if len(to_add) == 0:
         return base, 0
-
     keep_cols = [
         "bet_id", "date_added", "sport", "event", "market", "market_bucket",
         "bet_type", "selection", "book", "odds", "closing_odds", "projection", "line",
@@ -962,17 +1125,14 @@ def update_bet_outcomes(log_df):
 def summary_metrics(log_df):
     settled = log_df[log_df["result"].astype(str).str.lower().isin(["win", "loss", "push", "void"])].copy()
     pending = log_df[~log_df.index.isin(settled.index)].copy()
-
     total_bets = len(log_df)
     wins = (settled["result"].astype(str).str.lower() == "win").sum()
     losses = (settled["result"].astype(str).str.lower() == "loss").sum()
     pushes = (settled["result"].astype(str).str.lower().isin(["push", "void"])).sum()
-
     profit_units = settled["profit_units"].fillna(0).sum()
     staked_units = settled["recommended_units"].fillna(0).sum()
     roi = profit_units / staked_units if staked_units else 0.0
     avg_clv = settled["clv"].dropna().mean() if "clv" in settled.columns else np.nan
-
     return {
         "total_bets": total_bets,
         "settled": len(settled),
@@ -1024,7 +1184,7 @@ save_profile_performance(profile_perf_df)
 # SIDEBAR
 # =========================
 with st.sidebar:
-    st.header("V17 Controls")
+    st.header("V17.1 Controls")
 
     settings["bankroll"] = st.number_input("Bankroll", min_value=100.0, value=float(settings["bankroll"]), step=50.0)
     settings["kelly_multiplier"] = st.slider("Kelly Multiplier", 0.05, 1.00, float(settings["kelly_multiplier"]), 0.05)
@@ -1039,10 +1199,16 @@ with st.sidebar:
     settings["book_min_samples"] = st.number_input("Min Samples For Book Temperature", min_value=5, value=int(settings["book_min_samples"]), step=1)
     settings["profile_min_samples"] = st.number_input("Min Samples For Profile Filter", min_value=5, value=int(settings["profile_min_samples"]), step=1)
     settings["calibration_min_samples"] = st.number_input("Min Samples For Calibration", min_value=5, value=int(settings["calibration_min_samples"]), step=1)
-    settings["correlation_penalty_on"] = st.checkbox("Use Correlation Penalty In Parlays", value=bool(settings["correlation_penalty_on"]))
-    settings["auto_prioritize_profitable_markets"] = st.checkbox("Auto-Prioritize Profitable Markets", value=bool(settings["auto_prioritize_profitable_markets"]))
-    settings["sharp_mode_auto"] = st.checkbox("Auto Sharp Mode", value=bool(settings["sharp_mode_auto"]))
-    settings["suppress_losing_profiles"] = st.checkbox("Suppress Losing Profiles", value=bool(settings["suppress_losing_profiles"]))
+
+    st.divider()
+    st.markdown("**Portfolio Limits**")
+    settings["portfolio_target_risk"] = st.selectbox("Target Portfolio Risk", ["Conservative", "Balanced", "Aggressive"], index=["Conservative", "Balanced", "Aggressive"].index(settings["portfolio_target_risk"]))
+    settings["portfolio_max_total_units"] = st.slider("Max Total Portfolio Units", 2.0, 20.0, float(settings["portfolio_max_total_units"]), 0.5)
+    settings["portfolio_max_per_bet_units"] = st.slider("Max Units Per Bet", 0.25, 5.0, float(settings["portfolio_max_per_bet_units"]), 0.25)
+    settings["portfolio_max_per_event_units"] = st.slider("Max Units Per Event", 0.5, 6.0, float(settings["portfolio_max_per_event_units"]), 0.25)
+    settings["portfolio_max_per_market_pct"] = st.slider("Max % Per Market", 0.10, 0.80, float(settings["portfolio_max_per_market_pct"]), 0.05)
+    settings["portfolio_max_per_book_pct"] = st.slider("Max % Per Book", 0.10, 0.80, float(settings["portfolio_max_per_book_pct"]), 0.05)
+    settings["portfolio_max_bets"] = st.slider("Max Bets In Portfolio", 2, 20, int(settings["portfolio_max_bets"]), 1)
 
     if st.button("Save Settings"):
         save_settings(settings)
@@ -1059,9 +1225,10 @@ with st.sidebar:
 # =========================
 # TABS
 # =========================
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "Upload + AI Board",
     "Best Bets",
+    "Portfolio Optimizer",
     "Consensus Parlays",
     "Bet Tracker + CLV",
     "Calibration Engine",
@@ -1073,8 +1240,6 @@ input_df = pd.DataFrame()
 
 with tab1:
     st.subheader("Upload Market Data")
-    st.write("Upload a CSV of candidate bets. V17 calibrates hit rates, measures profile quality, and applies CLV-based sharp mode.")
-
     uploaded = st.file_uploader("Upload CSV", type=["csv"])
 
     sample_cols = [
@@ -1090,7 +1255,7 @@ with tab1:
 
     with st.expander("See sample input format"):
         st.dataframe(sample_df, use_container_width=True)
-        export_download(sample_df, "v17_sample_input.csv", "Download sample CSV")
+        export_download(sample_df, "v17_1_sample_input.csv", "Download sample CSV")
 
     if uploaded is not None:
         try:
@@ -1131,7 +1296,7 @@ with tab1:
                 "sport", "event", "market_bucket", "selection", "bet_type", "book",
                 "odds", "projection", "line", "edge", "model_prob", "calibrated_prob",
                 "ev", "score", "priority_score", "consensus", "profile_signal",
-                "recommended_units", "sharp_flag"
+                "recommended_units", "risk_band", "sharp_flag"
             ]],
             use_container_width=True,
         )
@@ -1147,7 +1312,7 @@ with tab1:
 with tab2:
     st.subheader("Best Bets")
     if len(input_df) == 0:
-        st.info("Upload a CSV in the first tab to generate V17 best bets.")
+        st.info("Upload a CSV in the first tab to generate V17.1 best bets.")
     else:
         qualified = qualify_plays(input_df, settings).copy()
         qualified = qualified.sort_values(["priority_score", "score", "ev"], ascending=[False, False, False])
@@ -1159,14 +1324,14 @@ with tab2:
         c4.metric("Sharp Mode", "ON" if sharp_status.get("sharp_mode", False) else "OFF")
 
         if len(qualified) == 0:
-            st.warning("No plays met the filters. Try loosening consensus or odds range.")
+            st.warning("No plays met the filters.")
         else:
             st.dataframe(
                 qualified[[
                     "sport", "event", "market_bucket", "selection", "bet_type", "book",
                     "odds", "edge", "model_prob", "calibrated_prob", "ev", "score",
                     "priority_score", "consensus", "tier", "profile_signal",
-                    "recommended_units", "sharp_flag"
+                    "recommended_units", "risk_band", "sharp_flag"
                 ]],
                 use_container_width=True,
             )
@@ -1178,6 +1343,56 @@ with tab2:
 
 
 with tab3:
+    st.subheader("Portfolio Optimizer")
+    if len(input_df) == 0:
+        st.info("Upload a CSV in the first tab to generate an optimized portfolio.")
+    else:
+        qualified = qualify_plays(input_df, settings).copy()
+        portfolio_df, portfolio_summary = build_portfolio(
+            qualified,
+            settings=settings,
+            target_risk=settings["portfolio_target_risk"],
+        )
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Selected Bets", portfolio_summary["selected_bets"])
+        c2.metric("Total Units", f"{portfolio_summary['total_units']:.2f}")
+        c3.metric("Avg EV", pct(portfolio_summary["avg_ev"]) if pd.notna(portfolio_summary["avg_ev"]) else "—")
+        c4.metric("Diversification", f"{portfolio_summary['diversification_score']:.2f}" if pd.notna(portfolio_summary["diversification_score"]) else "—")
+
+        if len(portfolio_df) == 0:
+            st.warning("No portfolio could be built under the current constraints. Try increasing portfolio limits.")
+        else:
+            st.dataframe(
+                portfolio_df[[
+                    "portfolio_rank", "sport", "event", "market_bucket", "selection", "bet_type",
+                    "book", "odds", "calibrated_prob", "ev", "score", "priority_score",
+                    "recommended_units", "portfolio_units", "allocation_pct", "risk_band", "portfolio_reason"
+                ]],
+                use_container_width=True,
+            )
+
+            by_event, by_market, by_book = build_portfolio_exposure_tables(portfolio_df)
+
+            st.markdown("**Exposure by event**")
+            st.dataframe(by_event, use_container_width=True)
+
+            st.markdown("**Exposure by market**")
+            st.dataframe(by_market, use_container_width=True)
+
+            st.markdown("**Exposure by book**")
+            st.dataframe(by_book, use_container_width=True)
+
+            c1, c2 = st.columns(2)
+            with c1:
+                if st.button("Save Portfolio Snapshot"):
+                    added = save_portfolio_snapshot(portfolio_df, portfolio_name=f"V17.1 {settings['portfolio_target_risk']}")
+                    st.success(f"Saved {added} portfolio rows to history.")
+            with c2:
+                export_download(portfolio_df, "v17_1_portfolio.csv", "Download portfolio CSV")
+
+
+with tab4:
     st.subheader("Consensus Parlays")
     if len(input_df) == 0:
         st.info("Upload a CSV in the first tab to generate parlays.")
@@ -1191,12 +1406,11 @@ with tab3:
             c1.metric("Parlays Found", len(parlays))
             c2.metric("Best Score", f"{parlays['score'].max():.1f}")
             c3.metric("Best EV", pct(parlays["ev"].max()))
-
             st.dataframe(parlays, use_container_width=True)
-            export_download(parlays, "v17_consensus_parlays.csv", "Download parlays CSV")
+            export_download(parlays, "v17_1_consensus_parlays.csv", "Download parlays CSV")
 
 
-with tab4:
+with tab5:
     st.subheader("Bet Tracker + CLV")
     bet_log = update_bet_outcomes(load_bet_log())
     metrics = summary_metrics(bet_log)
@@ -1219,10 +1433,8 @@ with tab4:
             editable,
             use_container_width=True,
             num_rows="dynamic",
-            column_config={
-                "result": st.column_config.SelectboxColumn("result", options=["", "win", "loss", "push", "void"]),
-            },
-            key="bet_log_editor_v17",
+            column_config={"result": st.column_config.SelectboxColumn("result", options=["", "win", "loss", "push", "void"])},
+            key="bet_log_editor_v17_1",
         )
 
         if st.button("Save Tracker Changes"):
@@ -1240,10 +1452,7 @@ with tab4:
                 mem_add = mem_add.rename(columns={"recommended_units": "units"})
                 mem_add["date"] = datetime.now().strftime("%Y-%m-%d")
                 mem = pd.concat([mem, mem_add], ignore_index=True)
-                mem = mem.drop_duplicates(
-                    subset=["date", "sport", "market", "selection", "book", "odds", "result"],
-                    keep="last"
-                )
+                mem = mem.drop_duplicates(subset=["date", "sport", "market", "selection", "book", "odds", "result"], keep="last")
                 save_model_memory(mem)
 
                 save_book_performance(summarize_book_performance(mem, min_samples=int(settings["book_min_samples"])))
@@ -1253,10 +1462,10 @@ with tab4:
             st.success("Tracker, CLV, calibration, and learning profiles updated.")
             st.rerun()
 
-        export_download(bet_log, "v17_bet_log.csv", "Download bet log CSV")
+        export_download(bet_log, "v17_1_bet_log.csv", "Download bet log CSV")
 
 
-with tab5:
+with tab6:
     st.subheader("Calibration Engine")
     calibration_df = build_calibration_profile(load_model_memory(), min_samples=int(settings["calibration_min_samples"]))
 
@@ -1267,21 +1476,11 @@ with tab5:
         c1.metric("Calibration Segments", len(calibration_df))
         c2.metric("Avg Multiplier", f"{calibration_df['multiplier'].mean():.3f}")
         c3.metric("Avg Delta", pct(calibration_df["delta"].mean()))
-
-        st.dataframe(
-            calibration_df.sort_values(["sport", "market_bucket", "prob_bucket"]),
-            use_container_width=True,
-        )
-
-        st.markdown("**How calibration works**")
-        st.write(
-            "V17 compares predicted win probability to actual win rate by sport, market bucket, and probability band. "
-            "If the model has been overconfident, calibrated probability is scaled down. If underconfident, it is scaled up."
-        )
-        export_download(calibration_df, "v17_calibration_profile.csv", "Download calibration CSV")
+        st.dataframe(calibration_df.sort_values(["sport", "market_bucket", "prob_bucket"]), use_container_width=True)
+        export_download(calibration_df, "v17_1_calibration_profile.csv", "Download calibration CSV")
 
 
-with tab6:
+with tab7:
     st.subheader("Profile Filter")
     profile_perf_df = summarize_profile_performance(load_model_memory(), min_samples=int(settings["profile_min_samples"]))
 
@@ -1292,26 +1491,17 @@ with tab6:
         c1.metric("Tracked Profiles", len(profile_perf_df))
         c2.metric("Boosted Profiles", int((profile_perf_df["profile_signal"] == "Boost").sum()))
         c3.metric("Suppressed Profiles", int((profile_perf_df["profile_signal"] == "Suppress").sum()))
-
-        st.dataframe(
-            profile_perf_df.sort_values(["roi", "bets"], ascending=[False, False]),
-            use_container_width=True,
-        )
-
-        st.markdown("**Profile logic**")
-        st.write(
-            "Profiles combine sport, market type, model probability band, edge band, and odds band. "
-            "Winning profiles get boosted. Persistently losing profiles can be suppressed from best-bet consideration."
-        )
-        export_download(profile_perf_df, "v17_profile_performance.csv", "Download profile CSV")
+        st.dataframe(profile_perf_df.sort_values(["roi", "bets"], ascending=[False, False]), use_container_width=True)
+        export_download(profile_perf_df, "v17_1_profile_performance.csv", "Download profile CSV")
 
 
-with tab7:
+with tab8:
     st.subheader("Book + Market Intelligence")
     current_memory = load_model_memory()
     market_perf_df = summarize_market_performance(current_memory, min_samples=int(settings["learning_min_samples"]))
     book_perf_df = summarize_book_performance(current_memory, min_samples=int(settings["book_min_samples"]))
     sharp_status = evaluate_sharp_mode(current_memory, settings)
+    portfolio_history = load_portfolio_history()
 
     c1, c2, c3 = st.columns(3)
     c1.metric("Sharp Mode", "ON" if sharp_status.get("sharp_mode", False) else "OFF")
@@ -1330,5 +1520,9 @@ with tab7:
     else:
         st.dataframe(book_perf_df.sort_values(["roi", "bets"], ascending=[False, False]), use_container_width=True)
 
-        export_download(book_perf_df, "v17_book_intelligence.csv", "Download book intelligence CSV")
-        export_download(market_perf_df, "v17_market_intelligence.csv", "Download market intelligence CSV")
+    st.markdown("**Portfolio history**")
+    if len(portfolio_history) == 0:
+        st.info("No saved portfolios yet.")
+    else:
+        st.dataframe(portfolio_history.sort_values(["created_at", "portfolio_rank"], ascending=[False, True]), use_container_width=True)
+        export_download(portfolio_history, "v17_1_portfolio_history.csv", "Download portfolio history CSV")

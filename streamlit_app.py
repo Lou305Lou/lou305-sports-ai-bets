@@ -15,7 +15,7 @@ import streamlit as st
 # =========================
 # CONFIG
 # =========================
-APP_TITLE = "Sports AI Betting Dashboard — V18"
+APP_TITLE = "Sports AI Betting Dashboard — V18.1"
 DATA_DIR = Path("data")
 DATA_DIR.mkdir(exist_ok=True)
 
@@ -28,6 +28,7 @@ PROFILE_PERF_PATH = DATA_DIR / "profile_performance.csv"
 PORTFOLIO_HISTORY_PATH = DATA_DIR / "portfolio_history.csv"
 MODEL_VOTES_PATH = DATA_DIR / "model_votes_history.csv"
 MODEL_PERFORMANCE_PATH = DATA_DIR / "model_performance.csv"
+MODEL_SEGMENT_PERFORMANCE_PATH = DATA_DIR / "model_segment_performance.csv"
 
 
 # =========================
@@ -35,7 +36,7 @@ MODEL_PERFORMANCE_PATH = DATA_DIR / "model_performance.csv"
 # =========================
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 st.title(APP_TITLE)
-st.caption("V18: Multi-AI model engine with voting, debate logic, weighted model influence, and model-based parlays")
+st.caption("V18.1: Auto-model learning with adaptive thresholds, segment-aware weights, and smarter debate logic")
 
 
 # =========================
@@ -319,6 +320,25 @@ def score_to_risk_band(score):
     return "High"
 
 
+# =========================
+# MODEL DEFINITIONS
+# =========================
+MODEL_NAMES = ["Model_A", "Model_B", "Model_C", "Model_D", "Model_E"]
+
+
+def default_model_thresholds():
+    return {
+        "Model_A": 0.015,
+        "Model_B": 0.015,
+        "Model_C": 0.015,
+        "Model_D": 0.015,
+        "Model_E": 0.015,
+    }
+
+
+# =========================
+# INPUT CLEANING
+# =========================
 def clean_input_df(df: pd.DataFrame):
     df = df.copy()
     df.columns = [str(c).strip().lower() for c in df.columns]
@@ -417,6 +437,9 @@ def load_settings():
         "model_consensus_min": 3,
         "use_model_weights": True,
         "debate_penalty_on": True,
+        "adaptive_thresholds_on": True,
+        "adaptive_segments_on": True,
+        "adaptive_min_samples": 10,
     }
     try:
         if SETTINGS_PATH.exists():
@@ -481,8 +504,10 @@ def save_portfolio_history(df):
 def load_model_votes_history():
     cols = [
         "saved_at", "bet_id", "sport", "event", "market_bucket", "selection", "bet_type",
-        "book", "odds", "result", "Model_A_prob", "Model_A_vote", "Model_B_prob", "Model_B_vote",
-        "Model_C_prob", "Model_C_vote", "Model_D_prob", "Model_D_vote", "Model_E_prob", "Model_E_vote"
+        "book", "odds", "result",
+        "Model_A_prob", "Model_A_vote", "Model_B_prob", "Model_B_vote",
+        "Model_C_prob", "Model_C_vote", "Model_D_prob", "Model_D_vote",
+        "Model_E_prob", "Model_E_vote"
     ]
     return safe_read_csv(MODEL_VOTES_PATH, cols)
 
@@ -492,12 +517,27 @@ def save_model_votes_history(df):
 
 
 def load_model_performance():
-    cols = ["model_name", "bets", "wins", "losses", "win_rate", "avg_prob", "brier_proxy", "weight", "status"]
+    cols = [
+        "model_name", "bets", "wins", "losses", "win_rate", "avg_prob", "brier_proxy",
+        "weight", "status", "adaptive_threshold"
+    ]
     return safe_read_csv(MODEL_PERFORMANCE_PATH, cols)
 
 
 def save_model_performance(df):
     safe_write_csv(df, MODEL_PERFORMANCE_PATH)
+
+
+def load_model_segment_performance():
+    cols = [
+        "model_name", "sport", "market_bucket", "bets", "wins", "losses",
+        "win_rate", "avg_prob", "brier_proxy", "segment_weight", "segment_threshold", "segment_status"
+    ]
+    return safe_read_csv(MODEL_SEGMENT_PERFORMANCE_PATH, cols)
+
+
+def save_model_segment_performance(df):
+    safe_write_csv(df, MODEL_SEGMENT_PERFORMANCE_PATH)
 
 
 # =========================
@@ -641,9 +681,6 @@ def evaluate_sharp_mode(memory_df, settings):
 # =========================
 # MODEL PERFORMANCE / VOTING
 # =========================
-MODEL_NAMES = ["Model_A", "Model_B", "Model_C", "Model_D", "Model_E"]
-
-
 def default_model_performance():
     rows = []
     for m in MODEL_NAMES:
@@ -657,6 +694,7 @@ def default_model_performance():
             "brier_proxy": np.nan,
             "weight": 1.0,
             "status": "Neutral",
+            "adaptive_threshold": default_model_thresholds()[m],
         })
     return pd.DataFrame(rows)
 
@@ -678,28 +716,52 @@ def initialize_model_performance():
     return perf
 
 
-def model_weight_lookup(perf_df):
+def default_model_segment_performance():
+    return pd.DataFrame(columns=[
+        "model_name", "sport", "market_bucket", "bets", "wins", "losses",
+        "win_rate", "avg_prob", "brier_proxy", "segment_weight", "segment_threshold", "segment_status"
+    ])
+
+
+def overall_model_weight_lookup(perf_df):
+    out = {m: 1.0 for m in MODEL_NAMES}
+    thr = default_model_thresholds()
     if len(perf_df) == 0:
-        return {m: 1.0 for m in MODEL_NAMES}
-    d = {}
+        return out, thr
     for m in MODEL_NAMES:
         seg = perf_df[perf_df["model_name"].astype(str) == m]
         if len(seg):
-            d[m] = float(seg.iloc[0].get("weight", 1.0) if pd.notna(seg.iloc[0].get("weight", np.nan)) else 1.0)
-        else:
-            d[m] = 1.0
-    return d
+            row = seg.iloc[0]
+            out[m] = float(row.get("weight", 1.0) if pd.notna(row.get("weight", np.nan)) else 1.0)
+            thr[m] = float(row.get("adaptive_threshold", thr[m]) if pd.notna(row.get("adaptive_threshold", np.nan)) else thr[m])
+    return out, thr
 
 
-def build_multi_model_votes(df, perf_df, use_weights=True):
+def segment_weight_lookup(segment_df, sport, market_bucket):
+    base = {m: 1.0 for m in MODEL_NAMES}
+    base_thr = default_model_thresholds()
+    if len(segment_df) == 0:
+        return base, base_thr
+
+    seg = segment_df[
+        segment_df["sport"].astype(str).eq(normalize_text(sport)) &
+        segment_df["market_bucket"].astype(str).eq(normalize_text(market_bucket))
+    ]
+    if len(seg) == 0:
+        return base, base_thr
+
+    for m in MODEL_NAMES:
+        row = seg[seg["model_name"].astype(str) == m]
+        if len(row):
+            r = row.iloc[0]
+            base[m] = float(r.get("segment_weight", 1.0) if pd.notna(r.get("segment_weight", np.nan)) else 1.0)
+            base_thr[m] = float(r.get("segment_threshold", base_thr[m]) if pd.notna(r.get("segment_threshold", np.nan)) else base_thr[m])
+    return base, base_thr
+
+
+def build_multi_model_votes(df, perf_df, segment_df, settings):
     out = df.copy()
-    weights = model_weight_lookup(perf_df)
-
-    def clamp_prob(x):
-        try:
-            return float(np.clip(float(x), 0.01, 0.99))
-        except Exception:
-            return np.nan
+    overall_weights, overall_thresholds = overall_model_weight_lookup(perf_df)
 
     # Model A: probability model
     out["Model_A_prob"] = (out["calibrated_prob"].fillna(out["model_prob"].fillna(0.50)) * 0.60 + out["model_prob"].fillna(0.50) * 0.40).clip(0.01, 0.99)
@@ -722,22 +784,54 @@ def build_multi_model_votes(df, perf_df, use_weights=True):
     risk_penalty = np.where(out.get("risk_band", "High").astype(str) == "High", -0.04, np.where(out.get("risk_band", "High").astype(str) == "Medium", -0.01, 0.02))
     out["Model_E_prob"] = (out["calibrated_prob"].fillna(0.50) + risk_penalty + out["ev"].fillna(0).clip(lower=-0.08, upper=0.12) * 0.35).clip(0.01, 0.99)
 
-    vote_threshold = out["implied_prob"].fillna(0.50) + 0.015
-    for m in MODEL_NAMES:
-        out[f"{m}_vote"] = np.where(out[f"{m}_prob"] > vote_threshold, "YES", "NO")
+    vote_counts = []
+    weighted_votes = []
+    weighted_ratios = []
+    adaptive_notes = []
 
-    out["model_yes_votes"] = out[[f"{m}_vote" for m in MODEL_NAMES]].apply(lambda r: int((r == "YES").sum()), axis=1)
+    for _, row in out.iterrows():
+        sport = row.get("sport", "")
+        mkt = row.get("market_bucket", "")
+        seg_weights, seg_thresholds = segment_weight_lookup(segment_df, sport, mkt)
 
-    if use_weights:
-        weighted = np.zeros(len(out))
+        yes_count = 0
+        w_yes = 0.0
+        total_weight = 0.0
+        notes = []
+
         for m in MODEL_NAMES:
-            weighted += np.where(out[f"{m}_vote"] == "YES", weights.get(m, 1.0), 0.0)
-        out["weighted_yes_votes"] = weighted
-        total_w = max(sum(weights.values()), 1e-9)
-        out["weighted_consensus_ratio"] = out["weighted_yes_votes"] / total_w
-    else:
-        out["weighted_yes_votes"] = out["model_yes_votes"].astype(float)
-        out["weighted_consensus_ratio"] = out["model_yes_votes"] / float(len(MODEL_NAMES))
+            overall_w = overall_weights.get(m, 1.0)
+            overall_thr = overall_thresholds.get(m, 0.015)
+            seg_w = seg_weights.get(m, 1.0) if settings.get("adaptive_segments_on", True) else 1.0
+            seg_thr = seg_thresholds.get(m, overall_thr) if settings.get("adaptive_segments_on", True) else overall_thr
+
+            final_weight = overall_w * seg_w if settings.get("use_model_weights", True) else 1.0
+            final_threshold = seg_thr if settings.get("adaptive_thresholds_on", True) else 0.015
+
+            baseline = float(row.get("implied_prob", 0.50) if pd.notna(row.get("implied_prob", np.nan)) else 0.50)
+            prob = float(row.get(f"{m}_prob", np.nan) if pd.notna(row.get(f"{m}_prob", np.nan)) else np.nan)
+            vote = "YES" if pd.notna(prob) and prob > (baseline + final_threshold) else "NO"
+
+            out.loc[row.name, f"{m}_vote"] = vote
+            out.loc[row.name, f"{m}_weight_used"] = round(final_weight, 3)
+            out.loc[row.name, f"{m}_threshold_used"] = round(final_threshold, 4)
+
+            total_weight += final_weight
+            if vote == "YES":
+                yes_count += 1
+                w_yes += final_weight
+
+            notes.append(f"{m}:{vote}@{final_threshold:.3f}")
+
+        vote_counts.append(yes_count)
+        weighted_votes.append(w_yes)
+        weighted_ratios.append(w_yes / max(total_weight, 1e-9))
+        adaptive_notes.append(" | ".join(notes))
+
+    out["model_yes_votes"] = vote_counts
+    out["weighted_yes_votes"] = weighted_votes
+    out["weighted_consensus_ratio"] = weighted_ratios
+    out["adaptive_vote_note"] = adaptive_notes
 
     out["debate_label"] = np.where(
         out["model_yes_votes"] == 5, "5/5 Elite",
@@ -752,12 +846,12 @@ def summarize_model_performance(votes_history_df):
     if len(votes_history_df) == 0:
         return default_model_performance()
 
-    rows = []
     settled = votes_history_df[votes_history_df["result"].astype(str).str.lower().isin(["win", "loss"])].copy()
     if len(settled) == 0:
         return default_model_performance()
 
     settled["actual"] = settled["result"].astype(str).str.lower().map({"win": 1.0, "loss": 0.0})
+    rows = []
 
     for m in MODEL_NAMES:
         prob_col = f"{m}_prob"
@@ -765,18 +859,9 @@ def summarize_model_performance(votes_history_df):
         seg = settled[[prob_col, vote_col, "actual"]].copy()
         seg = seg[seg[prob_col].notna()]
         bets = len(seg)
+
         if bets == 0:
-            rows.append({
-                "model_name": m,
-                "bets": 0,
-                "wins": 0,
-                "losses": 0,
-                "win_rate": np.nan,
-                "avg_prob": np.nan,
-                "brier_proxy": np.nan,
-                "weight": 1.0,
-                "status": "Neutral",
-            })
+            rows.append(default_model_performance().query("model_name == @m").iloc[0].to_dict())
             continue
 
         yes_seg = seg[seg[vote_col].astype(str) == "YES"].copy()
@@ -787,18 +872,22 @@ def summarize_model_performance(votes_history_df):
         brier = ((seg[prob_col] - seg["actual"]) ** 2).mean()
 
         weight = 1.0
+        status = "Neutral"
+        threshold = default_model_thresholds()[m]
+
         if len(yes_seg) >= 10 and pd.notna(win_rate):
             if win_rate >= 0.58 and brier <= 0.24:
-                weight = 1.15
+                weight = 1.16
                 status = "Hot"
+                threshold = 0.012
             elif win_rate <= 0.46:
                 weight = 0.88
                 status = "Cold"
+                threshold = 0.022
             else:
                 weight = 1.0
                 status = "Neutral"
-        else:
-            status = "Neutral"
+                threshold = 0.015
 
         rows.append({
             "model_name": m,
@@ -810,7 +899,67 @@ def summarize_model_performance(votes_history_df):
             "brier_proxy": brier,
             "weight": round(weight, 3),
             "status": status,
+            "adaptive_threshold": round(threshold, 4),
         })
+
+    return pd.DataFrame(rows)
+
+
+def summarize_model_segment_performance(votes_history_df, min_samples=10):
+    if len(votes_history_df) == 0:
+        return default_model_segment_performance()
+
+    settled = votes_history_df[votes_history_df["result"].astype(str).str.lower().isin(["win", "loss"])].copy()
+    if len(settled) == 0:
+        return default_model_segment_performance()
+
+    settled["actual"] = settled["result"].astype(str).str.lower().map({"win": 1.0, "loss": 0.0})
+    rows = []
+
+    for m in MODEL_NAMES:
+        prob_col = f"{m}_prob"
+        vote_col = f"{m}_vote"
+
+        for (sport, market_bucket), grp in settled.groupby(["sport", "market_bucket"], dropna=False):
+            g = grp[[prob_col, vote_col, "actual"]].copy()
+            g = g[g[prob_col].notna()]
+            yes = g[g[vote_col].astype(str) == "YES"].copy()
+
+            bets = len(yes)
+            wins = int((yes["actual"] == 1).sum()) if bets else 0
+            losses = int((yes["actual"] == 0).sum()) if bets else 0
+            win_rate = yes["actual"].mean() if bets else np.nan
+            avg_prob = g[prob_col].mean() if len(g) else np.nan
+            brier = ((g[prob_col] - g["actual"]) ** 2).mean() if len(g) else np.nan
+
+            seg_weight = 1.0
+            seg_threshold = default_model_thresholds()[m]
+            seg_status = "Neutral"
+
+            if bets >= min_samples and pd.notna(win_rate):
+                if win_rate >= 0.60 and (pd.isna(brier) or brier <= 0.24):
+                    seg_weight = 1.12
+                    seg_threshold = 0.011
+                    seg_status = "Favored"
+                elif win_rate <= 0.45:
+                    seg_weight = 0.88
+                    seg_threshold = 0.024
+                    seg_status = "Reduced"
+
+            rows.append({
+                "model_name": m,
+                "sport": sport,
+                "market_bucket": market_bucket,
+                "bets": bets,
+                "wins": wins,
+                "losses": losses,
+                "win_rate": win_rate,
+                "avg_prob": avg_prob,
+                "brier_proxy": brier,
+                "segment_weight": round(seg_weight, 3),
+                "segment_threshold": round(seg_threshold, 4),
+                "segment_status": seg_status,
+            })
 
     return pd.DataFrame(rows)
 
@@ -821,8 +970,10 @@ def save_current_vote_snapshot(df_with_votes):
     hist = load_model_votes_history()
     save_cols = [
         "bet_id", "sport", "event", "market_bucket", "selection", "bet_type",
-        "book", "odds", "Model_A_prob", "Model_A_vote", "Model_B_prob", "Model_B_vote",
-        "Model_C_prob", "Model_C_vote", "Model_D_prob", "Model_D_vote", "Model_E_prob", "Model_E_vote"
+        "book", "odds",
+        "Model_A_prob", "Model_A_vote", "Model_B_prob", "Model_B_vote",
+        "Model_C_prob", "Model_C_vote", "Model_D_prob", "Model_D_vote",
+        "Model_E_prob", "Model_E_vote"
     ]
     snap = ensure_columns(df_with_votes.copy(), save_cols + ["result"])
     snap = snap[save_cols + ["result"]].copy()
@@ -939,12 +1090,14 @@ def sharp_mode_weight(sharp_status, settings):
 
 def debate_weight(row, settings):
     yes_votes = float(row.get("model_yes_votes", 0) if pd.notna(row.get("model_yes_votes", np.nan)) else 0)
+    weighted_ratio = float(row.get("weighted_consensus_ratio", 0) if pd.notna(row.get("weighted_consensus_ratio", np.nan)) else 0)
+
     if yes_votes >= 5:
         return 1.18
     if yes_votes >= 4:
-        return 1.10
+        return 1.10 if weighted_ratio >= 0.75 else 1.06
     if yes_votes >= 3:
-        return 1.00
+        return 1.03 if weighted_ratio >= 0.62 else 1.00
     if settings.get("debate_penalty_on", True):
         return 0.82
     return 1.0
@@ -1014,7 +1167,7 @@ def qualify_plays(df, settings):
     return out
 
 
-def add_model_features(df, calibration_df, market_perf_df, book_perf_df, profile_perf_df, sharp_status, perf_df, settings):
+def add_model_features(df, calibration_df, market_perf_df, book_perf_df, profile_perf_df, sharp_status, perf_df, segment_df, settings):
     out = df.copy()
     out = apply_calibration(out, calibration_df, settings)
     out["ev"] = out.apply(lambda r: compute_ev(r.get("calibrated_prob", np.nan), r.get("odds", np.nan)), axis=1)
@@ -1023,7 +1176,7 @@ def add_model_features(df, calibration_df, market_perf_df, book_perf_df, profile
     ) if len(profile_perf_df) else "Neutral"
     out["sharp_flag"] = "Sharp" if sharp_status.get("sharp_mode", False) else "Normal"
     out["risk_band"] = out["score"].apply(score_to_risk_band)
-    out = build_multi_model_votes(out, perf_df, use_weights=bool(settings.get("use_model_weights", True)))
+    out = build_multi_model_votes(out, perf_df, segment_df, settings)
     out["recommended_units"] = out.apply(
         lambda r: recommend_units(r, settings, market_perf_df, book_perf_df, profile_perf_df, sharp_status), axis=1
     )
@@ -1202,7 +1355,7 @@ def build_portfolio_exposure_tables(portfolio_df):
     return by_event, by_market, by_book
 
 
-def save_portfolio_snapshot(portfolio_df, portfolio_name="V18 Portfolio"):
+def save_portfolio_snapshot(portfolio_df, portfolio_name="V18.1 Portfolio"):
     if len(portfolio_df) == 0:
         return 0
     hist = load_portfolio_history()
@@ -1270,7 +1423,7 @@ def build_consensus_parlays(df, settings):
     if len(df) == 0:
         return pd.DataFrame()
 
-    df = df.copy().sort_values(["model_yes_votes", "priority_score", "score", "ev"], ascending=[False, False, False, False]).head(16)
+    df = df.copy().sort_values(["weighted_consensus_ratio", "model_yes_votes", "priority_score", "score", "ev"], ascending=[False, False, False, False, False]).head(16)
     rows = []
     min_legs = int(settings["min_parlay_legs"])
     max_legs = int(settings["max_parlay_legs"])
@@ -1295,8 +1448,9 @@ def build_consensus_parlays(df, settings):
             penalty, penalty_reason = parlay_correlation_penalty(legs)
 
             raw_score = (
-                legs["priority_score"].mean() * 0.42
-                + legs["model_yes_votes"].mean() * 6.0
+                legs["priority_score"].mean() * 0.38
+                + legs["weighted_consensus_ratio"].mean() * 25.0
+                + legs["model_yes_votes"].mean() * 4.0
                 + max(0, (joint_prob - implied) * 100) * 0.9
                 + min(10, len(legs))
             )
@@ -1305,6 +1459,7 @@ def build_consensus_parlays(df, settings):
             rows.append({
                 "legs": len(legs),
                 "avg_debate_votes": round(legs["model_yes_votes"].mean(), 2),
+                "avg_weighted_ratio": round(legs["weighted_consensus_ratio"].mean(), 3),
                 "parlay_odds": int(parlay_american),
                 "joint_prob": joint_prob,
                 "implied_prob": implied,
@@ -1320,7 +1475,7 @@ def build_consensus_parlays(df, settings):
     out = pd.DataFrame(rows)
     if len(out) == 0:
         return out
-    return out.sort_values(["avg_debate_votes", "score", "ev", "joint_prob"], ascending=[False, False, False, False]).drop_duplicates(subset=["summary"]).head(12)
+    return out.sort_values(["avg_weighted_ratio", "avg_debate_votes", "score", "ev"], ascending=[False, False, False, False]).drop_duplicates(subset=["summary"]).head(12)
 
 
 # =========================
@@ -1392,7 +1547,7 @@ def format_pick_card(row):
 Projection: {row.get("projection", np.nan):.2f} | Edge: {row.get("edge", np.nan):.2f} | Odds: {int(row.get("odds", 0)) if pd.notna(row.get("odds")) else "—"}
 Model Hit %: {pct(row.get("model_prob", np.nan))} | Calibrated Hit %: {pct(row.get("calibrated_prob", np.nan))} | EV: {pct(row.get("ev", np.nan))}
 Score: {row.get("score", np.nan):.1f} ({emoji} {grade}) | Priority: {row.get("priority_score", np.nan):.1f}
-Debate: {int(row.get("model_yes_votes", 0))}/5 | Label: {normalize_text(row.get("debate_label", ""))}
+Debate: {int(row.get("model_yes_votes", 0))}/5 | Weighted: {float(row.get("weighted_consensus_ratio", 0)):.2f} | Label: {normalize_text(row.get("debate_label", ""))}
 Tier: {row.get("tier", "Tier 4")} | Units: {row.get("recommended_units", np.nan):.2f}u | Mode: {normalize_text(row.get("sharp_flag", "Normal"))}"""
 
 
@@ -1415,16 +1570,21 @@ profile_perf_df = summarize_profile_performance(memory_df, min_samples=int(setti
 sharp_status = evaluate_sharp_mode(memory_df, settings)
 model_perf_df = initialize_model_performance()
 votes_history_df = load_model_votes_history()
+model_segment_perf_df = load_model_segment_performance()
+
 if len(votes_history_df) > 0:
     model_perf_df = summarize_model_performance(votes_history_df)
     save_model_performance(model_perf_df)
+
+    model_segment_perf_df = summarize_model_segment_performance(votes_history_df, min_samples=int(settings["adaptive_min_samples"]))
+    save_model_segment_performance(model_segment_perf_df)
 
 
 # =========================
 # SIDEBAR
 # =========================
 with st.sidebar:
-    st.header("V18 Controls")
+    st.header("V18.1 Controls")
 
     settings["bankroll"] = st.number_input("Bankroll", min_value=100.0, value=float(settings["bankroll"]), step=50.0)
     settings["kelly_multiplier"] = st.slider("Kelly Multiplier", 0.05, 1.00, float(settings["kelly_multiplier"]), 0.05)
@@ -1434,9 +1594,9 @@ with st.sidebar:
     settings["model_consensus_min"] = st.selectbox("Minimum Model Votes", [3, 4, 5], index=[3, 4, 5].index(int(settings["model_consensus_min"])))
     settings["use_model_weights"] = st.checkbox("Use Weighted Model Influence", value=bool(settings["use_model_weights"]))
     settings["debate_penalty_on"] = st.checkbox("Use Debate Penalty", value=bool(settings["debate_penalty_on"]))
-    settings["default_odds_min"] = st.number_input("Minimum Odds", value=int(settings["default_odds_min"]), step=5)
-    settings["default_odds_max"] = st.number_input("Maximum Odds", value=int(settings["default_odds_max"]), step=5)
-    settings["portfolio_target_risk"] = st.selectbox("Target Portfolio Risk", ["Conservative", "Balanced", "Aggressive"], index=["Conservative", "Balanced", "Aggressive"].index(settings["portfolio_target_risk"]))
+    settings["adaptive_thresholds_on"] = st.checkbox("Use Adaptive Thresholds", value=bool(settings["adaptive_thresholds_on"]))
+    settings["adaptive_segments_on"] = st.checkbox("Use Sport/Market Model Learning", value=bool(settings["adaptive_segments_on"]))
+    settings["adaptive_min_samples"] = st.number_input("Min Samples For Adaptive Model Learning", min_value=5, value=int(settings["adaptive_min_samples"]), step=1)
 
     if st.button("Save Settings"):
         save_settings(settings)
@@ -1449,23 +1609,24 @@ with st.sidebar:
     st.write("Avg CLV:", pct(sharp_status.get("avg_clv", np.nan)))
 
     st.divider()
-    st.markdown("**Model Weights**")
+    st.markdown("**Adaptive Model Status**")
     if len(model_perf_df):
-        show_perf = model_perf_df[["model_name", "weight", "status"]].copy()
+        show_perf = model_perf_df[["model_name", "weight", "adaptive_threshold", "status"]].copy()
         st.dataframe(show_perf, use_container_width=True, hide_index=True)
 
 
 # =========================
 # TABS
 # =========================
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "Upload + Multi-AI Board",
     "Best Bets",
-    "Model Debate",
+    "Adaptive Debate",
     "Portfolio Optimizer",
     "AI Parlays",
     "Bet Tracker + Learning",
     "Model Performance",
+    "Segment Learning",
 ])
 
 input_df = pd.DataFrame()
@@ -1487,14 +1648,22 @@ with tab1:
 
     with st.expander("See sample input format"):
         st.dataframe(sample_df, use_container_width=True)
-        export_download(sample_df, "v18_sample_input.csv", "Download sample CSV")
+        export_download(sample_df, "v18_1_sample_input.csv", "Download sample CSV")
 
     if uploaded is not None:
         try:
             raw = pd.read_csv(uploaded)
             input_df = clean_input_df(raw)
             input_df = add_model_features(
-                input_df, calibration_df, market_perf_df, book_perf_df, profile_perf_df, sharp_status, model_perf_df, settings
+                input_df,
+                calibration_df,
+                market_perf_df,
+                book_perf_df,
+                profile_perf_df,
+                sharp_status,
+                model_perf_df,
+                model_segment_perf_df,
+                settings
             )
             st.success(f"Loaded {len(input_df)} rows.")
         except Exception as e:
@@ -1520,14 +1689,15 @@ with tab1:
         if book_filter != "All":
             filtered = filtered[filtered["book"].astype(str) == book_filter]
 
-        filtered = filtered.sort_values(["model_yes_votes", "priority_score", "score", "ev"], ascending=[False, False, False, False])
+        filtered = filtered.sort_values(["weighted_consensus_ratio", "model_yes_votes", "priority_score", "score", "ev"], ascending=[False, False, False, False, False])
 
-        st.subheader("Multi-AI Board")
+        st.subheader("Adaptive Multi-AI Board")
         st.dataframe(
             filtered[[
                 "sport", "event", "market_bucket", "selection", "bet_type", "book",
                 "odds", "model_prob", "calibrated_prob", "ev", "score", "priority_score",
-                "model_yes_votes", "weighted_yes_votes", "debate_label", "recommended_units", "sharp_flag"
+                "model_yes_votes", "weighted_yes_votes", "weighted_consensus_ratio",
+                "debate_label", "recommended_units", "sharp_flag"
             ]],
             use_container_width=True,
         )
@@ -1537,33 +1707,33 @@ with tab1:
             updated_log, added = append_new_bets_to_log(qualified, bet_log)
             save_bet_log(updated_log)
             vote_added = save_current_vote_snapshot(qualified)
-            st.success(f"Auto-saved {added} bets and {vote_added} vote snapshots.")
+            st.success(f"Auto-saved {added} bets and {vote_added} adaptive vote snapshots.")
             st.rerun()
 
 
 with tab2:
     st.subheader("Best Bets")
     if len(input_df) == 0:
-        st.info("Upload a CSV in the first tab to generate V18 best bets.")
+        st.info("Upload a CSV in the first tab to generate V18.1 best bets.")
     else:
         qualified = qualify_plays(input_df, settings).copy()
-        qualified = qualified.sort_values(["model_yes_votes", "priority_score", "score", "ev"], ascending=[False, False, False, False])
+        qualified = qualified.sort_values(["weighted_consensus_ratio", "model_yes_votes", "priority_score", "score", "ev"], ascending=[False, False, False, False, False])
 
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Qualified Bets", len(qualified))
-        c2.metric("Avg Debate Votes", f"{qualified['model_yes_votes'].mean():.2f}" if len(qualified) else "—")
+        c2.metric("Avg Weighted Support", f"{qualified['weighted_consensus_ratio'].mean():.2f}" if len(qualified) else "—")
         c3.metric("Avg EV", pct(qualified["ev"].mean()) if len(qualified) else "—")
         c4.metric("5/5 Elite Plays", int((qualified["model_yes_votes"] == 5).sum()) if len(qualified) else 0)
 
         if len(qualified) == 0:
-            st.warning("No plays met the V18 filters.")
+            st.warning("No plays met the V18.1 filters.")
         else:
             st.dataframe(
                 qualified[[
                     "sport", "event", "market_bucket", "selection", "bet_type", "book", "odds",
                     "model_prob", "calibrated_prob", "ev", "score", "priority_score",
-                    "model_yes_votes", "weighted_yes_votes", "debate_label",
-                    "recommended_units", "sharp_flag"
+                    "model_yes_votes", "weighted_yes_votes", "weighted_consensus_ratio",
+                    "debate_label", "recommended_units", "sharp_flag"
                 ]],
                 use_container_width=True,
             )
@@ -1575,33 +1745,32 @@ with tab2:
 
 
 with tab3:
-    st.subheader("Model Debate")
+    st.subheader("Adaptive Debate")
     if len(input_df) == 0:
-        st.info("Upload a CSV in the first tab to view model debate.")
+        st.info("Upload a CSV in the first tab to view adaptive model debate.")
     else:
-        debate_df = input_df.copy().sort_values(["model_yes_votes", "priority_score"], ascending=[False, False])
+        debate_df = input_df.copy().sort_values(["weighted_consensus_ratio", "model_yes_votes", "priority_score"], ascending=[False, False, False])
 
         st.dataframe(
             debate_df[[
-                "sport", "event", "selection", "bet_type", "book", "odds",
-                "Model_A_prob", "Model_A_vote",
-                "Model_B_prob", "Model_B_vote",
-                "Model_C_prob", "Model_C_vote",
-                "Model_D_prob", "Model_D_vote",
-                "Model_E_prob", "Model_E_vote",
-                "model_yes_votes", "weighted_yes_votes", "debate_label"
+                "sport", "event", "market_bucket", "selection", "bet_type", "book", "odds",
+                "Model_A_prob", "Model_A_vote", "Model_A_weight_used", "Model_A_threshold_used",
+                "Model_B_prob", "Model_B_vote", "Model_B_weight_used", "Model_B_threshold_used",
+                "Model_C_prob", "Model_C_vote", "Model_C_weight_used", "Model_C_threshold_used",
+                "Model_D_prob", "Model_D_vote", "Model_D_weight_used", "Model_D_threshold_used",
+                "Model_E_prob", "Model_E_vote", "Model_E_weight_used", "Model_E_threshold_used",
+                "model_yes_votes", "weighted_yes_votes", "weighted_consensus_ratio", "debate_label"
             ]],
             use_container_width=True,
         )
 
-        elite = debate_df[debate_df["model_yes_votes"] == 5]
-        strong = debate_df[debate_df["model_yes_votes"] == 4]
-        playable = debate_df[debate_df["model_yes_votes"] == 3]
-
         c1, c2, c3 = st.columns(3)
-        c1.metric("5/5 Elite", len(elite))
-        c2.metric("4/5 Strong", len(strong))
-        c3.metric("3/5 Playable", len(playable))
+        c1.metric("5/5 Elite", int((debate_df["model_yes_votes"] == 5).sum()))
+        c2.metric("4/5 Strong", int((debate_df["model_yes_votes"] == 4).sum()))
+        c3.metric("Weighted 0.75+", int((debate_df["weighted_consensus_ratio"] >= 0.75).sum()))
+
+        with st.expander("Adaptive vote notes"):
+            st.dataframe(debate_df[["selection", "bet_type", "adaptive_vote_note"]], use_container_width=True)
 
 
 with tab4:
@@ -1646,16 +1815,16 @@ with tab4:
             c1, c2 = st.columns(2)
             with c1:
                 if st.button("Save Portfolio Snapshot"):
-                    added = save_portfolio_snapshot(portfolio_df, portfolio_name=f"V18 {settings['portfolio_target_risk']}")
+                    added = save_portfolio_snapshot(portfolio_df, portfolio_name=f"V18.1 {settings['portfolio_target_risk']}")
                     st.success(f"Saved {added} portfolio rows to history.")
             with c2:
-                export_download(portfolio_df, "v18_portfolio.csv", "Download portfolio CSV")
+                export_download(portfolio_df, "v18_1_portfolio.csv", "Download portfolio CSV")
 
 
 with tab5:
     st.subheader("AI Parlays")
     if len(input_df) == 0:
-        st.info("Upload a CSV in the first tab to generate model-based parlays.")
+        st.info("Upload a CSV in the first tab to generate adaptive AI parlays.")
     else:
         qualified = qualify_plays(input_df, settings).copy()
         parlays = build_consensus_parlays(qualified, settings)
@@ -1664,10 +1833,10 @@ with tab5:
         else:
             c1, c2, c3 = st.columns(3)
             c1.metric("Parlays Found", len(parlays))
-            c2.metric("Best Debate Avg", f"{parlays['avg_debate_votes'].max():.2f}")
+            c2.metric("Best Weighted Support", f"{parlays['avg_weighted_ratio'].max():.2f}")
             c3.metric("Best EV", pct(parlays["ev"].max()))
             st.dataframe(parlays, use_container_width=True)
-            export_download(parlays, "v18_ai_parlays.csv", "Download AI parlays CSV")
+            export_download(parlays, "v18_1_ai_parlays.csv", "Download AI parlays CSV")
 
 
 with tab6:
@@ -1690,7 +1859,7 @@ with tab6:
             use_container_width=True,
             num_rows="dynamic",
             column_config={"result": st.column_config.SelectboxColumn("result", options=["", "win", "loss", "push", "void"])},
-            key="bet_log_editor_v18",
+            key="bet_log_editor_v18_1",
         )
 
         if st.button("Save Tracker Changes"):
@@ -1717,12 +1886,16 @@ with tab6:
                     if "bet_id" in votes_hist.columns:
                         votes_hist["result"] = votes_hist["bet_id"].map(result_map).fillna(votes_hist.get("result"))
                         save_model_votes_history(votes_hist)
-                        save_model_performance(summarize_model_performance(votes_hist))
 
-            st.success("Tracker, learning memory, and model performance updated.")
+                        perf = summarize_model_performance(votes_hist)
+                        seg = summarize_model_segment_performance(votes_hist, min_samples=int(settings["adaptive_min_samples"]))
+                        save_model_performance(perf)
+                        save_model_segment_performance(seg)
+
+            st.success("Tracker, learning memory, adaptive model weights, and segment learning updated.")
             st.rerun()
 
-        export_download(bet_log, "v18_bet_log.csv", "Download bet log CSV")
+        export_download(bet_log, "v18_1_bet_log.csv", "Download bet log CSV")
 
 
 with tab7:
@@ -1742,4 +1915,24 @@ with tab7:
             model_perf_df.sort_values(["weight", "win_rate"], ascending=[False, False]),
             use_container_width=True,
         )
-        export_download(model_perf_df, "v18_model_performance.csv", "Download model performance CSV")
+        export_download(model_perf_df, "v18_1_model_performance.csv", "Download model performance CSV")
+
+
+with tab8:
+    st.subheader("Segment Learning")
+    seg_df = summarize_model_segment_performance(load_model_votes_history(), min_samples=int(settings["adaptive_min_samples"]))
+    save_model_segment_performance(seg_df)
+
+    if len(seg_df) == 0:
+        st.info("No segment-level model learning yet.")
+    else:
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Tracked Segments", len(seg_df))
+        c2.metric("Favored Segments", int((seg_df["segment_status"] == "Favored").sum()))
+        c3.metric("Reduced Segments", int((seg_df["segment_status"] == "Reduced").sum()))
+
+        st.dataframe(
+            seg_df.sort_values(["segment_weight", "win_rate", "bets"], ascending=[False, False, False]),
+            use_container_width=True,
+        )
+        export_download(seg_df, "v18_1_model_segment_performance.csv", "Download segment learning CSV")

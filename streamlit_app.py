@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Sports AI Dashboard V15A Line Movement Intelligence", layout="wide")
+st.set_page_config(page_title="Sports AI Dashboard V15.1 Line Movement Intelligence", layout="wide")
 
 BET_LOG_FILE = Path("bet_log_auto.csv")
 PARLAY_LOG_FILE = Path("parlay_log_auto.csv")
@@ -766,10 +766,29 @@ def build_engine(df):
         return "Neutral"
 
     df["sharp_signal"] = df.apply(_sharp_signal, axis=1)
-    df["market_timing_edge"] = 0.0
-    df.loc[df["sharp_signal"] == "Sharp Support", "market_timing_edge"] += 2.0
-    df.loc[df["sharp_signal"] == "Market Fade", "market_timing_edge"] -= 2.0
-    df.loc[df["steam_move"] == True, "market_timing_edge"] += np.where(df["sharp_signal"] == "Sharp Support", 1.5, np.where(df["sharp_signal"] == "Market Fade", -1.0, 0.5))
+    if "market_timing_edge" not in df.columns:
+        df["market_timing_edge"] = 0.0
+    df["market_timing_edge"] = pd.to_numeric(df["market_timing_edge"], errors="coerce").fillna(0.0)
+
+    sharp_support_mask = df["sharp_signal"] == "Sharp Support"
+    market_fade_mask = df["sharp_signal"] == "Market Fade"
+    steam_mask = df["steam_move"] == True
+
+    df.loc[sharp_support_mask, "market_timing_edge"] = (
+        df.loc[sharp_support_mask, "market_timing_edge"] + 2.0
+    )
+    df.loc[market_fade_mask, "market_timing_edge"] = (
+        df.loc[market_fade_mask, "market_timing_edge"] - 2.0
+    )
+
+    steam_adjustment = pd.Series(
+        np.where(sharp_support_mask, 1.5, np.where(market_fade_mask, -1.0, 0.5)),
+        index=df.index,
+    )
+    df.loc[steam_mask, "market_timing_edge"] = (
+        df.loc[steam_mask, "market_timing_edge"] + steam_adjustment.loc[steam_mask]
+    )
+
     df["market_timing_note"] = np.where(df["steam_move"], "Steam move detected", "Normal move")
     return df
 
@@ -2259,7 +2278,7 @@ def render_ai_parlay_builder(df, bankroll, risk_mode, drawdown_pct, roi_pct):
         st.divider()
 
 # ---------- APP ----------
-st.title("Sports AI Dashboard V14 Results + CLV Intelligence")
+st.title("Sports AI Dashboard V15.1 Line Movement Intelligence")
 st.caption("Adaptive portfolio intelligence for Mainline, Spread, and Total singles plus self-adjusting AI-built consensus parlays.")
 
 tabs = st.tabs([

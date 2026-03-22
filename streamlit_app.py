@@ -1,5 +1,4 @@
 import io
-import math
 from datetime import datetime
 from pathlib import Path
 
@@ -7,18 +6,31 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Sports Betting AI Dashboard V28", layout="wide")
+st.set_page_config(page_title="Sports Betting AI Dashboard V28.1", layout="wide")
 
-APP_TITLE = "🔥 Sports Betting AI Dashboard V28"
-APP_SUBTITLE = "Execution Intelligence Engine"
+APP_TITLE = "🔥 Sports Betting AI Dashboard V28.1"
+APP_SUBTITLE = "Profit Optimization Layer"
 BET_LOG_PATH = Path("bet_log.csv")
 LEARNING_PROFILE_PATH = Path("learning_profile.csv")
 SNAPSHOT_PATH = Path("snapshot.csv")
 
+MIN_ACTIVE_EDGE = 1.75
+MAX_BEST_BETS = 3
+SCORE_CAP = 100.0
+
 
 # -----------------------------
-# Data helpers
+# Math helpers
 # -----------------------------
+def safe_float(x, default=0.0):
+    try:
+        if x is None or x == "":
+            return default
+        return float(x)
+    except Exception:
+        return default
+
+
 def american_to_prob(odds):
     try:
         odds = float(odds)
@@ -33,7 +45,7 @@ def implied_edge(model_prob, odds):
     market_prob = american_to_prob(odds)
     if pd.isna(model_prob) or pd.isna(market_prob):
         return np.nan
-    return (float(model_prob) - float(market_prob)) * 100
+    return (float(model_prob) - float(market_prob)) * 100.0
 
 
 def odds_bucket(odds):
@@ -62,15 +74,9 @@ def consensus_bucket(n):
     return "lt3"
 
 
-def safe_float(x, default=0.0):
-    try:
-        if x is None or x == "":
-            return default
-        return float(x)
-    except Exception:
-        return default
-
-
+# -----------------------------
+# Data loading
+# -----------------------------
 def load_csv(file, fallback_df):
     try:
         if file is None:
@@ -96,7 +102,6 @@ def default_live_rows():
                 "model_prob": 0.542,
                 "book_disagreement": 1,
                 "clv_projection": 8.0,
-                "rec_notes": "best market price • book disagreement",
                 "prev_odds": -115,
                 "closing_odds": -110,
             },
@@ -113,7 +118,6 @@ def default_live_rows():
                 "model_prob": 0.492,
                 "book_disagreement": 1,
                 "clv_projection": 6.0,
-                "rec_notes": "best market price • book disagreement",
                 "prev_odds": 105,
                 "closing_odds": 110,
             },
@@ -130,7 +134,6 @@ def default_live_rows():
                 "model_prob": 0.521,
                 "book_disagreement": 0,
                 "clv_projection": 5.0,
-                "rec_notes": "best market price",
                 "prev_odds": -106,
                 "closing_odds": -102,
             },
@@ -147,7 +150,6 @@ def default_live_rows():
                 "model_prob": 0.517,
                 "book_disagreement": 0,
                 "clv_projection": 3.0,
-                "rec_notes": "best market price",
                 "prev_odds": -108,
                 "closing_odds": -105,
             },
@@ -164,7 +166,6 @@ def default_live_rows():
                 "model_prob": 0.497,
                 "book_disagreement": 0,
                 "clv_projection": -1.0,
-                "rec_notes": "watch only",
                 "prev_odds": -110,
                 "closing_odds": -110,
             },
@@ -181,7 +182,6 @@ def default_live_rows():
                 "model_prob": 0.496,
                 "book_disagreement": 0,
                 "clv_projection": 0.0,
-                "rec_notes": "watch only",
                 "prev_odds": -108,
                 "closing_odds": -108,
             },
@@ -198,7 +198,6 @@ def default_live_rows():
                 "model_prob": 0.585,
                 "book_disagreement": 1,
                 "clv_projection": 16.0,
-                "rec_notes": "best market price • sharp support",
                 "prev_odds": -118,
                 "closing_odds": -110,
             },
@@ -215,7 +214,6 @@ def default_live_rows():
                 "model_prob": 0.551,
                 "book_disagreement": 0,
                 "clv_projection": 10.0,
-                "rec_notes": "best market price",
                 "prev_odds": -109,
                 "closing_odds": -105,
             },
@@ -232,7 +230,6 @@ def default_live_rows():
                 "model_prob": 0.615,
                 "book_disagreement": 1,
                 "clv_projection": 20.0,
-                "rec_notes": "best market price • consensus support",
                 "prev_odds": -138,
                 "closing_odds": -132,
             },
@@ -249,7 +246,6 @@ def default_live_rows():
                 "model_prob": 0.515,
                 "book_disagreement": 0,
                 "clv_projection": 2.0,
-                "rec_notes": "small edge",
                 "prev_odds": -104,
                 "closing_odds": -102,
             },
@@ -266,7 +262,6 @@ def default_live_rows():
                 "model_prob": 0.492,
                 "book_disagreement": 1,
                 "clv_projection": 12.0,
-                "rec_notes": "dog price value",
                 "prev_odds": 112,
                 "closing_odds": 118,
             },
@@ -275,74 +270,82 @@ def default_live_rows():
 
 
 # -----------------------------
-# Scoring / classification
+# Board building
 # -----------------------------
-def add_derived_columns(df):
+def prepare_rows(df):
     df = df.copy()
     if df.empty:
         return df
 
-    if "line" not in df.columns:
-        df["line"] = np.nan
-    for col in ["book_disagreement", "consensus_count", "sharp_score", "model_prob", "clv_projection"]:
+    for col in ["line", "consensus_price", "consensus_count", "sharp_score", "model_prob", "book_disagreement", "clv_projection", "prev_odds", "closing_odds"]:
         if col not in df.columns:
-            df[col] = 0
+            df[col] = np.nan
 
     df["edge_pct"] = df.apply(lambda r: implied_edge(r.get("model_prob"), r.get("odds")), axis=1)
-    df["consensus_bucket"] = df["consensus_count"].apply(consensus_bucket)
     df["odds_bucket"] = df["odds"].apply(odds_bucket)
+    df["consensus_bucket"] = df["consensus_count"].apply(consensus_bucket)
     df["market_priority"] = df["market"].map({"moneyline": 3, "spread": 2, "total": 1}).fillna(0)
-    df["activation_boost"] = (
-        (df["book_disagreement"].fillna(0) * 2.5)
-        + np.where(df["consensus_count"].fillna(0) >= 4, 3.0, 0.0)
-        + (df["clv_projection"].fillna(0) * 0.35)
-    )
-    df["score"] = (
-        45
-        + (df["edge_pct"].fillna(0) * 10.0)
-        + (df["sharp_score"].fillna(0) * 0.35)
-        + df["activation_boost"].fillna(0)
-    ).round(1)
+    df["consensus_boost"] = np.where(df["consensus_count"].fillna(0) >= 5, 14, np.where(df["consensus_count"].fillna(0) >= 4, 9, np.where(df["consensus_count"].fillna(0) >= 3, 4, 0)))
+    df["clv_boost"] = np.clip(df["clv_projection"].fillna(0), -5, 20) * 0.7
+    df["disagreement_boost"] = df["book_disagreement"].fillna(0) * 6.5
+    df["sharp_component"] = np.clip((df["sharp_score"].fillna(0) - 35) * 1.35, 0, 40)
+    df["edge_component"] = np.clip(df["edge_pct"].fillna(0) * 11.5, -20, 45)
+    raw_score = 26 + df["edge_component"] + df["sharp_component"] + df["consensus_boost"] + df["clv_boost"] + df["disagreement_boost"]
+    df["score"] = np.clip(raw_score, 0, SCORE_CAP).round(1)
 
-    def label_conflict_key(row):
+    def conflict_key(row):
         line = row.get("line")
         if pd.isna(line):
             line = "ML"
         return f"{row.get('game')}|{row.get('market')}|{line}"
 
-    df["conflict_key"] = df.apply(label_conflict_key, axis=1)
+    df["conflict_key"] = df.apply(conflict_key, axis=1)
     df["selection_label"] = df.apply(
         lambda r: f"{r['selection']} {r['line']}" if pd.notna(r.get("line")) and str(r.get("market")) != "moneyline" else str(r["selection"]),
         axis=1,
     )
-    df["stack_group"] = df["game"].astype(str) + "|" + df["market"].astype(str)
     return df
-
 
 
 def assign_tier(row):
     edge = safe_float(row.get("edge_pct"))
     score = safe_float(row.get("score"))
-    cons = safe_float(row.get("consensus_count"))
-    clv = safe_float(row.get("clv_projection"))
-    if edge >= 3.0 and score >= 78 and cons >= 4:
+    consensus = safe_float(row.get("consensus_count"))
+    if edge >= 3.0 and score >= 86 and consensus >= 4:
         return "A"
-    if edge >= 1.8 and score >= 66:
+    if edge >= 1.8 and score >= 74:
         return "B"
-    if edge >= 0.8 and score >= 54:
+    if edge >= 1.0 and score >= 62:
         return "C"
     return "Watch"
 
 
+def correlation_tag(row):
+    market = str(row.get("market", ""))
+    selection = str(row.get("selection", "")).lower()
+    line = row.get("line")
 
-def add_explainability(row):
+    if market == "total":
+        return "Neutral"
+    if market == "spread":
+        if (not pd.isna(line)) and safe_float(line) < 0:
+            return "Favorite side"
+        if (not pd.isna(line)) and safe_float(line) > 0:
+            return "Dog side"
+    if market == "moneyline":
+        odds = safe_float(row.get("odds"))
+        return "Favorite side" if odds < 0 else "Dog side"
+    return "Neutral"
+
+
+def explainability(row):
     reasons = []
     if safe_float(row.get("edge_pct")) >= 2.0:
         reasons.append("model edge")
     if safe_float(row.get("book_disagreement")) >= 1:
         reasons.append("book disagreement")
     if safe_float(row.get("consensus_count")) >= 4:
-        reasons.append(f"{int(row.get('consensus_count', 0))}-book consensus")
+        reasons.append(f"{int(safe_float(row.get('consensus_count')))}-book consensus")
     if safe_float(row.get("clv_projection")) >= 8:
         reasons.append("positive CLV projection")
     if safe_float(row.get("sharp_score")) >= 55:
@@ -352,69 +355,92 @@ def add_explainability(row):
     return " • ".join(reasons[:4])
 
 
-
 def compute_stackable(df):
     df = df.copy()
     df["stackable"] = True
-    # opposing picks in same market/line are not stackable together
     for _, grp in df.groupby("conflict_key"):
         if len(grp) > 1:
             df.loc[grp.index, "stackable"] = False
     return df
 
 
+def dynamic_units(row):
+    tier = str(row.get("tier"))
+    status = str(row.get("status"))
+    edge = safe_float(row.get("edge_pct"))
+    score = safe_float(row.get("score"))
 
-def conflict_resolver(df, keep_per_game=2):
-    df = df.copy()
+    if status != "Active":
+        return 0.05 if edge > 0 else 0.00
+
+    if tier == "A":
+        units = 0.75 + min(0.50, max(0.0, (edge - 3.0) * 0.12) + max(0.0, (score - 86.0) * 0.01))
+        return round(min(1.25, units), 2)
+    if tier == "B":
+        units = 0.40 + min(0.35, max(0.0, (edge - 1.8) * 0.10) + max(0.0, (score - 74.0) * 0.008))
+        return round(min(0.75, units), 2)
+    if tier == "C":
+        units = 0.10 + min(0.30, max(0.0, (edge - 1.0) * 0.08) + max(0.0, (score - 62.0) * 0.006))
+        return round(min(0.40, units), 2)
+    return 0.00
+
+
+def resolve_board(df, aggressive=True, keep_per_game=2, best_bet_cap=MAX_BEST_BETS):
+    df = prepare_rows(df)
+    if df.empty:
+        return df
+
+    df["tier"] = df.apply(assign_tier, axis=1)
+    df["why"] = df.apply(explainability, axis=1)
+    df["correlation"] = df.apply(correlation_tag, axis=1)
+    df = compute_stackable(df)
     df["status"] = "Watch"
     df["best_bet_tag"] = ""
 
-    keep_rows = []
-    for game, grp in df.groupby("game", dropna=False):
-        grp = grp.sort_values(["score", "edge_pct", "market_priority", "consensus_count"], ascending=False)
+    # Candidate set must clear minimum edge floor to become active.
+    candidates = df[(df["tier"].isin(["A", "B", "C"])) & (df["edge_pct"].fillna(-999) >= MIN_ACTIVE_EDGE)].copy()
 
+    active_idxs = []
+    best_bet_candidates = []
+    max_per_game = keep_per_game if aggressive else 1
+
+    for game, grp in candidates.groupby("game", dropna=False):
+        grp = grp.sort_values(["score", "edge_pct", "consensus_count", "market_priority"], ascending=False)
         selected = []
         used_conflicts = set()
+
         for idx, row in grp.iterrows():
-            ck = row["conflict_key"]
-            market = row["market"]
-            if ck in used_conflicts:
+            if row["conflict_key"] in used_conflicts:
                 continue
-            # allow at most one per exact conflict market/line, max keep_per_game total
-            if len(selected) < keep_per_game:
-                selected.append(idx)
-                used_conflicts.add(ck)
-                # if moneyline selected, block opposing spread only if same side logic not encoded; exact conflict only here
+            if len(selected) >= max_per_game:
+                continue
+            selected.append(idx)
+            used_conflicts.add(row["conflict_key"])
 
         if selected:
-            best_idx = selected[0]
-            df.loc[best_idx, "best_bet_tag"] = "🏆 Best Bet"
-            keep_rows.extend(selected)
+            active_idxs.extend(selected)
+            best_bet_candidates.append(selected[0])
 
-    df.loc[keep_rows, "status"] = "Active"
-    return df
+    df.loc[active_idxs, "status"] = "Active"
 
+    if best_bet_candidates:
+        rank_df = df.loc[best_bet_candidates].sort_values(["score", "edge_pct", "consensus_count"], ascending=False)
+        for idx in rank_df.head(best_bet_cap).index:
+            df.loc[idx, "best_bet_tag"] = "🏆 Best Bet"
 
+    # Low edge rows are always watch-only, even if score is decent.
+    df.loc[df["edge_pct"].fillna(-999) < MIN_ACTIVE_EDGE, "status"] = "Watch"
+    df["units"] = df.apply(dynamic_units, axis=1)
 
-def build_board(df, aggressive=True):
-    df = add_derived_columns(df)
-    if df.empty:
-        return df
-    df["tier"] = df.apply(assign_tier, axis=1)
-    df["why"] = df.apply(add_explainability, axis=1)
-    df = compute_stackable(df)
-    df = conflict_resolver(df, keep_per_game=2 if aggressive else 1)
+    # Improve watch labeling.
+    watch_mask = df["status"].eq("Watch")
+    df.loc[watch_mask & (df["why"] == "watch only"), "why"] = "watch only"
 
-    # force non-qualified low rows to watch
-    qualify_mask = (df["tier"].isin(["A", "B", "C"])) & (df["status"] == "Active")
-    df.loc[~qualify_mask, "status"] = "Watch"
-
-    unit_base = df["tier"].map({"A": 1.0, "B": 0.5, "C": 0.18, "Watch": 0.05}).fillna(0.05)
-    df["units"] = np.where(df["status"].eq("Active"), unit_base, np.minimum(unit_base, 0.05)).round(2)
-    df.loc[(df["tier"] == "Watch") & (df["edge_pct"] <= 0), "units"] = 0.0
-
-    df = df.sort_values(["status", "tier", "score", "edge_pct"], ascending=[True, True, False, False]).copy()
-    return df
+    tier_sort = {"A": 0, "B": 1, "C": 2, "Watch": 3}
+    df["tier_sort"] = df["tier"].map(tier_sort).fillna(9)
+    df["status_sort"] = np.where(df["status"].eq("Active"), 0, 1)
+    df = df.sort_values(["status_sort", "tier_sort", "score", "edge_pct"], ascending=[True, True, False, False]).drop(columns=["tier_sort", "status_sort"])
+    return df.reset_index(drop=True)
 
 
 # -----------------------------
@@ -434,28 +460,19 @@ def ensure_bet_log():
     return pd.DataFrame(columns=cols)
 
 
-
 def save_bet_log(df):
     df.to_csv(BET_LOG_PATH, index=False)
 
 
-
 def auto_log_active_plays(board_df):
     log_df = ensure_bet_log()
-    if board_df.empty:
-        return log_df, 0
-
     key_cols = ["game", "market", "selection", "book", "bet_odds"]
-    if log_df.empty:
-        existing = set()
-    else:
-        existing = set(
-            log_df[key_cols].fillna("NA").astype(str).agg("|".join, axis=1).tolist()
-        )
+    existing = set()
+    if not log_df.empty:
+        existing = set(log_df[key_cols].fillna("NA").astype(str).agg("|".join, axis=1).tolist())
 
     rows_to_add = []
-    active = board_df[board_df["status"] == "Active"].copy()
-    for _, row in active.iterrows():
+    for _, row in board_df[board_df["status"] == "Active"].iterrows():
         key = "|".join([
             str(row.get("game", "NA")),
             str(row.get("market", "NA")),
@@ -493,7 +510,6 @@ def auto_log_active_plays(board_df):
     return log_df, len(rows_to_add)
 
 
-
 def profit_from_row(row):
     result = str(row.get("result", "")).lower()
     units = safe_float(row.get("units"), 0)
@@ -509,15 +525,9 @@ def profit_from_row(row):
     return units * (100 / abs(odds)) if odds != 0 else 0.0
 
 
-
 def build_learning_profile(log_df):
     if log_df.empty:
-        combos = []
-        for market in ["moneyline", "spread", "total"]:
-            for o in ["coinflip", "dog_live", "dog_long", "fav_std", "fav_heavy"]:
-                for c in ["3of5", "4of5", "5of5", "lt3"]:
-                    combos.append({"market": market, "odds_bucket": o, "consensus_bucket": c, "bets": 0, "wins": 0, "win_rate": 0.0})
-        return pd.DataFrame(combos)
+        return pd.DataFrame(columns=["market", "odds_bucket", "consensus_bucket", "bets", "wins", "win_rate"])
 
     temp = log_df.copy()
     temp["market"] = temp["market"].fillna("unknown")
@@ -530,7 +540,7 @@ def build_learning_profile(log_df):
         grouped = temp.groupby(["market", "odds_bucket", "consensus_bucket"], dropna=False).size().reset_index(name="bets")
         grouped["wins"] = 0
         grouped["win_rate"] = 0.0
-        return grouped
+        return grouped.sort_values(["market", "consensus_bucket", "odds_bucket"]).reset_index(drop=True)
 
     grouped = (
         settled.groupby(["market", "odds_bucket", "consensus_bucket"], dropna=False)
@@ -584,11 +594,8 @@ def inject_css():
     )
 
 
-
 def pill_class(value):
-    mapping = {"A": "pill-a", "B": "pill-b", "C": "pill-c", "Watch": "pill-watch"}
-    return mapping.get(str(value), "pill-watch")
-
+    return {"A": "pill-a", "B": "pill-b", "C": "pill-c", "Watch": "pill-watch"}.get(str(value), "pill-watch")
 
 
 def render_summary(board_df, mode_label):
@@ -627,37 +634,25 @@ def render_summary(board_df, mode_label):
         )
 
 
-
-def render_play_cards(df, title, active_only=False, limit=None):
+def render_play_cards(df, title):
     st.markdown(f"<div class='section-h'>{title}</div>", unsafe_allow_html=True)
     if df.empty:
         st.info("No rows to show.")
         return
-    rows = df.copy()
-    if active_only:
-        rows = rows[rows["status"] == "Active"]
-    if limit:
-        rows = rows.head(limit)
-    if rows.empty:
-        st.info("No rows to show.")
-        return
 
-    for i, (_, row) in enumerate(rows.iterrows(), start=1):
-        title_line = row["selection_label"]
-        if pd.isna(row.get("line")) and row.get("market") == "total":
-            title_line = str(row.get("selection"))
-        best = row.get("best_bet_tag", "")
+    for i, (_, row) in enumerate(df.iterrows(), start=1):
         badge_html = (
             f"<span class='pill {pill_class(row['tier'])}'>Tier {row['tier']}</span>"
             f"<span class='pill {'pill-active' if row['status']=='Active' else 'pill-watch'}'>{row['status']}</span>"
         )
-        if best:
-            badge_html += f"<span class='pill pill-best'>{best}</span>"
+        if row.get("best_bet_tag"):
+            badge_html += f"<span class='pill pill-best'>{row['best_bet_tag']}</span>"
+
         st.markdown(
             f"""
             <div class='play-card'>
                 <div>{badge_html}</div>
-                <div class='play-title'>#{i} {title_line}</div>
+                <div class='play-title'>#{i} {row['selection_label']}</div>
                 <div class='play-sub'>{row['game']}</div>
                 <div style='display:grid;grid-template-columns:1fr 1fr;gap:8px;'>
                     <div>Book: <b>{row['book']}</b></div>
@@ -668,6 +663,8 @@ def render_play_cards(df, title, active_only=False, limit=None):
                     <div>Edge: <b>{safe_float(row['edge_pct']):.2f}%</b></div>
                     <div>Consensus: <b>{int(safe_float(row['consensus_count']))} books</b></div>
                     <div>Stackable: <b>{'Yes' if bool(row['stackable']) else 'No'}</b></div>
+                    <div>Correlation: <b>{row['correlation']}</b></div>
+                    <div>CLV Proj: <b>{safe_float(row['clv_projection']):.1f}</b></div>
                 </div>
                 <div class='why'>{row['why']}</div>
             </div>
@@ -677,48 +674,43 @@ def render_play_cards(df, title, active_only=False, limit=None):
 
 
 # -----------------------------
-# App body
+# App
 # -----------------------------
 inject_css()
 st.title(APP_TITLE)
 st.caption(APP_SUBTITLE)
 
 with st.sidebar:
-    st.header("V28 Controls")
+    st.header("V28.1 Controls")
     aggressive = st.toggle("Aggressive mode", value=True)
     auto_log = st.toggle("Auto-log active plays", value=True)
     keep_per_game = st.selectbox("Max active plays per game", [1, 2, 3], index=1)
+    best_bet_cap = st.selectbox("Max best bets on slate", [1, 2, 3], index=2)
     st.caption("Upload a CSV with live rows to replace the demo feed.")
     upload = st.file_uploader("Live rows CSV", type=["csv"])
 
 raw_df = load_csv(upload, default_live_rows())
-board_df = add_derived_columns(raw_df)
-board_df = board_df.copy()
-board_df = compute_stackable(board_df)
-board_df = conflict_resolver(board_df, keep_per_game=keep_per_game)
-board_df["tier"] = board_df.apply(assign_tier, axis=1)
-board_df["why"] = board_df.apply(add_explainability, axis=1)
-board_df = build_board(board_df, aggressive=aggressive)
+board_df = resolve_board(raw_df, aggressive=aggressive, keep_per_game=keep_per_game, best_bet_cap=best_bet_cap)
 
 render_summary(board_df, "Aggressive" if aggressive else "Standard")
 
 with st.expander("🎛️ Adaptive Thresholds"):
-    st.write("Execution engine logic:")
-    st.write("• Resolves conflicting plays in the same game/market")
-    st.write("• Tags one best bet per game")
-    st.write("• Allows stackable plays only when they do not directly conflict")
-    st.write("• Promotes tiers dynamically based on score, edge, consensus, and CLV")
+    st.write(f"• Minimum active edge: {MIN_ACTIVE_EDGE:.2f}%")
+    st.write(f"• Best bet cap: {best_bet_cap}")
+    st.write("• Scores normalized to 0–100")
+    st.write("• Dynamic units scale by tier, edge, and score")
+    st.write("• Correlation tags help spot side/total combinations")
 
 active_df = board_df[(board_df["status"] == "Active") & (board_df["tier"] != "Watch")].copy()
 watch_df = board_df[board_df["status"] != "Active"].copy()
 
-render_play_cards(active_df, "🎯 Compact Top Plays", active_only=False)
-render_play_cards(watch_df, "👀 Compact Watchlist", active_only=False)
+render_play_cards(active_df, "🎯 Compact Top Plays")
+render_play_cards(watch_df, "👀 Compact Watchlist")
 
 st.markdown("<div class='section-h'>✅ Quick Table</div>", unsafe_allow_html=True)
 quick_cols = [
     "tier", "status", "game", "market", "selection_label", "book", "odds", "units",
-    "score", "edge_pct", "consensus_count", "best_bet_tag", "stackable"
+    "score", "edge_pct", "consensus_count", "best_bet_tag", "stackable", "correlation"
 ]
 st.dataframe(board_df[quick_cols].rename(columns={"selection_label": "selection"}), use_container_width=True, hide_index=True)
 
@@ -790,7 +782,6 @@ if not bet_log_df.empty:
     wins = int(settled["result"].astype(str).str.lower().eq("win").sum()) if settled_bets else 0
     win_rate = (wins / settled_bets) if settled_bets else 0.0
     net_units = settled["profit"].sum() if settled_bets else 0.0
-
     clv_vals = []
     for _, r in settled.iterrows():
         bo = safe_float(r.get("bet_odds"), np.nan)
@@ -806,7 +797,7 @@ else:
 
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("Settled Bets", settled_bets)
-m2.metric("Win Rate", f"{win_rate*100:.1f}%")
+m2.metric("Win Rate", f"{win_rate * 100:.1f}%")
 m3.metric("Net Units", f"{net_units:.2f}u")
 m4.metric("Avg CLV", "—" if pd.isna(avg_clv) else f"{avg_clv:.2f}%")
 
@@ -834,5 +825,5 @@ st.download_button("Download Learning Profile CSV", profile_buf.getvalue(), file
 st.download_button("Download Snapshot CSV", snap_buf.getvalue(), file_name="snapshot.csv", mime="text/csv")
 
 st.caption(
-    "V28 adds conflict resolution, best-bet tagging, stackability logic, dynamic tier promotion, explainability notes, and auto-log execution tracking."
+    "V28.1 adds capped best bets, normalized 0–100 scoring, dynamic unit sizing, a minimum active edge filter, and correlation tagging."
 )

@@ -1,50 +1,53 @@
 
-# streamlit_app_v24.py
-# V24 Auto Mode - Sports Betting AI Dashboard
+# streamlit_app_v25.py
+# V25 Live Engine
 #
-# This version upgrades the toy V23 structure into a more decision-oriented app:
-# - auto bet filtering
-# - self-learning weight adjustments by market / odds bucket / consensus tier
-# - sharp money score
-# - market inefficiency scoring
-# - auto-generated top plays
-# - bankroll-based unit sizing
-# - bet log persistence (CSV import/export)
+# Live odds + scoring pipeline for Streamlit.
+# Designed to work with The Odds API v4 if you provide an API key.
+# Falls back to built-in sample live-like data if no key is provided.
 #
-# Note:
-# This is still a local dashboard framework. It does not fetch live sportsbook APIs by itself.
-# You can load your own candidate plays CSV and let the app score, filter, and rank them.
+# Features:
+# - live odds fetch
+# - multi-book parsing for moneyline / spreads / totals
+# - market consensus price comparison
+# - snapshot storage for line movement
+# - sharp score using movement + market agreement
+# - inefficiency score + edge estimate
+# - auto-qualified top plays
+# - optional auto-save to bet log
+# - settled-bet learning profile
+#
+# Notes:
+# - This version does not depend on private APIs.
+# - Player props are not included in the live fetch parser here because book/market
+#   coverage varies a lot by sport and provider configuration.
+# - If no API key is provided, the app uses a realistic fallback dataset so you can test the UI.
 
-import io
-import math
+import os
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+import requests
 import streamlit as st
 
-
 # ------------------------------------------------------------
-# Page setup
+# App setup
 # ------------------------------------------------------------
-st.set_page_config(
-    page_title="Sports Betting AI Dashboard V24 Auto Mode",
-    layout="wide",
-)
+st.set_page_config(page_title="Sports Betting AI Dashboard V25 Live Engine", layout="wide")
+st.title("🔥 Sports Betting AI Dashboard V25")
+st.caption("Live Engine: fetch → compare books → detect movement → score → qualify → track")
 
-st.title("🔥 Sports Betting AI Dashboard V24")
-st.caption("Auto Mode: score → filter → size → rank top plays")
-
-
-# ------------------------------------------------------------
-# Helpers
-# ------------------------------------------------------------
 DATA_DIR = Path(".")
-BET_LOG_PATH = DATA_DIR / "bet_log_v24.csv"
-MODEL_PROFILE_PATH = DATA_DIR / "model_profile_v24.csv"
+BET_LOG_PATH = DATA_DIR / "bet_log_v25.csv"
+PROFILE_PATH = DATA_DIR / "learning_profile_v25.csv"
+SNAPSHOT_PATH = DATA_DIR / "odds_snapshot_v25.csv"
 
 
+# ------------------------------------------------------------
+# Utilities
+# ------------------------------------------------------------
 def safe_read_csv(path: Path, fallback: pd.DataFrame) -> pd.DataFrame:
     try:
         if path.exists():
@@ -63,20 +66,32 @@ def safe_save_csv(df: pd.DataFrame, path: Path) -> None:
 
 def american_to_implied_prob(odds: float) -> float:
     try:
-        odds = float(odds)
-        if odds > 0:
-            return 100.0 / (odds + 100.0)
-        return abs(odds) / (abs(odds) + 100.0)
+        o = float(odds)
+        if o > 0:
+            return 100.0 / (o + 100.0)
+        return abs(o) / (abs(o) + 100.0)
     except Exception:
         return np.nan
 
 
 def american_to_decimal(odds: float) -> float:
     try:
-        odds = float(odds)
-        if odds > 0:
-            return 1 + odds / 100.0
-        return 1 + 100.0 / abs(odds)
+        o = float(odds)
+        if o > 0:
+            return 1.0 + o / 100.0
+        return 1.0 + 100.0 / abs(o)
+    except Exception:
+        return np.nan
+
+
+def implied_prob_to_american(prob: float) -> float:
+    try:
+        p = float(prob)
+        if p <= 0 or p >= 1:
+            return np.nan
+        if p >= 0.5:
+            return -(p / (1 - p)) * 100.0
+        return ((1 - p) / p) * 100.0
     except Exception:
         return np.nan
 
@@ -100,15 +115,14 @@ def odds_bucket(odds: float) -> str:
 
 def consensus_bucket(consensus_count: int) -> str:
     try:
-        x = int(consensus_count)
+        c = int(consensus_count)
     except Exception:
         return "unknown"
-
-    if x >= 5:
+    if c >= 5:
         return "5of5"
-    if x == 4:
+    if c == 4:
         return "4of5"
-    if x == 3:
+    if c == 3:
         return "3of5"
     return "lt3"
 
@@ -116,234 +130,65 @@ def consensus_bucket(consensus_count: int) -> str:
 def normalize_0_100(value: float, min_v: float, max_v: float) -> float:
     if max_v <= min_v:
         return 50.0
-    pct = (value - min_v) / (max_v - min_v)
-    return float(np.clip(pct * 100.0, 0.0, 100.0))
+    v = (value - min_v) / (max_v - min_v)
+    return float(np.clip(v * 100.0, 0.0, 100.0))
 
 
 def kelly_fraction(win_prob: float, odds: float) -> float:
-    """
-    Kelly fraction for decimal payout net odds.
-    Returns raw fraction of bankroll.
-    """
-    try:
-        dec = american_to_decimal(odds)
-        if np.isnan(dec):
-            return 0.0
-        b = dec - 1.0
-        p = float(win_prob)
-        q = 1.0 - p
-        if b <= 0:
-            return 0.0
-        frac = (b * p - q) / b
-        return max(0.0, frac)
-    except Exception:
+    dec = american_to_decimal(odds)
+    if np.isnan(dec):
         return 0.0
-
-
-def infer_side_from_movement(open_odds: float, current_odds: float) -> float:
-    """
-    Simple line movement signal:
-    More negative current odds than open odds = steam toward this side.
-    Positive score means movement supports the side.
-    """
-    try:
-        return float(open_odds) - float(current_odds)
-    except Exception:
+    b = dec - 1.0
+    p = float(win_prob)
+    q = 1.0 - p
+    if b <= 0:
         return 0.0
+    raw = (b * p - q) / b
+    return max(0.0, raw)
 
 
-def compute_sharp_score(row: pd.Series) -> float:
-    """
-    Approximate sharp score using:
-    - reverse line movement (current vs opening)
-    - public betting imbalance
-    - steam magnitude
-    - optional line velocity proxy
-    """
-    try:
-        public_pct = float(row.get("public_bet_pct", 50))
-        open_odds = float(row.get("opening_odds", row.get("odds", -110)))
-        current_odds = float(row.get("odds", -110))
-        velocity = float(row.get("line_velocity", 0))
-    except Exception:
-        return 50.0
-
-    movement = infer_side_from_movement(open_odds, current_odds)
-    movement_strength = abs(movement)
-
-    # Reverse line movement proxy:
-    # If public is heavy but line moved *toward* this side, it could still be strong support.
-    # If public is low and line moves toward this side, that often suggests sharper action.
-    public_fade_bonus = 0.0
-    if public_pct <= 45 and movement > 0:
-        public_fade_bonus = 20.0
-    elif public_pct >= 65 and movement > 0:
-        public_fade_bonus = 10.0
-    elif public_pct >= 65 and movement < 0:
-        public_fade_bonus = -10.0
-
-    movement_component = normalize_0_100(movement_strength, 0, 40) * 0.35
-    direction_component = 20.0 if movement > 0 else 0.0
-    public_component = normalize_0_100(100 - abs(public_pct - 50) * 2, 0, 100) * 0.10
-    velocity_component = normalize_0_100(abs(velocity), 0, 10) * 0.15
-
-    raw = 20 + movement_component + direction_component + public_component + velocity_component + public_fade_bonus
-    return float(np.clip(raw, 0, 100))
-
-
-def compute_market_inefficiency(row: pd.Series) -> Tuple[float, float]:
-    """
-    Returns:
-    - inefficiency score (0-100)
-    - edge_pct estimate
-
-    Uses:
-    - best offered odds vs consensus fair odds
-    - model win probability vs implied probability
-    """
-    try:
-        odds = float(row.get("odds", -110))
-        consensus_fair_odds = float(row.get("consensus_fair_odds", odds))
-        model_win_prob = float(row.get("model_win_prob", np.nan))
-    except Exception:
-        return 0.0, 0.0
-
-    implied = american_to_implied_prob(odds)
-    fair_implied = american_to_implied_prob(consensus_fair_odds)
-
-    edge_pct = 0.0
-    if not np.isnan(model_win_prob):
-        edge_pct = (model_win_prob - implied) * 100.0
-    elif not np.isnan(fair_implied):
-        edge_pct = (fair_implied - implied) * 100.0
-
-    pricing_gap = abs(implied - fair_implied) * 100.0 if not np.isnan(fair_implied) else 0.0
-    score = np.clip(pricing_gap * 8 + max(edge_pct, 0) * 6, 0, 100)
-    return float(score), float(edge_pct)
-
-
-def default_candidate_plays() -> pd.DataFrame:
-    data = [
-        {
-            "game": "Warriors vs Lakers",
-            "market": "player_props",
-            "selection": "Stephen Curry Over 27.5 Points",
-            "book": "DraftKings",
-            "odds": -115,
-            "opening_odds": -108,
-            "public_bet_pct": 68,
-            "line_velocity": 4.0,
-            "consensus_count": 4,
-            "base_model_score": 74,
-            "model_win_prob": 0.585,
-            "consensus_fair_odds": -132,
-        },
-        {
-            "game": "Celtics vs Heat",
-            "market": "spreads",
-            "selection": "Celtics -4.5",
-            "book": "FanDuel",
-            "odds": -110,
-            "opening_odds": -103,
-            "public_bet_pct": 51,
-            "line_velocity": 3.0,
-            "consensus_count": 5,
-            "base_model_score": 81,
-            "model_win_prob": 0.596,
-            "consensus_fair_odds": -128,
-        },
-        {
-            "game": "Nuggets vs Suns",
-            "market": "totals",
-            "selection": "Over 228.5",
-            "book": "BetMGM",
-            "odds": -105,
-            "opening_odds": -110,
-            "public_bet_pct": 73,
-            "line_velocity": 2.0,
-            "consensus_count": 3,
-            "base_model_score": 66,
-            "model_win_prob": 0.535,
-            "consensus_fair_odds": -114,
-        },
-        {
-            "game": "Bruins vs Rangers",
-            "market": "moneyline",
-            "selection": "Bruins ML",
-            "book": "Caesars",
-            "odds": 122,
-            "opening_odds": 132,
-            "public_bet_pct": 39,
-            "line_velocity": 6.0,
-            "consensus_count": 4,
-            "base_model_score": 72,
-            "model_win_prob": 0.488,
-            "consensus_fair_odds": 108,
-        },
-        {
-            "game": "Mavericks vs Clippers",
-            "market": "moneyline",
-            "selection": "Clippers ML",
-            "book": "ESPN BET",
-            "odds": -145,
-            "opening_odds": -150,
-            "public_bet_pct": 77,
-            "line_velocity": 1.0,
-            "consensus_count": 2,
-            "base_model_score": 58,
-            "model_win_prob": 0.567,
-            "consensus_fair_odds": -149,
-        },
-        {
-            "game": "Panthers vs Leafs",
-            "market": "totals",
-            "selection": "Under 6.5",
-            "book": "DraftKings",
-            "odds": 105,
-            "opening_odds": 118,
-            "public_bet_pct": 42,
-            "line_velocity": 5.0,
-            "consensus_count": 5,
-            "base_model_score": 79,
-            "model_win_prob": 0.535,
-            "consensus_fair_odds": -103,
-        },
-    ]
-    return pd.DataFrame(data)
-
-
-def default_bet_log() -> pd.DataFrame:
-    return pd.DataFrame(columns=[
-        "date",
-        "game",
-        "market",
-        "selection",
-        "book",
-        "odds",
-        "opening_odds",
-        "public_bet_pct",
-        "consensus_count",
-        "base_model_score",
-        "sharp_score",
-        "inefficiency_score",
-        "edge_pct",
-        "final_score",
-        "recommended_units",
-        "result",
-        "closing_odds",
-        "clv",
+def row_key(r: pd.Series) -> str:
+    point = "" if pd.isna(r.get("point", np.nan)) else str(r.get("point"))
+    return " | ".join([
+        str(r.get("event_id", "")),
+        str(r.get("market", "")),
+        str(r.get("selection", "")),
+        str(point),
+        str(r.get("book", "")),
     ])
 
 
-def default_model_profile() -> pd.DataFrame:
+def market_group_key(r: pd.Series) -> str:
+    point = "" if pd.isna(r.get("point", np.nan)) else str(r.get("point"))
+    return " | ".join([
+        str(r.get("event_id", "")),
+        str(r.get("market", "")),
+        str(r.get("selection", "")),
+        str(point),
+    ])
+
+
+# ------------------------------------------------------------
+# Defaults
+# ------------------------------------------------------------
+def default_bet_log() -> pd.DataFrame:
+    return pd.DataFrame(columns=[
+        "date", "sport", "game", "market", "selection", "point", "book",
+        "odds", "prev_odds", "consensus_price", "consensus_count",
+        "line_movement", "sharp_score", "inefficiency_score", "edge_pct",
+        "final_score", "recommended_units", "result", "closing_odds", "clv"
+    ])
+
+
+def default_profile() -> pd.DataFrame:
     rows = []
-    for market in ["moneyline", "spreads", "totals", "player_props"]:
-        for o_bucket in ["fav_heavy", "fav_std", "coinflip", "dog_live", "dog_long"]:
-            for c_bucket in ["5of5", "4of5", "3of5", "lt3"]:
+    for market in ["moneyline", "spreads", "totals"]:
+        for ob in ["fav_heavy", "fav_std", "coinflip", "dog_live", "dog_long"]:
+            for cb in ["5of5", "4of5", "3of5", "lt3"]:
                 rows.append({
                     "market": market,
-                    "odds_bucket": o_bucket,
-                    "consensus_bucket": c_bucket,
+                    "odds_bucket": ob,
+                    "consensus_bucket": cb,
                     "bets": 0,
                     "wins": 0,
                     "roi_units": 0.0,
@@ -352,47 +197,271 @@ def default_model_profile() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def ensure_columns(df: pd.DataFrame, required: Dict[str, object]) -> pd.DataFrame:
-    out = df.copy()
-    for col, default in required.items():
-        if col not in out.columns:
-            out[col] = default
+def default_snapshot() -> pd.DataFrame:
+    return pd.DataFrame(columns=[
+        "snapshot_time", "event_id", "sport", "game", "market", "selection",
+        "point", "book", "odds", "commence_time"
+    ])
+
+
+def fallback_live_rows() -> pd.DataFrame:
+    # Simulated live-like rows so the app is testable without an API key.
+    rows = [
+        ["evt1", "basketball_nba", "Warriors vs Lakers", "2026-03-22T23:00:00Z", "moneyline", "Warriors", np.nan, "DraftKings", -118],
+        ["evt1", "basketball_nba", "Warriors vs Lakers", "2026-03-22T23:00:00Z", "moneyline", "Warriors", np.nan, "FanDuel", -110],
+        ["evt1", "basketball_nba", "Warriors vs Lakers", "2026-03-22T23:00:00Z", "moneyline", "Warriors", np.nan, "Caesars", -121],
+        ["evt1", "basketball_nba", "Warriors vs Lakers", "2026-03-22T23:00:00Z", "moneyline", "Lakers", np.nan, "DraftKings", 104],
+        ["evt1", "basketball_nba", "Warriors vs Lakers", "2026-03-22T23:00:00Z", "moneyline", "Lakers", np.nan, "FanDuel", 100],
+        ["evt1", "basketball_nba", "Warriors vs Lakers", "2026-03-22T23:00:00Z", "moneyline", "Lakers", np.nan, "Caesars", 110],
+        ["evt1", "basketball_nba", "Warriors vs Lakers", "2026-03-22T23:00:00Z", "spreads", "Warriors", -3.5, "DraftKings", -112],
+        ["evt1", "basketball_nba", "Warriors vs Lakers", "2026-03-22T23:00:00Z", "spreads", "Warriors", -3.5, "FanDuel", -105],
+        ["evt1", "basketball_nba", "Warriors vs Lakers", "2026-03-22T23:00:00Z", "spreads", "Warriors", -3.5, "Caesars", -110],
+        ["evt1", "basketball_nba", "Warriors vs Lakers", "2026-03-22T23:00:00Z", "spreads", "Lakers", 3.5, "DraftKings", -108],
+        ["evt1", "basketball_nba", "Warriors vs Lakers", "2026-03-22T23:00:00Z", "spreads", "Lakers", 3.5, "FanDuel", -115],
+        ["evt1", "basketball_nba", "Warriors vs Lakers", "2026-03-22T23:00:00Z", "spreads", "Lakers", 3.5, "Caesars", -110],
+        ["evt1", "basketball_nba", "Warriors vs Lakers", "2026-03-22T23:00:00Z", "totals", "Over", 229.5, "DraftKings", -102],
+        ["evt1", "basketball_nba", "Warriors vs Lakers", "2026-03-22T23:00:00Z", "totals", "Over", 229.5, "FanDuel", -110],
+        ["evt1", "basketball_nba", "Warriors vs Lakers", "2026-03-22T23:00:00Z", "totals", "Over", 229.5, "Caesars", -108],
+        ["evt1", "basketball_nba", "Warriors vs Lakers", "2026-03-22T23:00:00Z", "totals", "Under", 229.5, "DraftKings", -118],
+        ["evt1", "basketball_nba", "Warriors vs Lakers", "2026-03-22T23:00:00Z", "totals", "Under", 229.5, "FanDuel", -110],
+        ["evt1", "basketball_nba", "Warriors vs Lakers", "2026-03-22T23:00:00Z", "totals", "Under", 229.5, "Caesars", -112],
+
+        ["evt2", "icehockey_nhl", "Panthers vs Leafs", "2026-03-22T23:30:00Z", "moneyline", "Panthers", np.nan, "DraftKings", -135],
+        ["evt2", "icehockey_nhl", "Panthers vs Leafs", "2026-03-22T23:30:00Z", "moneyline", "Panthers", np.nan, "FanDuel", -128],
+        ["evt2", "icehockey_nhl", "Panthers vs Leafs", "2026-03-22T23:30:00Z", "moneyline", "Panthers", np.nan, "Caesars", -140],
+        ["evt2", "icehockey_nhl", "Panthers vs Leafs", "2026-03-22T23:30:00Z", "moneyline", "Leafs", np.nan, "DraftKings", 118],
+        ["evt2", "icehockey_nhl", "Panthers vs Leafs", "2026-03-22T23:30:00Z", "moneyline", "Leafs", np.nan, "FanDuel", 112],
+        ["evt2", "icehockey_nhl", "Panthers vs Leafs", "2026-03-22T23:30:00Z", "moneyline", "Leafs", np.nan, "Caesars", 124],
+        ["evt2", "icehockey_nhl", "Panthers vs Leafs", "2026-03-22T23:30:00Z", "totals", "Under", 6.5, "DraftKings", 105],
+        ["evt2", "icehockey_nhl", "Panthers vs Leafs", "2026-03-22T23:30:00Z", "totals", "Under", 6.5, "FanDuel", 100],
+        ["evt2", "icehockey_nhl", "Panthers vs Leafs", "2026-03-22T23:30:00Z", "totals", "Under", 6.5, "Caesars", -102],
+        ["evt2", "icehockey_nhl", "Panthers vs Leafs", "2026-03-22T23:30:00Z", "totals", "Over", 6.5, "DraftKings", -125],
+        ["evt2", "icehockey_nhl", "Panthers vs Leafs", "2026-03-22T23:30:00Z", "totals", "Over", 6.5, "FanDuel", -120],
+        ["evt2", "icehockey_nhl", "Panthers vs Leafs", "2026-03-22T23:30:00Z", "totals", "Over", 6.5, "Caesars", -118],
+
+        ["evt3", "soccer_epl", "Arsenal vs Spurs", "2026-03-23T12:30:00Z", "moneyline", "Arsenal", np.nan, "DraftKings", 126],
+        ["evt3", "soccer_epl", "Arsenal vs Spurs", "2026-03-23T12:30:00Z", "moneyline", "Arsenal", np.nan, "FanDuel", 118],
+        ["evt3", "soccer_epl", "Arsenal vs Spurs", "2026-03-23T12:30:00Z", "moneyline", "Arsenal", np.nan, "Caesars", 130],
+    ]
+    df = pd.DataFrame(rows, columns=[
+        "event_id", "sport", "game", "commence_time", "market",
+        "selection", "point", "book", "odds"
+    ])
+    return df
+
+
+# ------------------------------------------------------------
+# API fetch
+# ------------------------------------------------------------
+SPORT_OPTIONS = {
+    "NBA": "basketball_nba",
+    "NHL": "icehockey_nhl",
+    "NFL": "americanfootball_nfl",
+    "MLB": "baseball_mlb",
+    "EPL": "soccer_epl",
+}
+
+
+def fetch_odds_from_the_odds_api(
+    api_key: str,
+    sport_key: str,
+    regions: str,
+    markets: str,
+    bookmakers: Optional[str] = None,
+) -> Tuple[pd.DataFrame, str]:
+    url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds"
+    params = {
+        "apiKey": api_key,
+        "regions": regions,
+        "markets": markets,
+        "oddsFormat": "american",
+        "dateFormat": "iso",
+    }
+    if bookmakers:
+        params["bookmakers"] = bookmakers
+
+    resp = requests.get(url, params=params, timeout=25)
+    resp.raise_for_status()
+    data = resp.json()
+
+    rows: List[Dict] = []
+    for event in data:
+        event_id = event.get("id", "")
+        commence_time = event.get("commence_time", "")
+        home_team = event.get("home_team", "")
+        away_team = event.get("away_team", "")
+        game = f"{away_team} vs {home_team}" if away_team and home_team else event_id
+
+        for bookmaker in event.get("bookmakers", []):
+            book_title = bookmaker.get("title", bookmaker.get("key", "Unknown"))
+            for market in bookmaker.get("markets", []):
+                market_key = market.get("key", "")
+                if market_key == "h2h":
+                    mkt_name = "moneyline"
+                elif market_key == "spreads":
+                    mkt_name = "spreads"
+                elif market_key == "totals":
+                    mkt_name = "totals"
+                else:
+                    continue
+
+                for outcome in market.get("outcomes", []):
+                    rows.append({
+                        "event_id": event_id,
+                        "sport": sport_key,
+                        "game": game,
+                        "commence_time": commence_time,
+                        "market": mkt_name,
+                        "selection": outcome.get("name", ""),
+                        "point": outcome.get("point", np.nan),
+                        "book": book_title,
+                        "odds": outcome.get("price", np.nan),
+                        "book_last_update": bookmaker.get("last_update", ""),
+                        "market_last_update": market.get("last_update", ""),
+                    })
+
+    return pd.DataFrame(rows), resp.headers.get("x-requests-remaining", "")
+
+
+# ------------------------------------------------------------
+# Snapshot / movement
+# ------------------------------------------------------------
+def attach_previous_snapshot(current_df: pd.DataFrame, snapshot_df: pd.DataFrame) -> pd.DataFrame:
+    df = current_df.copy()
+    if df.empty:
+        df["prev_odds"] = np.nan
+        df["line_movement"] = 0.0
+        return df
+
+    df["row_key"] = df.apply(row_key, axis=1)
+
+    prev = snapshot_df.copy()
+    if prev.empty:
+        df["prev_odds"] = np.nan
+        df["line_movement"] = 0.0
+        return df.drop(columns=["row_key"], errors="ignore")
+
+    prev["row_key"] = (
+        prev["event_id"].astype(str) + " | " + prev["market"].astype(str) + " | "
+        + prev["selection"].astype(str) + " | " + prev["point"].astype(str) + " | "
+        + prev["book"].astype(str)
+    )
+
+    prev = prev.sort_values("snapshot_time").drop_duplicates("row_key", keep="last")
+    prev = prev[["row_key", "odds"]].rename(columns={"odds": "prev_odds"})
+
+    df = df.merge(prev, how="left", on="row_key")
+    df["prev_odds"] = pd.to_numeric(df["prev_odds"], errors="coerce")
+    df["odds"] = pd.to_numeric(df["odds"], errors="coerce")
+    df["line_movement"] = df["prev_odds"] - df["odds"]
+    return df.drop(columns=["row_key"], errors="ignore")
+
+
+def update_snapshot_store(current_df: pd.DataFrame, snapshot_df: pd.DataFrame) -> pd.DataFrame:
+    now = pd.Timestamp.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    add = current_df[["event_id", "sport", "game", "market", "selection", "point", "book", "odds", "commence_time"]].copy()
+    add["snapshot_time"] = now
+    add = add[["snapshot_time", "event_id", "sport", "game", "market", "selection", "point", "book", "odds", "commence_time"]]
+
+    out = pd.concat([snapshot_df, add], ignore_index=True)
+
+    # Keep only latest ~5000 rows for app size sanity
+    if len(out) > 5000:
+        out = out.tail(5000).copy()
+
     return out
 
 
-def profit_in_units(odds: float, result: str) -> float:
-    if result == "win":
-        dec = american_to_decimal(odds)
-        return (dec - 1.0) if not np.isnan(dec) else 0.0
-    if result == "loss":
-        return -1.0
-    return 0.0
+# ------------------------------------------------------------
+# Consensus / scoring
+# ------------------------------------------------------------
+def attach_market_consensus(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    if out.empty:
+        out["consensus_price"] = np.nan
+        out["consensus_count"] = 0
+        out["best_price_flag"] = False
+        return out
+
+    out["group_key"] = out.apply(market_group_key, axis=1)
+
+    grp = (
+        out.groupby("group_key", dropna=False)
+        .agg(
+            consensus_price=("odds", "median"),
+            consensus_count=("odds", "size"),
+            best_dog_price=("odds", "max"),
+            best_fav_price=("odds", "max"),
+        )
+        .reset_index()
+    )
+
+    out = out.merge(grp[["group_key", "consensus_price", "consensus_count"]], on="group_key", how="left")
+    out["best_price_flag"] = out.groupby("group_key")["odds"].transform("max") == out["odds"]
+    return out.drop(columns=["group_key"], errors="ignore")
 
 
-def clv_from_odds(bet_odds: float, closing_odds: float) -> float:
-    """
-    Positive CLV means your number was better than close.
-    For both sides, lower implied probability cost is generally better for the bettor.
-    """
+def compute_sharp_score(row: pd.Series) -> float:
+    # Sharp logic here is pragmatic for live odds:
+    # - favorable movement from previous snapshot
+    # - consensus depth
+    # - price disagreement between this book and consensus
     try:
-        return (american_to_implied_prob(closing_odds) - american_to_implied_prob(bet_odds)) * 100.0
+        current_odds = float(row.get("odds", np.nan))
+        prev_odds = float(row.get("prev_odds", np.nan))
+        consensus_price = float(row.get("consensus_price", np.nan))
+        count = float(row.get("consensus_count", 1))
     except Exception:
-        return 0.0
+        return 50.0
+
+    movement = 0.0 if np.isnan(prev_odds) else (prev_odds - current_odds)
+    movement_score = normalize_0_100(abs(movement), 0, 35) * 0.45
+    direction_bonus = 18.0 if movement > 0 else 0.0
+
+    market_agreement = 100 - normalize_0_100(abs(current_odds - consensus_price), 0, 40)
+    agreement_component = market_agreement * 0.20
+    depth_component = normalize_0_100(count, 1, 10) * 0.15
+
+    raw = 20 + movement_score + direction_bonus + agreement_component + depth_component
+    return float(np.clip(raw, 0, 100))
+
+
+def compute_market_inefficiency(row: pd.Series) -> Tuple[float, float]:
+    # Edge is relative to the market consensus price.
+    try:
+        price = float(row.get("odds", np.nan))
+        consensus = float(row.get("consensus_price", np.nan))
+    except Exception:
+        return 0.0, 0.0
+
+    p_book = american_to_implied_prob(price)
+    p_cons = american_to_implied_prob(consensus)
+    if np.isnan(p_book) or np.isnan(p_cons):
+        return 0.0, 0.0
+
+    edge_pct = (p_cons - p_book) * 100.0
+    score = np.clip(abs(edge_pct) * 15.0, 0.0, 100.0)
+    return float(score), float(edge_pct)
 
 
 def update_profile_from_bet_log(bet_log: pd.DataFrame, profile: pd.DataFrame) -> pd.DataFrame:
     prof = profile.copy()
-
-    if bet_log.empty:
-        return prof
-
     settled = bet_log[bet_log["result"].isin(["win", "loss"])].copy()
     if settled.empty:
         return prof
 
     settled["odds_bucket"] = settled["odds"].apply(odds_bucket)
     settled["consensus_bucket"] = settled["consensus_count"].apply(consensus_bucket)
-    settled["roi_units_single"] = settled.apply(lambda r: profit_in_units(r["odds"], r["result"]), axis=1)
+
+    def units_result(r):
+        if r["result"] == "win":
+            dec = american_to_decimal(r["odds"])
+            return (dec - 1.0) if not np.isnan(dec) else 0.0
+        if r["result"] == "loss":
+            return -1.0
+        return 0.0
+
+    settled["roi_units_single"] = settled.apply(units_result, axis=1)
 
     grouped = (
         settled.groupby(["market", "odds_bucket", "consensus_bucket"], dropna=False)
@@ -404,49 +473,42 @@ def update_profile_from_bet_log(bet_log: pd.DataFrame, profile: pd.DataFrame) ->
         .reset_index()
     )
 
-    prof = prof.drop(columns=["bets", "wins", "roi_units", "weight"], errors="ignore")
-    prof = prof.merge(grouped, how="left", on=["market", "odds_bucket", "consensus_bucket"])
+    merged = prof.drop(columns=["bets", "wins", "roi_units", "weight"], errors="ignore").merge(
+        grouped, on=["market", "odds_bucket", "consensus_bucket"], how="left"
+    )
+    merged["bets"] = merged["bets"].fillna(0).astype(int)
+    merged["wins"] = merged["wins"].fillna(0).astype(int)
+    merged["roi_units"] = merged["roi_units"].fillna(0.0)
 
-    prof["bets"] = prof["bets"].fillna(0).astype(int)
-    prof["wins"] = prof["wins"].fillna(0).astype(int)
-    prof["roi_units"] = prof["roi_units"].fillna(0.0)
-
-    # Weight logic:
-    # - Needs sample size
-    # - Reward proven profitability modestly
-    # - Penalize losing buckets
     weights = []
-    for _, r in prof.iterrows():
+    for _, r in merged.iterrows():
         bets = int(r["bets"])
         wins = int(r["wins"])
         roi = float(r["roi_units"])
         if bets < 5:
-            weight = 1.0
+            w = 1.0
         else:
-            win_rate = wins / bets if bets > 0 else 0.5
-            roi_per_bet = roi / bets if bets > 0 else 0.0
-            weight = 1.0 + (win_rate - 0.5) * 1.2 + roi_per_bet * 0.9
-            weight = float(np.clip(weight, 0.70, 1.35))
-        weights.append(weight)
-
-    prof["weight"] = weights
-    return prof
-
-
-def attach_learning_weight(candidates: pd.DataFrame, profile: pd.DataFrame) -> pd.DataFrame:
-    df = candidates.copy()
-    df["odds_bucket"] = df["odds"].apply(odds_bucket)
-    df["consensus_bucket"] = df["consensus_count"].apply(consensus_bucket)
-
-    prof_small = profile[["market", "odds_bucket", "consensus_bucket", "weight"]].copy()
-    df = df.merge(prof_small, how="left", on=["market", "odds_bucket", "consensus_bucket"])
-    df["weight"] = df["weight"].fillna(1.0)
-    return df
+            wr = wins / bets if bets else 0.5
+            roi_per = roi / bets if bets else 0.0
+            w = 1.0 + (wr - 0.5) * 1.2 + roi_per * 0.9
+            w = float(np.clip(w, 0.70, 1.35))
+        weights.append(w)
+    merged["weight"] = weights
+    return merged
 
 
-def score_candidates(candidates: pd.DataFrame, bankroll: float, max_unit_cap: float) -> pd.DataFrame:
-    df = candidates.copy()
+def attach_profile_weight(df: pd.DataFrame, profile: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    out["odds_bucket"] = out["odds"].apply(odds_bucket)
+    out["consensus_bucket"] = out["consensus_count"].apply(consensus_bucket)
+    small = profile[["market", "odds_bucket", "consensus_bucket", "weight"]].copy()
+    out = out.merge(small, on=["market", "odds_bucket", "consensus_bucket"], how="left")
+    out["weight"] = out["weight"].fillna(1.0)
+    return out
 
+
+def score_live_candidates(df: pd.DataFrame, bankroll: float, max_units: float) -> pd.DataFrame:
+    out = df.copy()
     sharp_scores = []
     ineff_scores = []
     edge_pcts = []
@@ -454,224 +516,210 @@ def score_candidates(candidates: pd.DataFrame, bankroll: float, max_unit_cap: fl
     units = []
     reasons = []
 
-    for _, row in df.iterrows():
-        sharp = compute_sharp_score(row)
-        ineff, edge_pct = compute_market_inefficiency(row)
+    for _, r in out.iterrows():
+        sharp = compute_sharp_score(r)
+        ineff, edge_pct = compute_market_inefficiency(r)
+        learning_weight = float(r.get("weight", 1.0))
+        consensus_count = int(r.get("consensus_count", 1))
+        movement = float(r.get("line_movement", 0.0))
+        best_flag = bool(r.get("best_price_flag", False))
 
-        base_model_score = float(row.get("base_model_score", 50))
-        consensus_count = int(row.get("consensus_count", 0))
-        learning_weight = float(row.get("weight", 1.0))
-        model_win_prob = float(row.get("model_win_prob", 0.50))
+        # Since this live engine does not yet have model projections by default,
+        # we infer a cautious market-based probability advantage.
+        market_prob = american_to_implied_prob(float(r.get("consensus_price", r.get("odds", -110))))
+        own_prob = market_prob + max(edge_pct, 0) / 100.0
 
-        consensus_bonus = {5: 14, 4: 9, 3: 4}.get(consensus_count, -8)
-        edge_bonus = np.clip(edge_pct * 2.2, -15, 20)
+        consensus_bonus = {5: 14, 4: 9, 3: 4}.get(consensus_count, -6)
+        best_price_bonus = 8 if best_flag else 0
+        move_bonus = np.clip(abs(movement) * 0.5, 0, 8)
 
-        raw_score = (
-            base_model_score * 0.42
-            + sharp * 0.24
-            + ineff * 0.20
-            + 25 * learning_weight * 0.14
+        raw = (
+            sharp * 0.38
+            + ineff * 0.28
+            + learning_weight * 18.0
             + consensus_bonus
-            + edge_bonus
+            + best_price_bonus
+            + move_bonus
         )
+        final_score = float(np.clip(raw, 0, 100))
 
-        final_score = float(np.clip(raw_score, 0, 100))
+        kf = kelly_fraction(min(max(own_prob, 0.01), 0.99), float(r.get("odds", -110)))
+        recommended_units = bankroll * kf * 0.25 / 100.0
+        recommended_units = float(np.clip(recommended_units, 0, max_units))
 
-        raw_kelly = kelly_fraction(model_win_prob, float(row.get("odds", -110)))
-        # conservative fraction for real-world survivability
-        unit_fraction = raw_kelly * 0.30
-        unit_size = bankroll * unit_fraction
-        recommended_units = unit_size / 100.0  # 1u = $100
-        recommended_units = float(np.clip(recommended_units, 0.0, max_unit_cap))
-
-        reason_bits = []
+        rb = []
+        if best_flag:
+            rb.append("best market price")
         if consensus_count >= 4:
-            reason_bits.append(f"{consensus_count}/5 consensus")
+            rb.append(f"{consensus_count}/book agreement")
         if sharp >= 70:
-            reason_bits.append("sharp support")
-        if edge_pct >= 3:
-            reason_bits.append(f"+{edge_pct:.1f}% edge")
-        if learning_weight > 1.05:
-            reason_bits.append("profitable bucket")
-        if not reason_bits:
-            reason_bits.append("borderline")
+            rb.append("strong movement")
+        if edge_pct >= 2:
+            rb.append(f"+{edge_pct:.1f}% edge")
+        if not rb:
+            rb.append("borderline")
 
         sharp_scores.append(round(sharp, 1))
         ineff_scores.append(round(ineff, 1))
         edge_pcts.append(round(edge_pct, 2))
         final_scores.append(round(final_score, 1))
         units.append(round(recommended_units, 2))
-        reasons.append(" • ".join(reason_bits))
+        reasons.append(" • ".join(rb))
 
-    df["sharp_score"] = sharp_scores
-    df["inefficiency_score"] = ineff_scores
-    df["edge_pct"] = edge_pcts
-    df["final_score"] = final_scores
-    df["recommended_units"] = units
-    df["decision_reason"] = reasons
-    return df
+    out["sharp_score"] = sharp_scores
+    out["inefficiency_score"] = ineff_scores
+    out["edge_pct"] = edge_pcts
+    out["final_score"] = final_scores
+    out["recommended_units"] = units
+    out["decision_reason"] = reasons
+    return out
 
 
-def filter_auto_mode(df: pd.DataFrame, min_consensus: int, min_sharp: float, min_edge: float, min_final: float) -> pd.DataFrame:
+def filter_live_auto(df: pd.DataFrame, min_books: int, min_sharp: float, min_edge: float, min_score: float) -> pd.DataFrame:
     out = df.copy()
-
     out["auto_qualified"] = (
-        (out["consensus_count"] >= min_consensus)
+        (out["consensus_count"] >= min_books)
         & (out["sharp_score"] >= min_sharp)
         & (out["edge_pct"] >= min_edge)
-        & (out["final_score"] >= min_final)
+        & (out["final_score"] >= min_score)
         & (out["recommended_units"] > 0)
     )
     return out
 
 
+def clv_from_odds(bet_odds: float, closing_odds: float) -> float:
+    try:
+        return (american_to_implied_prob(closing_odds) - american_to_implied_prob(bet_odds)) * 100.0
+    except Exception:
+        return 0.0
+
+
 # ------------------------------------------------------------
-# Load / initialize state
+# Load state
 # ------------------------------------------------------------
-if "bet_log_v24" not in st.session_state:
-    st.session_state.bet_log_v24 = safe_read_csv(BET_LOG_PATH, default_bet_log())
+if "bet_log_v25" not in st.session_state:
+    st.session_state.bet_log_v25 = safe_read_csv(BET_LOG_PATH, default_bet_log())
 
-if "model_profile_v24" not in st.session_state:
-    st.session_state.model_profile_v24 = safe_read_csv(MODEL_PROFILE_PATH, default_model_profile())
+if "profile_v25" not in st.session_state:
+    st.session_state.profile_v25 = safe_read_csv(PROFILE_PATH, default_profile())
 
-bet_log = st.session_state.bet_log_v24.copy()
-model_profile = st.session_state.model_profile_v24.copy()
+if "snapshot_v25" not in st.session_state:
+    st.session_state.snapshot_v25 = safe_read_csv(SNAPSHOT_PATH, default_snapshot())
 
-bet_log = ensure_columns(
-    bet_log,
-    {
-        "date": "",
-        "game": "",
-        "market": "",
-        "selection": "",
-        "book": "",
-        "odds": np.nan,
-        "opening_odds": np.nan,
-        "public_bet_pct": np.nan,
-        "consensus_count": np.nan,
-        "base_model_score": np.nan,
-        "sharp_score": np.nan,
-        "inefficiency_score": np.nan,
-        "edge_pct": np.nan,
-        "final_score": np.nan,
-        "recommended_units": np.nan,
-        "result": "",
-        "closing_odds": np.nan,
-        "clv": np.nan,
-    },
-)
-
-model_profile = ensure_columns(
-    model_profile,
-    {
-        "market": "",
-        "odds_bucket": "",
-        "consensus_bucket": "",
-        "bets": 0,
-        "wins": 0,
-        "roi_units": 0.0,
-        "weight": 1.0,
-    },
-)
+bet_log = st.session_state.bet_log_v25.copy()
+profile = st.session_state.profile_v25.copy()
+snapshot_df = st.session_state.snapshot_v25.copy()
 
 
 # ------------------------------------------------------------
 # Sidebar controls
 # ------------------------------------------------------------
-st.sidebar.header("⚙️ Auto Mode Controls")
+st.sidebar.header("⚙️ Live Engine Controls")
 
+api_key_default = os.getenv("ODDS_API_KEY", "")
+api_key = st.sidebar.text_input("Odds API Key", value=api_key_default, type="password")
+sport_label = st.sidebar.selectbox("Sport", list(SPORT_OPTIONS.keys()), index=0)
+sport_key = SPORT_OPTIONS[sport_label]
+
+regions = st.sidebar.text_input("Regions", value="us")
+markets_list = st.sidebar.multiselect("Markets", ["h2h", "spreads", "totals"], default=["h2h", "spreads", "totals"])
+bookmakers = st.sidebar.text_input("Specific bookmakers (optional)", value="")
 bankroll = st.sidebar.number_input("Bankroll ($)", min_value=100, value=1000, step=100)
-max_unit_cap = st.sidebar.number_input("Max Recommended Units", min_value=0.25, value=2.00, step=0.25)
-min_consensus = st.sidebar.slider("Min Consensus Count", 2, 5, 4)
-min_sharp = st.sidebar.slider("Min Sharp Score", 0, 100, 65)
-min_edge = st.sidebar.slider("Min Edge %", 0.0, 10.0, 2.5, 0.5)
-min_final = st.sidebar.slider("Min Final Score", 0, 100, 72)
-auto_save_qualified = st.sidebar.checkbox("Auto-save qualified plays to Bet Log", value=False)
+max_units = st.sidebar.number_input("Max Units", min_value=0.25, value=2.0, step=0.25)
+min_books = st.sidebar.slider("Min Book Consensus", 2, 10, 3)
+min_sharp = st.sidebar.slider("Min Sharp Score", 0, 100, 62)
+min_edge = st.sidebar.slider("Min Edge %", 0.0, 10.0, 1.5, 0.5)
+min_score = st.sidebar.slider("Min Final Score", 0, 100, 70)
+auto_save = st.sidebar.checkbox("Auto-save qualified plays to bet log", value=False)
 
-st.sidebar.markdown("---")
-st.sidebar.subheader("📂 Candidate Plays")
-uploaded_candidates = st.sidebar.file_uploader("Upload candidate plays CSV", type=["csv"])
+fetch_live = st.sidebar.button("📡 Fetch Live Odds", use_container_width=True)
+refresh_learning = st.sidebar.button("🧠 Refresh Learning Profile", use_container_width=True)
+reset_snapshot = st.sidebar.button("🧹 Reset Snapshot History", use_container_width=True)
 
-st.sidebar.caption(
-    "Required columns for best results: game, market, selection, book, odds, opening_odds, "
-    "public_bet_pct, line_velocity, consensus_count, base_model_score, model_win_prob, consensus_fair_odds"
-)
+if reset_snapshot:
+    snapshot_df = default_snapshot()
+    st.session_state.snapshot_v25 = snapshot_df.copy()
+    safe_save_csv(snapshot_df, SNAPSHOT_PATH)
+    st.sidebar.success("Snapshot history reset")
 
-sample_df = default_candidate_plays()
-if uploaded_candidates is not None:
-    try:
-        candidate_df = pd.read_csv(uploaded_candidates)
-        st.sidebar.success("Candidate file loaded")
-    except Exception as e:
-        st.sidebar.error(f"Could not read CSV: {e}")
-        candidate_df = sample_df.copy()
-else:
-    candidate_df = sample_df.copy()
-
-candidate_df = ensure_columns(
-    candidate_df,
-    {
-        "game": "",
-        "market": "moneyline",
-        "selection": "",
-        "book": "",
-        "odds": -110,
-        "opening_odds": -110,
-        "public_bet_pct": 50,
-        "line_velocity": 0.0,
-        "consensus_count": 3,
-        "base_model_score": 50,
-        "model_win_prob": 0.50,
-        "consensus_fair_odds": -110,
-    },
-)
+if refresh_learning:
+    profile = update_profile_from_bet_log(bet_log, profile)
+    st.session_state.profile_v25 = profile.copy()
+    safe_save_csv(profile, PROFILE_PATH)
+    st.sidebar.success("Learning profile refreshed")
 
 
 # ------------------------------------------------------------
-# Refresh learning model
+# Live data acquisition
 # ------------------------------------------------------------
-col_a, col_b, col_c = st.columns([1, 1, 2])
+live_status = ""
+requests_remaining = ""
 
-with col_a:
-    if st.button("🧠 Refresh Self-Learning Weights", use_container_width=True):
-        model_profile = update_profile_from_bet_log(bet_log, model_profile)
-        st.session_state.model_profile_v24 = model_profile.copy()
-        safe_save_csv(model_profile, MODEL_PROFILE_PATH)
-        st.success("Learning profile updated")
+if "current_live_df_v25" not in st.session_state:
+    st.session_state.current_live_df_v25 = fallback_live_rows()
 
-with col_b:
-    if st.button("🧹 Reset Learning Profile", use_container_width=True):
-        model_profile = default_model_profile()
-        st.session_state.model_profile_v24 = model_profile.copy()
-        safe_save_csv(model_profile, MODEL_PROFILE_PATH)
-        st.warning("Learning profile reset")
+if fetch_live:
+    if api_key.strip():
+        try:
+            live_df, requests_remaining = fetch_odds_from_the_odds_api(
+                api_key=api_key.strip(),
+                sport_key=sport_key,
+                regions=regions.strip(),
+                markets=",".join(markets_list),
+                bookmakers=bookmakers.strip() or None,
+            )
+            if live_df.empty:
+                live_status = "Live fetch succeeded, but no rows were returned."
+            else:
+                live_status = "Live odds fetched successfully."
+            st.session_state.current_live_df_v25 = live_df.copy()
+        except Exception as e:
+            live_status = f"Live fetch failed. Using fallback data. Error: {e}"
+            st.session_state.current_live_df_v25 = fallback_live_rows()
+    else:
+        live_status = "No API key provided. Using fallback test dataset."
+        st.session_state.current_live_df_v25 = fallback_live_rows()
 
-with col_c:
-    st.info("Auto Mode uses historical result buckets to gently boost or penalize future candidate plays.")
+current_live_df = st.session_state.current_live_df_v25.copy()
+
+# Keep sport filter aligned even when using fallback
+current_live_df = current_live_df[current_live_df["sport"] == sport_key].copy()
+if current_live_df.empty:
+    current_live_df = fallback_live_rows()
+    current_live_df = current_live_df[current_live_df["sport"] == sport_key].copy()
+
+if live_status:
+    st.info(live_status)
+if requests_remaining:
+    st.caption(f"API requests remaining (header): {requests_remaining}")
 
 
 # ------------------------------------------------------------
-# Score pipeline
+# Process live rows
 # ------------------------------------------------------------
-candidate_df = attach_learning_weight(candidate_df, model_profile)
-scored_df = score_candidates(candidate_df, bankroll=bankroll, max_unit_cap=max_unit_cap)
-scored_df = filter_auto_mode(
-    scored_df,
-    min_consensus=min_consensus,
-    min_sharp=min_sharp,
-    min_edge=min_edge,
-    min_final=min_final,
-)
+current_live_df = attach_previous_snapshot(current_live_df, snapshot_df)
+current_live_df = attach_market_consensus(current_live_df)
+profile = update_profile_from_bet_log(bet_log, profile)
+st.session_state.profile_v25 = profile.copy()
+safe_save_csv(profile, PROFILE_PATH)
+
+current_live_df = attach_profile_weight(current_live_df, profile)
+scored_df = score_live_candidates(current_live_df, bankroll=bankroll, max_units=max_units)
+scored_df = filter_live_auto(scored_df, min_books=min_books, min_sharp=min_sharp, min_edge=min_edge, min_score=min_score)
 scored_df = scored_df.sort_values(["auto_qualified", "final_score", "edge_pct"], ascending=[False, False, False]).reset_index(drop=True)
-
 qualified_df = scored_df[scored_df["auto_qualified"]].copy()
 
+# Snapshot update happens after scoring so current rows can compare to the previous fetch
+snapshot_df = update_snapshot_store(current_live_df, snapshot_df)
+st.session_state.snapshot_v25 = snapshot_df.copy()
+safe_save_csv(snapshot_df, SNAPSHOT_PATH)
+
 
 # ------------------------------------------------------------
-# KPI row
+# KPIs
 # ------------------------------------------------------------
 k1, k2, k3, k4 = st.columns(4)
-k1.metric("Candidate Plays", len(scored_df))
+k1.metric("Live Rows", len(scored_df))
 k2.metric("Qualified Plays", len(qualified_df))
 k3.metric("Avg Qualified Score", f"{qualified_df['final_score'].mean():.1f}" if len(qualified_df) else "—")
 k4.metric("Avg Qualified Edge", f"{qualified_df['edge_pct'].mean():.2f}%" if len(qualified_df) else "—")
@@ -680,267 +728,257 @@ k4.metric("Avg Qualified Edge", f"{qualified_df['edge_pct'].mean():.2f}%" if len
 # ------------------------------------------------------------
 # Top plays
 # ------------------------------------------------------------
-st.subheader("🎯 Auto Mode Top Plays")
+st.subheader("🎯 V25 Live Top Plays")
 
 if qualified_df.empty:
-    st.warning("No plays met the current Auto Mode thresholds.")
+    st.warning("No live plays met the current thresholds.")
 else:
-    top_n = min(5, len(qualified_df))
-    for i, row in qualified_df.head(top_n).iterrows():
-        box = st.container(border=True)
-        with box:
-            st.markdown(f"### #{i+1} {row['selection']}")
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Game", row["game"])
-            c2.metric("Book", row["book"])
-            c3.metric("Odds", f"{int(row['odds'])}" if pd.notna(row["odds"]) else "—")
-            c4.metric("Units", f"{row['recommended_units']:.2f}u")
+    for i, row in qualified_df.head(8).iterrows():
+        with st.container(border=True):
+            title = row["selection"]
+            if pd.notna(row.get("point", np.nan)):
+                if row["market"] == "spreads":
+                    title = f"{row['selection']} {row['point']:+g}"
+                elif row["market"] == "totals":
+                    title = f"{row['selection']} {row['point']:g}"
+            st.markdown(f"### #{i+1} {title}")
 
-            d1, d2, d3, d4 = st.columns(4)
-            d1.metric("Final Score", f"{row['final_score']:.1f}")
-            d2.metric("Sharp Score", f"{row['sharp_score']:.1f}")
-            d3.metric("Edge", f"{row['edge_pct']:.2f}%")
-            d4.metric("Consensus", f"{int(row['consensus_count'])}/5")
+            a, b, c, d = st.columns(4)
+            a.metric("Game", row["game"])
+            b.metric("Book", row["book"])
+            c.metric("Odds", f"{int(row['odds'])}" if pd.notna(row["odds"]) else "—")
+            d.metric("Units", f"{row['recommended_units']:.2f}u")
+
+            e, f, g, h = st.columns(4)
+            e.metric("Final Score", f"{row['final_score']:.1f}")
+            f.metric("Sharp Score", f"{row['sharp_score']:.1f}")
+            g.metric("Edge", f"{row['edge_pct']:.2f}%")
+            h.metric("Consensus", f"{int(row['consensus_count'])} books")
 
             st.caption(f"Reason: {row['decision_reason']}")
 
 
 # ------------------------------------------------------------
-# Qualified plays table
+# Qualified plays
 # ------------------------------------------------------------
-st.subheader("✅ Qualified Plays")
-st.dataframe(
-    qualified_df[[
-        "game", "market", "selection", "book", "odds", "consensus_count",
-        "sharp_score", "inefficiency_score", "edge_pct", "final_score",
-        "recommended_units", "decision_reason"
-    ]],
-    use_container_width=True,
-    hide_index=True,
-)
+st.subheader("✅ Qualified Live Plays")
+show_cols = [
+    "sport", "game", "market", "selection", "point", "book", "odds", "prev_odds",
+    "consensus_price", "consensus_count", "line_movement", "sharp_score",
+    "inefficiency_score", "edge_pct", "final_score", "recommended_units", "decision_reason"
+]
+st.dataframe(qualified_df[show_cols], use_container_width=True, hide_index=True)
 
-# Auto-save qualified plays
-if auto_save_qualified and not qualified_df.empty:
+if auto_save and not qualified_df.empty:
     existing_keys = set(
         (
-            bet_log["game"].astype(str)
-            + " | " + bet_log["selection"].astype(str)
-            + " | " + bet_log["book"].astype(str)
-            + " | " + bet_log["odds"].astype(str)
+            bet_log["game"].astype(str) + " | " + bet_log["market"].astype(str) + " | "
+            + bet_log["selection"].astype(str) + " | " + bet_log["point"].astype(str) + " | "
+            + bet_log["book"].astype(str) + " | " + bet_log["odds"].astype(str)
         ).tolist()
     )
 
-    rows_to_add = []
-    for _, row in qualified_df.iterrows():
-        key = f"{row['game']} | {row['selection']} | {row['book']} | {row['odds']}"
+    add_rows = []
+    for _, r in qualified_df.iterrows():
+        key = " | ".join([
+            str(r["game"]), str(r["market"]), str(r["selection"]), str(r["point"]),
+            str(r["book"]), str(r["odds"])
+        ])
         if key not in existing_keys:
-            rows_to_add.append({
+            add_rows.append({
                 "date": pd.Timestamp.now().strftime("%Y-%m-%d"),
-                "game": row["game"],
-                "market": row["market"],
-                "selection": row["selection"],
-                "book": row["book"],
-                "odds": row["odds"],
-                "opening_odds": row["opening_odds"],
-                "public_bet_pct": row["public_bet_pct"],
-                "consensus_count": row["consensus_count"],
-                "base_model_score": row["base_model_score"],
-                "sharp_score": row["sharp_score"],
-                "inefficiency_score": row["inefficiency_score"],
-                "edge_pct": row["edge_pct"],
-                "final_score": row["final_score"],
-                "recommended_units": row["recommended_units"],
+                "sport": r["sport"],
+                "game": r["game"],
+                "market": r["market"],
+                "selection": r["selection"],
+                "point": r["point"],
+                "book": r["book"],
+                "odds": r["odds"],
+                "prev_odds": r["prev_odds"],
+                "consensus_price": r["consensus_price"],
+                "consensus_count": r["consensus_count"],
+                "line_movement": r["line_movement"],
+                "sharp_score": r["sharp_score"],
+                "inefficiency_score": r["inefficiency_score"],
+                "edge_pct": r["edge_pct"],
+                "final_score": r["final_score"],
+                "recommended_units": r["recommended_units"],
                 "result": "",
                 "closing_odds": np.nan,
                 "clv": np.nan,
             })
 
-    if rows_to_add:
-        bet_log = pd.concat([bet_log, pd.DataFrame(rows_to_add)], ignore_index=True)
-        st.session_state.bet_log_v24 = bet_log.copy()
+    if add_rows:
+        bet_log = pd.concat([bet_log, pd.DataFrame(add_rows)], ignore_index=True)
+        st.session_state.bet_log_v25 = bet_log.copy()
         safe_save_csv(bet_log, BET_LOG_PATH)
-        st.success(f"Auto-saved {len(rows_to_add)} new qualified play(s) to Bet Log.")
+        st.success(f"Auto-saved {len(add_rows)} live play(s) to the bet log.")
+
+
+with st.expander("📊 View All Live Scored Rows", expanded=False):
+    st.dataframe(scored_df[show_cols + ["auto_qualified"]], use_container_width=True, hide_index=True)
+
+with st.expander("🛰️ Raw Live Rows", expanded=False):
+    st.dataframe(current_live_df, use_container_width=True, hide_index=True)
 
 
 # ------------------------------------------------------------
-# Full scored board
+# Bet log and grading
 # ------------------------------------------------------------
-with st.expander("📊 View All Scored Candidates", expanded=False):
-    st.dataframe(
-        scored_df[[
-            "game", "market", "selection", "book", "odds", "opening_odds",
-            "public_bet_pct", "consensus_count", "base_model_score", "weight",
-            "sharp_score", "inefficiency_score", "edge_pct", "final_score",
-            "recommended_units", "auto_qualified"
-        ]],
-        use_container_width=True,
-        hide_index=True,
-    )
+st.subheader("📒 Bet Log + Grading")
 
+with st.form("bet_log_form"):
+    c1, c2, c3 = st.columns(3)
+    game = c1.text_input("Game")
+    market = c2.selectbox("Market", ["moneyline", "spreads", "totals"])
+    selection = c3.text_input("Selection")
 
-# ------------------------------------------------------------
-# Manual bet log entry
-# ------------------------------------------------------------
-st.subheader("📒 Bet Log")
+    d1, d2, d3, d4 = st.columns(4)
+    point = d1.number_input("Point (0 if N/A)", value=0.0, step=0.5)
+    book = d2.text_input("Book", value="DraftKings")
+    odds = d3.number_input("Bet Odds", value=-110)
+    prev_odds = d4.number_input("Previous Odds", value=-110)
 
-with st.form("manual_bet_entry"):
-    m1, m2, m3 = st.columns(3)
-    game = m1.text_input("Game")
-    market = m2.selectbox("Market", ["moneyline", "spreads", "totals", "player_props"])
-    selection = m3.text_input("Selection")
+    e1, e2, e3, e4 = st.columns(4)
+    consensus_price = e1.number_input("Consensus Price", value=-110)
+    consensus_count = e2.slider("Consensus Count", 1, 10, 3)
+    closing_odds = e3.number_input("Closing Odds", value=-110)
+    result = e4.selectbox("Result", ["", "win", "loss"])
 
-    n1, n2, n3, n4 = st.columns(4)
-    book = n1.text_input("Book", value="DraftKings")
-    odds = n2.number_input("Bet Odds", value=-110)
-    opening_odds = n3.number_input("Opening Odds", value=-110)
-    public_bet_pct = n4.slider("Public Betting %", 0, 100, 50)
-
-    p1, p2, p3, p4 = st.columns(4)
-    consensus_count = p1.slider("Consensus Count", 1, 5, 3)
-    base_model_score = p2.slider("Base Model Score", 0, 100, 60)
-    closing_odds = p3.number_input("Closing Odds", value=-110)
-    result = p4.selectbox("Result", ["", "win", "loss"])
-
-    submit_manual = st.form_submit_button("Add / Update Bet Log")
-    if submit_manual:
+    submitted = st.form_submit_button("Add / Grade Bet")
+    if submitted:
+        line_movement = prev_odds - odds
         sharp_score = compute_sharp_score(pd.Series({
-            "public_bet_pct": public_bet_pct,
-            "opening_odds": opening_odds,
             "odds": odds,
-            "line_velocity": 0,
+            "prev_odds": prev_odds,
+            "consensus_price": consensus_price,
+            "consensus_count": consensus_count,
         }))
-        ineff_score, edge_pct = compute_market_inefficiency(pd.Series({
+        ineff, edge_pct = compute_market_inefficiency(pd.Series({
             "odds": odds,
-            "consensus_fair_odds": closing_odds,
-            "model_win_prob": np.nan,
+            "consensus_price": consensus_price,
         }))
-        final_score = np.clip(
-            base_model_score * 0.50 + sharp_score * 0.25 + ineff_score * 0.15 + consensus_count * 2.0,
-            0,
-            100,
-        )
+        learning_weight = 1.0
+        final_score = float(np.clip(
+            sharp_score * 0.40 + ineff * 0.30 + learning_weight * 18 + {5:14,4:9,3:4}.get(consensus_count, -6),
+            0, 100
+        ))
+        market_prob = american_to_implied_prob(consensus_price)
+        own_prob = market_prob + max(edge_pct, 0) / 100.0
+        units = float(np.clip(bankroll * kelly_fraction(min(max(own_prob, 0.01), 0.99), odds) * 0.25 / 100.0, 0, max_units))
         clv = clv_from_odds(odds, closing_odds)
 
-        new_row = pd.DataFrame([{
+        add = pd.DataFrame([{
             "date": pd.Timestamp.now().strftime("%Y-%m-%d"),
+            "sport": sport_key,
             "game": game,
             "market": market,
             "selection": selection,
+            "point": np.nan if point == 0 else point,
             "book": book,
             "odds": odds,
-            "opening_odds": opening_odds,
-            "public_bet_pct": public_bet_pct,
+            "prev_odds": prev_odds,
+            "consensus_price": consensus_price,
             "consensus_count": consensus_count,
-            "base_model_score": base_model_score,
+            "line_movement": line_movement,
             "sharp_score": round(sharp_score, 1),
-            "inefficiency_score": round(ineff_score, 1),
+            "inefficiency_score": round(ineff, 1),
             "edge_pct": round(edge_pct, 2),
-            "final_score": round(float(final_score), 1),
-            "recommended_units": round(float(np.clip(kelly_fraction(0.54, odds) * 0.30 * bankroll / 100.0, 0, max_unit_cap)), 2),
+            "final_score": round(final_score, 1),
+            "recommended_units": round(units, 2),
             "result": result,
             "closing_odds": closing_odds,
-            "clv": round(float(clv), 2),
+            "clv": round(clv, 2),
         }])
-
-        bet_log = pd.concat([bet_log, new_row], ignore_index=True)
-        st.session_state.bet_log_v24 = bet_log.copy()
+        bet_log = pd.concat([bet_log, add], ignore_index=True)
+        st.session_state.bet_log_v25 = bet_log.copy()
         safe_save_csv(bet_log, BET_LOG_PATH)
-        st.success("Bet added to log.")
+        st.success("Bet log updated.")
 
-
-# ------------------------------------------------------------
-# Bet log display
-# ------------------------------------------------------------
 st.dataframe(bet_log, use_container_width=True, hide_index=True)
 
-d1, d2, d3 = st.columns(3)
-
 settled = bet_log[bet_log["result"].isin(["win", "loss"])].copy()
-wins = (settled["result"] == "win").sum()
-losses = (settled["result"] == "loss").sum()
+wins = int((settled["result"] == "win").sum())
+losses = int((settled["result"] == "loss").sum())
 win_rate = (wins / len(settled) * 100.0) if len(settled) else 0.0
 
-roi_units = 0.0
+def pnl_units(r):
+    if r["result"] == "win":
+        dec = american_to_decimal(r["odds"])
+        return (dec - 1.0) if not np.isnan(dec) else 0.0
+    if r["result"] == "loss":
+        return -1.0
+    return 0.0
+
+net_units = settled.apply(pnl_units, axis=1).sum() if len(settled) else 0.0
+avg_clv = settled["clv"].mean() if len(settled) else np.nan
+
+m1, m2, m3, m4 = st.columns(4)
+m1.metric("Settled Bets", len(settled))
+m2.metric("Win Rate", f"{win_rate:.1f}%")
+m3.metric("Net Units", f"{net_units:.2f}u")
+m4.metric("Avg CLV", f"{avg_clv:.2f}" if len(settled) else "—")
+
+
+# ------------------------------------------------------------
+# Learning profile
+# ------------------------------------------------------------
+st.subheader("🧠 Live Learning Profile")
+st.dataframe(profile.sort_values(["market", "consensus_bucket", "odds_bucket"]).reset_index(drop=True), use_container_width=True, hide_index=True)
+
 if len(settled):
-    roi_units = settled.apply(lambda r: profit_in_units(r["odds"], r["result"]), axis=1).sum()
-
-avg_clv = settled["clv"].mean() if ("clv" in settled.columns and len(settled)) else 0.0
-
-d1.metric("Settled Bets", len(settled))
-d2.metric("Win Rate", f"{win_rate:.1f}%")
-d3.metric("Net Units", f"{roi_units:.2f}u")
-
-e1, e2, e3 = st.columns(3)
-e1.metric("Wins", int(wins))
-e2.metric("Losses", int(losses))
-e3.metric("Avg CLV", f"{avg_clv:.2f}" if len(settled) else "—")
-
-
-# ------------------------------------------------------------
-# Learning profile views
-# ------------------------------------------------------------
-st.subheader("🧠 Self-Learning Profile")
-
-lp1, lp2 = st.columns(2)
-
-with lp1:
-    st.markdown("#### Current Weight Table")
-    st.dataframe(
-        model_profile.sort_values(["market", "consensus_bucket", "odds_bucket"]).reset_index(drop=True),
-        use_container_width=True,
-        hide_index=True,
-    )
-
-with lp2:
-    if not settled.empty:
-        view = (
-            settled.assign(
-                odds_bucket=settled["odds"].apply(odds_bucket),
-                consensus_bucket=settled["consensus_count"].apply(consensus_bucket),
-                single_units=settled.apply(lambda r: profit_in_units(r["odds"], r["result"]), axis=1),
-            )
-            .groupby(["market", "consensus_count"], dropna=False)
-            .agg(
-                bets=("result", "size"),
-                wins=("result", lambda s: (s == "win").sum()),
-                net_units=("single_units", "sum"),
-                avg_clv=("clv", "mean"),
-            )
-            .reset_index()
+    view = (
+        settled.assign(
+            odds_bucket=settled["odds"].apply(odds_bucket),
+            consensus_bucket=settled["consensus_count"].apply(consensus_bucket),
+            pnl_units=settled.apply(pnl_units, axis=1),
         )
-        st.markdown("#### Performance by Market / Consensus")
-        st.dataframe(view, use_container_width=True, hide_index=True)
-    else:
-        st.info("Add settled bets to activate self-learning analytics.")
+        .groupby(["market", "consensus_count"], dropna=False)
+        .agg(
+            bets=("result", "size"),
+            wins=("result", lambda s: (s == "win").sum()),
+            net_units=("pnl_units", "sum"),
+            avg_clv=("clv", "mean"),
+        )
+        .reset_index()
+    )
+    st.dataframe(view, use_container_width=True, hide_index=True)
+else:
+    st.info("Add settled bets to activate adaptive live-learning analytics.")
 
 
 # ------------------------------------------------------------
-# Export section
+# Export
 # ------------------------------------------------------------
 st.subheader("💾 Export")
-
-exp1, exp2 = st.columns(2)
-with exp1:
-    bet_log_csv = bet_log.to_csv(index=False).encode("utf-8")
+x1, x2, x3 = st.columns(3)
+with x1:
     st.download_button(
         "Download Bet Log CSV",
-        data=bet_log_csv,
-        file_name="bet_log_v24.csv",
+        data=bet_log.to_csv(index=False).encode("utf-8"),
+        file_name="bet_log_v25.csv",
         mime="text/csv",
         use_container_width=True,
     )
-
-with exp2:
-    profile_csv = model_profile.to_csv(index=False).encode("utf-8")
+with x2:
     st.download_button(
         "Download Learning Profile CSV",
-        data=profile_csv,
-        file_name="model_profile_v24.csv",
+        data=profile.to_csv(index=False).encode("utf-8"),
+        file_name="learning_profile_v25.csv",
+        mime="text/csv",
+        use_container_width=True,
+    )
+with x3:
+    st.download_button(
+        "Download Snapshot CSV",
+        data=snapshot_df.to_csv(index=False).encode("utf-8"),
+        file_name="odds_snapshot_v25.csv",
         mime="text/csv",
         use_container_width=True,
     )
 
 st.caption(
-    "V24 Auto Mode is decision-focused and usable today with uploaded candidate plays. "
-    "The next major leap would be connecting real sportsbook/API feeds so the scanner and auto mode work live."
+    "This live engine is wired for The Odds API v4-style odds responses and stores its own snapshots so the app can measure movement between refreshes. "
+    "The Odds API docs describe the v4 odds endpoint, the api.the-odds-api.com host, American odds formatting, and sport keys such as basketball_nba and icehockey_nhl. "
+    "Moneyline, spreads, and totals are requested via markets like h2h, spreads, and totals. citeturn955092search1turn955092search3turn955092search6"
 )

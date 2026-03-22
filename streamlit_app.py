@@ -15,7 +15,7 @@ import streamlit as st
 # =========================
 # CONFIG
 # =========================
-APP_TITLE = "Sports AI Betting Dashboard — V18.1"
+APP_TITLE = "Sports AI Betting Dashboard — V19"
 DATA_DIR = Path("data")
 DATA_DIR.mkdir(exist_ok=True)
 
@@ -29,6 +29,8 @@ PORTFOLIO_HISTORY_PATH = DATA_DIR / "portfolio_history.csv"
 MODEL_VOTES_PATH = DATA_DIR / "model_votes_history.csv"
 MODEL_PERFORMANCE_PATH = DATA_DIR / "model_performance.csv"
 MODEL_SEGMENT_PERFORMANCE_PATH = DATA_DIR / "model_segment_performance.csv"
+EXECUTION_BOARD_PATH = DATA_DIR / "execution_board.csv"
+PLACED_BETS_PATH = DATA_DIR / "placed_bets.csv"
 
 
 # =========================
@@ -36,7 +38,7 @@ MODEL_SEGMENT_PERFORMANCE_PATH = DATA_DIR / "model_segment_performance.csv"
 # =========================
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 st.title(APP_TITLE)
-st.caption("V18.1: Auto-model learning with adaptive thresholds, segment-aware weights, and smarter debate logic")
+st.caption("V19: Auto-execution layer with approved bet slips, ready-to-place board, singles vs parlays, and lock/review/placed workflow")
 
 
 # =========================
@@ -320,20 +322,11 @@ def score_to_risk_band(score):
     return "High"
 
 
-# =========================
-# MODEL DEFINITIONS
-# =========================
 MODEL_NAMES = ["Model_A", "Model_B", "Model_C", "Model_D", "Model_E"]
 
 
 def default_model_thresholds():
-    return {
-        "Model_A": 0.015,
-        "Model_B": 0.015,
-        "Model_C": 0.015,
-        "Model_D": 0.015,
-        "Model_E": 0.015,
-    }
+    return {m: 0.015 for m in MODEL_NAMES}
 
 
 # =========================
@@ -440,6 +433,10 @@ def load_settings():
         "adaptive_thresholds_on": True,
         "adaptive_segments_on": True,
         "adaptive_min_samples": 10,
+        "execution_max_singles": 8,
+        "execution_max_parlays": 4,
+        "execution_min_priority": 75.0,
+        "execution_auto_lock_elite": False,
     }
     try:
         if SETTINGS_PATH.exists():
@@ -517,10 +514,7 @@ def save_model_votes_history(df):
 
 
 def load_model_performance():
-    cols = [
-        "model_name", "bets", "wins", "losses", "win_rate", "avg_prob", "brier_proxy",
-        "weight", "status", "adaptive_threshold"
-    ]
+    cols = ["model_name", "bets", "wins", "losses", "win_rate", "avg_prob", "brier_proxy", "weight", "status", "adaptive_threshold"]
     return safe_read_csv(MODEL_PERFORMANCE_PATH, cols)
 
 
@@ -529,15 +523,42 @@ def save_model_performance(df):
 
 
 def load_model_segment_performance():
-    cols = [
-        "model_name", "sport", "market_bucket", "bets", "wins", "losses",
-        "win_rate", "avg_prob", "brier_proxy", "segment_weight", "segment_threshold", "segment_status"
-    ]
+    cols = ["model_name", "sport", "market_bucket", "bets", "wins", "losses", "win_rate", "avg_prob", "brier_proxy", "segment_weight", "segment_threshold", "segment_status"]
     return safe_read_csv(MODEL_SEGMENT_PERFORMANCE_PATH, cols)
 
 
 def save_model_segment_performance(df):
     safe_write_csv(df, MODEL_SEGMENT_PERFORMANCE_PATH)
+
+
+def load_execution_board():
+    cols = [
+        "execution_id", "created_at", "bet_id", "ticket_type", "slip_group", "sport", "event",
+        "market_bucket", "selection", "bet_type", "book", "odds", "calibrated_prob", "ev",
+        "score", "priority_score", "model_yes_votes", "weighted_consensus_ratio",
+        "recommended_units", "approved_units", "execution_priority", "status",
+        "locked_flag", "review_flag", "placed_flag", "ai_recommended", "user_placed",
+        "difference_flag", "notes"
+    ]
+    return safe_read_csv(EXECUTION_BOARD_PATH, cols)
+
+
+def save_execution_board(df):
+    safe_write_csv(df, EXECUTION_BOARD_PATH)
+
+
+def load_placed_bets():
+    cols = [
+        "placed_at", "execution_id", "bet_id", "ticket_type", "slip_group", "sport", "event",
+        "market_bucket", "selection", "bet_type", "book", "odds",
+        "ai_recommended_units", "placed_units", "ai_recommended", "user_placed",
+        "difference_flag", "status"
+    ]
+    return safe_read_csv(PLACED_BETS_PATH, cols)
+
+
+def save_placed_bets(df):
+    safe_write_csv(df, PLACED_BETS_PATH)
 
 
 # =========================
@@ -742,14 +763,12 @@ def segment_weight_lookup(segment_df, sport, market_bucket):
     base_thr = default_model_thresholds()
     if len(segment_df) == 0:
         return base, base_thr
-
     seg = segment_df[
         segment_df["sport"].astype(str).eq(normalize_text(sport)) &
         segment_df["market_bucket"].astype(str).eq(normalize_text(market_bucket))
     ]
     if len(seg) == 0:
         return base, base_thr
-
     for m in MODEL_NAMES:
         row = seg[seg["model_name"].astype(str) == m]
         if len(row):
@@ -763,24 +782,15 @@ def build_multi_model_votes(df, perf_df, segment_df, settings):
     out = df.copy()
     overall_weights, overall_thresholds = overall_model_weight_lookup(perf_df)
 
-    # Model A: probability model
     out["Model_A_prob"] = (out["calibrated_prob"].fillna(out["model_prob"].fillna(0.50)) * 0.60 + out["model_prob"].fillna(0.50) * 0.40).clip(0.01, 0.99)
-
-    # Model B: market / line-value model
     edge_scaled = out["edge"].fillna(0).clip(lower=-3, upper=8) * 0.015
     out["Model_B_prob"] = (out["implied_prob"].fillna(0.50) + 0.04 + edge_scaled).clip(0.01, 0.99)
-
-    # Model C: historical trend model proxy
     score_adj = ((out["score"].fillna(65) - 65) / 100.0) * 0.18
     consensus_adj = (out["consensus"].fillna(3) - 3) * 0.02
     out["Model_C_prob"] = (0.50 + score_adj + consensus_adj).clip(0.01, 0.99)
-
-    # Model D: CLV predictor / sharpness proxy
     ev_adj = out["ev"].fillna(0).clip(lower=-0.10, upper=0.25) * 0.8
     sharp_adj = np.where(out.get("sharp_flag", "Normal").astype(str) == "Sharp", 0.03, 0.0)
     out["Model_D_prob"] = (out["implied_prob"].fillna(0.50) + 0.03 + ev_adj + sharp_adj).clip(0.01, 0.99)
-
-    # Model E: risk-adjusted portfolio model
     risk_penalty = np.where(out.get("risk_band", "High").astype(str) == "High", -0.04, np.where(out.get("risk_band", "High").astype(str) == "Medium", -0.01, 0.02))
     out["Model_E_prob"] = (out["calibrated_prob"].fillna(0.50) + risk_penalty + out["ev"].fillna(0).clip(lower=-0.08, upper=0.12) * 0.35).clip(0.01, 0.99)
 
@@ -804,7 +814,6 @@ def build_multi_model_votes(df, perf_df, segment_df, settings):
             overall_thr = overall_thresholds.get(m, 0.015)
             seg_w = seg_weights.get(m, 1.0) if settings.get("adaptive_segments_on", True) else 1.0
             seg_thr = seg_thresholds.get(m, overall_thr) if settings.get("adaptive_segments_on", True) else overall_thr
-
             final_weight = overall_w * seg_w if settings.get("use_model_weights", True) else 1.0
             final_threshold = seg_thr if settings.get("adaptive_thresholds_on", True) else 0.015
 
@@ -832,7 +841,6 @@ def build_multi_model_votes(df, perf_df, segment_df, settings):
     out["weighted_yes_votes"] = weighted_votes
     out["weighted_consensus_ratio"] = weighted_ratios
     out["adaptive_vote_note"] = adaptive_notes
-
     out["debate_label"] = np.where(
         out["model_yes_votes"] == 5, "5/5 Elite",
         np.where(out["model_yes_votes"] == 4, "4/5 Strong",
@@ -845,11 +853,9 @@ def build_multi_model_votes(df, perf_df, segment_df, settings):
 def summarize_model_performance(votes_history_df):
     if len(votes_history_df) == 0:
         return default_model_performance()
-
     settled = votes_history_df[votes_history_df["result"].astype(str).str.lower().isin(["win", "loss"])].copy()
     if len(settled) == 0:
         return default_model_performance()
-
     settled["actual"] = settled["result"].astype(str).str.lower().map({"win": 1.0, "loss": 0.0})
     rows = []
 
@@ -859,7 +865,6 @@ def summarize_model_performance(votes_history_df):
         seg = settled[[prob_col, vote_col, "actual"]].copy()
         seg = seg[seg[prob_col].notna()]
         bets = len(seg)
-
         if bets == 0:
             rows.append(default_model_performance().query("model_name == @m").iloc[0].to_dict())
             continue
@@ -884,10 +889,6 @@ def summarize_model_performance(votes_history_df):
                 weight = 0.88
                 status = "Cold"
                 threshold = 0.022
-            else:
-                weight = 1.0
-                status = "Neutral"
-                threshold = 0.015
 
         rows.append({
             "model_name": m,
@@ -901,41 +902,33 @@ def summarize_model_performance(votes_history_df):
             "status": status,
             "adaptive_threshold": round(threshold, 4),
         })
-
     return pd.DataFrame(rows)
 
 
 def summarize_model_segment_performance(votes_history_df, min_samples=10):
     if len(votes_history_df) == 0:
         return default_model_segment_performance()
-
     settled = votes_history_df[votes_history_df["result"].astype(str).str.lower().isin(["win", "loss"])].copy()
     if len(settled) == 0:
         return default_model_segment_performance()
-
     settled["actual"] = settled["result"].astype(str).str.lower().map({"win": 1.0, "loss": 0.0})
     rows = []
-
     for m in MODEL_NAMES:
         prob_col = f"{m}_prob"
         vote_col = f"{m}_vote"
-
         for (sport, market_bucket), grp in settled.groupby(["sport", "market_bucket"], dropna=False):
             g = grp[[prob_col, vote_col, "actual"]].copy()
             g = g[g[prob_col].notna()]
             yes = g[g[vote_col].astype(str) == "YES"].copy()
-
             bets = len(yes)
             wins = int((yes["actual"] == 1).sum()) if bets else 0
             losses = int((yes["actual"] == 0).sum()) if bets else 0
             win_rate = yes["actual"].mean() if bets else np.nan
             avg_prob = g[prob_col].mean() if len(g) else np.nan
             brier = ((g[prob_col] - g["actual"]) ** 2).mean() if len(g) else np.nan
-
             seg_weight = 1.0
             seg_threshold = default_model_thresholds()[m]
             seg_status = "Neutral"
-
             if bets >= min_samples and pd.notna(win_rate):
                 if win_rate >= 0.60 and (pd.isna(brier) or brier <= 0.24):
                     seg_weight = 1.12
@@ -945,7 +938,6 @@ def summarize_model_segment_performance(votes_history_df, min_samples=10):
                     seg_weight = 0.88
                     seg_threshold = 0.024
                     seg_status = "Reduced"
-
             rows.append({
                 "model_name": m,
                 "sport": sport,
@@ -960,7 +952,6 @@ def summarize_model_segment_performance(votes_history_df, min_samples=10):
                 "segment_threshold": round(seg_threshold, 4),
                 "segment_status": seg_status,
             })
-
     return pd.DataFrame(rows)
 
 
@@ -969,8 +960,7 @@ def save_current_vote_snapshot(df_with_votes):
         return 0
     hist = load_model_votes_history()
     save_cols = [
-        "bet_id", "sport", "event", "market_bucket", "selection", "bet_type",
-        "book", "odds",
+        "bet_id", "sport", "event", "market_bucket", "selection", "bet_type", "book", "odds",
         "Model_A_prob", "Model_A_vote", "Model_B_prob", "Model_B_vote",
         "Model_C_prob", "Model_C_vote", "Model_D_prob", "Model_D_vote",
         "Model_E_prob", "Model_E_vote"
@@ -978,7 +968,6 @@ def save_current_vote_snapshot(df_with_votes):
     snap = ensure_columns(df_with_votes.copy(), save_cols + ["result"])
     snap = snap[save_cols + ["result"]].copy()
     snap["saved_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
     hist = pd.concat([hist, snap], ignore_index=True)
     hist = hist.drop_duplicates(subset=["bet_id"], keep="last")
     save_model_votes_history(hist)
@@ -1091,7 +1080,6 @@ def sharp_mode_weight(sharp_status, settings):
 def debate_weight(row, settings):
     yes_votes = float(row.get("model_yes_votes", 0) if pd.notna(row.get("model_yes_votes", np.nan)) else 0)
     weighted_ratio = float(row.get("weighted_consensus_ratio", 0) if pd.notna(row.get("weighted_consensus_ratio", np.nan)) else 0)
-
     if yes_votes >= 5:
         return 1.18
     if yes_votes >= 4:
@@ -1108,33 +1096,27 @@ def recommend_units(row, settings, market_perf_df=None, book_perf_df=None, profi
     kelly_multiplier = float(settings["kelly_multiplier"])
     base_unit_pct = float(settings["base_unit_pct"])
     max_unit = float(settings["max_unit"])
-
     p = row.get("calibrated_prob", row.get("model_prob", np.nan))
     odds = row.get("odds", np.nan)
     score = row.get("score", 0)
     consensus = row.get("consensus", 0)
-
     k = kelly_fraction(p, odds)
     units = k * kelly_multiplier * (bankroll * base_unit_pct)
-
     if score >= 85:
         units *= 1.25
     elif score >= 75:
         units *= 1.10
     elif score < 65:
         units *= 0.70
-
     if consensus >= 5:
         units *= 1.15
     elif consensus <= 2:
         units *= 0.80
-
     units *= market_weight(row, market_perf_df if market_perf_df is not None else pd.DataFrame(), settings)
     units *= book_weight(row, book_perf_df if book_perf_df is not None else pd.DataFrame(), settings)
     units *= profile_weight(row, profile_perf_df if profile_perf_df is not None else pd.DataFrame(), settings)
     units *= sharp_mode_weight(sharp_status if sharp_status is not None else {"sharp_mode": False}, settings)
     units *= debate_weight(row, settings)
-
     units = max(0.10, min(max_unit, units))
     return round(units, 2)
 
@@ -1187,7 +1169,7 @@ def add_model_features(df, calibration_df, market_perf_df, book_perf_df, profile
 
 
 # =========================
-# PORTFOLIO OPTIMIZER
+# PORTFOLIO / PARLAYS
 # =========================
 def risk_multiplier_from_target(target_risk):
     t = normalize_text(target_risk).lower()
@@ -1202,13 +1184,11 @@ def portfolio_candidate_score(row, target_risk="Balanced"):
     risk_mult = risk_multiplier_from_target(target_risk)
     rb = normalize_text(row.get("risk_band", "High"))
     mult = risk_mult.get(rb, 1.0)
-
     ev = float(row.get("ev", 0) if pd.notna(row.get("ev", np.nan)) else 0)
     pr = float(row.get("priority_score", 0) if pd.notna(row.get("priority_score", np.nan)) else 0)
     cp = float(row.get("calibrated_prob", row.get("model_prob", 0)) if pd.notna(row.get("calibrated_prob", np.nan)) else 0)
     base_units = float(row.get("recommended_units", 0) if pd.notna(row.get("recommended_units", np.nan)) else 0)
     votes = float(row.get("model_yes_votes", 0) if pd.notna(row.get("model_yes_votes", np.nan)) else 0)
-
     score = (pr * 0.54) + (ev * 100 * 0.20) + (cp * 100 * 0.08) + (base_units * 4 * 0.04) + (votes * 3.5 * 0.14)
     return round(score * mult, 4)
 
@@ -1221,13 +1201,7 @@ def build_portfolio(qualified_df, settings, target_risk="Balanced"):
         "risk_band", "portfolio_rank", "portfolio_reason"
     ]
     if len(qualified_df) == 0:
-        return pd.DataFrame(columns=cols), {
-            "selected_bets": 0,
-            "total_units": 0.0,
-            "avg_ev": np.nan,
-            "avg_prob": np.nan,
-            "diversification_score": np.nan,
-        }
+        return pd.DataFrame(columns=cols), {"selected_bets": 0, "total_units": 0.0, "avg_ev": np.nan, "avg_prob": np.nan, "diversification_score": np.nan}
 
     max_total_units = float(settings["portfolio_max_total_units"])
     max_per_bet_units = float(settings["portfolio_max_per_bet_units"])
@@ -1241,38 +1215,27 @@ def build_portfolio(qualified_df, settings, target_risk="Balanced"):
     df["portfolio_candidate_score"] = df.apply(lambda r: portfolio_candidate_score(r, target_risk), axis=1)
     df = df.sort_values(["portfolio_candidate_score", "priority_score", "ev"], ascending=[False, False, False])
 
-    selected = []
-    total_units = 0.0
-    event_exposure = {}
-    market_exposure = {}
-    book_exposure = {}
+    selected, total_units = [], 0.0
+    event_exposure, market_exposure, book_exposure = {}, {}, {}
 
     for _, row in df.iterrows():
         if len(selected) >= max_bets:
             break
-
         event = normalize_text(row.get("event", ""))
         market = normalize_text(row.get("market_bucket", ""))
         book = normalize_text(row.get("book", ""))
         base_units = float(row.get("recommended_units", 0) if pd.notna(row.get("recommended_units", np.nan)) else 0)
-
         proposed = min(max_per_bet_units, base_units)
         remaining = max_total_units - total_units
         if remaining <= 0:
             break
         proposed = min(proposed, remaining)
-
         if event_exposure.get(event, 0.0) + proposed > max_per_event_units:
             continue
-
-        market_cap_abs = max_total_units * max_per_market_pct
-        if market_exposure.get(market, 0.0) + proposed > market_cap_abs:
+        if market_exposure.get(market, 0.0) + proposed > max_total_units * max_per_market_pct:
             continue
-
-        book_cap_abs = max_total_units * max_per_book_pct
-        if book_exposure.get(book, 0.0) + proposed > book_cap_abs:
+        if book_exposure.get(book, 0.0) + proposed > max_total_units * max_per_book_pct:
             continue
-
         duplicate = False
         for s in selected:
             if normalize_text(s["selection"]).lower() == normalize_text(row.get("selection", "")).lower() and normalize_text(s["bet_type"]).lower() == normalize_text(row.get("bet_type", "")).lower():
@@ -1287,75 +1250,39 @@ def build_portfolio(qualified_df, settings, target_risk="Balanced"):
             f"EV {pct(row.get('ev', np.nan))}",
             f"risk {normalize_text(row.get('risk_band', ''))}",
         ]
-        if normalize_text(row.get("profile_signal", "Neutral")) == "Boost":
-            reason_parts.append("winning profile")
-        if normalize_text(row.get("sharp_flag", "Normal")) == "Sharp":
-            reason_parts.append("sharp mode")
-
         r = row.to_dict()
         r["portfolio_units"] = round(proposed, 2)
         r["portfolio_reason"] = ", ".join(reason_parts)
         selected.append(r)
-
         total_units += proposed
         event_exposure[event] = event_exposure.get(event, 0.0) + proposed
         market_exposure[market] = market_exposure.get(market, 0.0) + proposed
         book_exposure[book] = book_exposure.get(book, 0.0) + proposed
 
     if len(selected) == 0:
-        return pd.DataFrame(columns=cols), {
-            "selected_bets": 0,
-            "total_units": 0.0,
-            "avg_ev": np.nan,
-            "avg_prob": np.nan,
-            "diversification_score": np.nan,
-        }
+        return pd.DataFrame(columns=cols), {"selected_bets": 0, "total_units": 0.0, "avg_ev": np.nan, "avg_prob": np.nan, "diversification_score": np.nan}
 
     out = pd.DataFrame(selected)
     out["allocation_pct"] = out["portfolio_units"] / max(out["portfolio_units"].sum(), 1e-9)
     out["portfolio_rank"] = range(1, len(out) + 1)
-
     market_div = out["market_bucket"].nunique() / max(len(out), 1)
     book_div = out["book"].nunique() / max(len(out), 1)
     event_div = out["event"].nunique() / max(len(out), 1)
     diversification_score = (market_div * 0.35) + (book_div * 0.25) + (event_div * 0.40)
-
-    summary = {
-        "selected_bets": len(out),
-        "total_units": out["portfolio_units"].sum(),
-        "avg_ev": out["ev"].mean(),
-        "avg_prob": out["calibrated_prob"].mean(),
-        "diversification_score": diversification_score,
-    }
+    summary = {"selected_bets": len(out), "total_units": out["portfolio_units"].sum(), "avg_ev": out["ev"].mean(), "avg_prob": out["calibrated_prob"].mean(), "diversification_score": diversification_score}
     return out[cols], summary
 
 
 def build_portfolio_exposure_tables(portfolio_df):
     if len(portfolio_df) == 0:
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
-
-    by_event = portfolio_df.groupby("event", dropna=False).agg(
-        bets=("bet_id", "count"),
-        units=("portfolio_units", "sum"),
-        allocation_pct=("allocation_pct", "sum"),
-    ).reset_index().sort_values("units", ascending=False)
-
-    by_market = portfolio_df.groupby("market_bucket", dropna=False).agg(
-        bets=("bet_id", "count"),
-        units=("portfolio_units", "sum"),
-        allocation_pct=("allocation_pct", "sum"),
-    ).reset_index().sort_values("units", ascending=False)
-
-    by_book = portfolio_df.groupby("book", dropna=False).agg(
-        bets=("bet_id", "count"),
-        units=("portfolio_units", "sum"),
-        allocation_pct=("allocation_pct", "sum"),
-    ).reset_index().sort_values("units", ascending=False)
-
+    by_event = portfolio_df.groupby("event", dropna=False).agg(bets=("bet_id", "count"), units=("portfolio_units", "sum"), allocation_pct=("allocation_pct", "sum")).reset_index().sort_values("units", ascending=False)
+    by_market = portfolio_df.groupby("market_bucket", dropna=False).agg(bets=("bet_id", "count"), units=("portfolio_units", "sum"), allocation_pct=("allocation_pct", "sum")).reset_index().sort_values("units", ascending=False)
+    by_book = portfolio_df.groupby("book", dropna=False).agg(bets=("bet_id", "count"), units=("portfolio_units", "sum"), allocation_pct=("allocation_pct", "sum")).reset_index().sort_values("units", ascending=False)
     return by_event, by_market, by_book
 
 
-def save_portfolio_snapshot(portfolio_df, portfolio_name="V18.1 Portfolio"):
+def save_portfolio_snapshot(portfolio_df, portfolio_name="V19 Portfolio"):
     if len(portfolio_df) == 0:
         return 0
     hist = load_portfolio_history()
@@ -1370,9 +1297,6 @@ def save_portfolio_snapshot(portfolio_df, portfolio_name="V18.1 Portfolio"):
     return len(snap)
 
 
-# =========================
-# PARLAYS
-# =========================
 def same_pick_conflict(a, b):
     sa = normalize_text(a.get("selection", "")).lower()
     sb = normalize_text(b.get("selection", "")).lower()
@@ -1384,56 +1308,38 @@ def same_pick_conflict(a, b):
 def parlay_correlation_penalty(legs):
     penalty = 0.0
     reasons = []
-
     if legs["event"].nunique() < len(legs):
-        dup_count = len(legs) - legs["event"].nunique()
-        penalty += 8.0 * dup_count
+        penalty += 8.0 * (len(legs) - legs["event"].nunique())
         reasons.append("same-event overlap")
-
     market_buckets = legs["market_bucket"].astype(str).tolist()
     if market_buckets.count("Totals") >= 2 and legs["event"].nunique() < len(legs):
         penalty += 6.0
         reasons.append("same-event totals linkage")
-
-    selections = legs["selection"].astype(str).str.lower()
-    if selections.nunique() < len(legs):
+    if legs["selection"].astype(str).str.lower().nunique() < len(legs):
         penalty += 10.0
         reasons.append("duplicate selection")
-
-    suppressed_profiles = (legs.get("profile_signal", pd.Series(["Neutral"] * len(legs))).astype(str) == "Suppress").sum()
-    if suppressed_profiles > 0:
-        penalty += 9.0 * suppressed_profiles
-        reasons.append("suppressed profile")
-
     low_vote_legs = (legs["model_yes_votes"].fillna(0) < 4).sum()
     if low_vote_legs > 0:
         penalty += 5.0 * low_vote_legs
         reasons.append("weak debate support")
-
     for i in range(len(legs)):
         for j in range(i + 1, len(legs)):
             if same_pick_conflict(legs.iloc[i], legs.iloc[j]):
                 penalty += 12.0
                 reasons.append("same pick repeated")
-
     return penalty, ", ".join(sorted(set(reasons))) if reasons else "low correlation"
 
 
 def build_consensus_parlays(df, settings):
     if len(df) == 0:
         return pd.DataFrame()
-
     df = df.copy().sort_values(["weighted_consensus_ratio", "model_yes_votes", "priority_score", "score", "ev"], ascending=[False, False, False, False, False]).head(16)
     rows = []
-    min_legs = int(settings["min_parlay_legs"])
-    max_legs = int(settings["max_parlay_legs"])
-
-    for leg_count in range(min_legs, max_legs + 1):
+    for leg_count in range(int(settings["min_parlay_legs"]), int(settings["max_parlay_legs"]) + 1):
         for combo in itertools.combinations(df.index.tolist(), leg_count):
             legs = df.loc[list(combo)].copy()
             if (legs["model_yes_votes"] < 3).any():
                 continue
-
             dec_odds = legs["odds"].apply(american_to_decimal)
             if dec_odds.isna().any():
                 continue
@@ -1441,12 +1347,10 @@ def build_consensus_parlays(df, settings):
             parlay_american = decimal_to_american(parlay_dec)
             if pd.isna(parlay_american) or parlay_american < 200:
                 continue
-
             joint_prob = float(legs["calibrated_prob"].clip(lower=0.01, upper=0.99).prod())
             implied = american_implied_prob(parlay_american)
             ev = compute_ev(joint_prob, parlay_american)
             penalty, penalty_reason = parlay_correlation_penalty(legs)
-
             raw_score = (
                 legs["priority_score"].mean() * 0.38
                 + legs["weighted_consensus_ratio"].mean() * 25.0
@@ -1455,7 +1359,6 @@ def build_consensus_parlays(df, settings):
                 + min(10, len(legs))
             )
             final_score = raw_score - penalty if settings.get("correlation_penalty_on", True) else raw_score
-
             rows.append({
                 "legs": len(legs),
                 "avg_debate_votes": round(legs["model_yes_votes"].mean(), 2),
@@ -1471,11 +1374,178 @@ def build_consensus_parlays(df, settings):
                 "summary": " + ".join(legs["selection"].astype(str) + " " + legs["bet_type"].astype(str)),
                 "events": " | ".join(legs["event"].astype(str)),
             })
-
     out = pd.DataFrame(rows)
     if len(out) == 0:
         return out
     return out.sort_values(["avg_weighted_ratio", "avg_debate_votes", "score", "ev"], ascending=[False, False, False, False]).drop_duplicates(subset=["summary"]).head(12)
+
+
+# =========================
+# EXECUTION LAYER
+# =========================
+def build_execution_priority(row):
+    priority = float(row.get("priority_score", 0) if pd.notna(row.get("priority_score", np.nan)) else 0)
+    votes = float(row.get("model_yes_votes", 0) if pd.notna(row.get("model_yes_votes", np.nan)) else 0)
+    weighted = float(row.get("weighted_consensus_ratio", 0) if pd.notna(row.get("weighted_consensus_ratio", np.nan)) else 0)
+    ev = float(row.get("ev", 0) if pd.notna(row.get("ev", np.nan)) else 0)
+    sharp_bonus = 4 if normalize_text(row.get("sharp_flag", "")).lower() == "sharp" else 0
+    return round(priority * 0.65 + votes * 5 + weighted * 12 + ev * 100 * 0.15 + sharp_bonus, 2)
+
+
+def build_execution_board(singles_df, parlays_df, settings):
+    rows = []
+    created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    auto_lock = bool(settings.get("execution_auto_lock_elite", False))
+
+    if len(singles_df) > 0:
+        singles = singles_df.copy().sort_values(["weighted_consensus_ratio", "model_yes_votes", "priority_score"], ascending=[False, False, False]).head(int(settings["execution_max_singles"]))
+        for i, (_, row) in enumerate(singles.iterrows(), start=1):
+            exec_priority = build_execution_priority(row)
+            status = "locked" if auto_lock and int(row.get("model_yes_votes", 0)) == 5 else "review"
+            rows.append({
+                "execution_id": f"S-{datetime.now().strftime('%Y%m%d%H%M%S')}-{i}",
+                "created_at": created_at,
+                "bet_id": row.get("bet_id", ""),
+                "ticket_type": "single",
+                "slip_group": f"SINGLES-{created_at[:10]}",
+                "sport": row.get("sport", ""),
+                "event": row.get("event", ""),
+                "market_bucket": row.get("market_bucket", ""),
+                "selection": row.get("selection", ""),
+                "bet_type": row.get("bet_type", ""),
+                "book": row.get("book", ""),
+                "odds": row.get("odds", np.nan),
+                "calibrated_prob": row.get("calibrated_prob", np.nan),
+                "ev": row.get("ev", np.nan),
+                "score": row.get("score", np.nan),
+                "priority_score": row.get("priority_score", np.nan),
+                "model_yes_votes": row.get("model_yes_votes", np.nan),
+                "weighted_consensus_ratio": row.get("weighted_consensus_ratio", np.nan),
+                "recommended_units": row.get("recommended_units", np.nan),
+                "approved_units": row.get("recommended_units", np.nan),
+                "execution_priority": exec_priority,
+                "status": status,
+                "locked_flag": 1 if status == "locked" else 0,
+                "review_flag": 1 if status == "review" else 0,
+                "placed_flag": 0,
+                "ai_recommended": 1,
+                "user_placed": 0,
+                "difference_flag": 0,
+                "notes": "",
+            })
+
+    if len(parlays_df) > 0:
+        parlays = parlays_df.copy().sort_values(["avg_weighted_ratio", "avg_debate_votes", "score", "ev"], ascending=[False, False, False, False]).head(int(settings["execution_max_parlays"]))
+        for i, (_, row) in enumerate(parlays.iterrows(), start=1):
+            exec_priority = round(float(row.get("score", 0)) * 0.75 + float(row.get("avg_weighted_ratio", 0)) * 20 + float(row.get("ev", 0)) * 100 * 0.2, 2)
+            rows.append({
+                "execution_id": f"P-{datetime.now().strftime('%Y%m%d%H%M%S')}-{i}",
+                "created_at": created_at,
+                "bet_id": f"PARLAY|{i}|{normalize_text(row.get('summary', ''))}",
+                "ticket_type": "parlay",
+                "slip_group": f"PARLAYS-{created_at[:10]}",
+                "sport": "MULTI",
+                "event": row.get("events", ""),
+                "market_bucket": "Parlay",
+                "selection": row.get("summary", ""),
+                "bet_type": f"{int(row.get('legs', 0))}-Leg Parlay",
+                "book": "Best Available",
+                "odds": row.get("parlay_odds", np.nan),
+                "calibrated_prob": row.get("joint_prob", np.nan),
+                "ev": row.get("ev", np.nan),
+                "score": row.get("score", np.nan),
+                "priority_score": row.get("score", np.nan),
+                "model_yes_votes": row.get("avg_debate_votes", np.nan),
+                "weighted_consensus_ratio": row.get("avg_weighted_ratio", np.nan),
+                "recommended_units": 0.5,
+                "approved_units": 0.5,
+                "execution_priority": exec_priority,
+                "status": "review",
+                "locked_flag": 0,
+                "review_flag": 1,
+                "placed_flag": 0,
+                "ai_recommended": 1,
+                "user_placed": 0,
+                "difference_flag": 0,
+                "notes": row.get("correlation_note", ""),
+            })
+
+    board = pd.DataFrame(rows)
+    if len(board) == 0:
+        return board
+    board = board[board["execution_priority"] >= float(settings.get("execution_min_priority", 75.0))].copy()
+    board = board.sort_values(["execution_priority", "ticket_type"], ascending=[False, True]).reset_index(drop=True)
+    return board
+
+
+def merge_execution_board(new_board, existing_board):
+    if len(new_board) == 0:
+        return existing_board.copy()
+    existing = existing_board.copy()
+    if len(existing) == 0:
+        return new_board.copy()
+    key_cols = ["bet_id", "ticket_type"]
+    existing_keys = set(existing[key_cols].astype(str).agg("|".join, axis=1).tolist())
+    keep = new_board[~new_board[key_cols].astype(str).agg("|".join, axis=1).isin(existing_keys)].copy()
+    return pd.concat([existing, keep], ignore_index=True)
+
+
+def execution_summary(board_df):
+    if len(board_df) == 0:
+        return {"total": 0, "locked": 0, "review": 0, "placed": 0, "singles": 0, "parlays": 0}
+    return {
+        "total": len(board_df),
+        "locked": int((board_df["status"].astype(str) == "locked").sum()),
+        "review": int((board_df["status"].astype(str) == "review").sum()),
+        "placed": int((board_df["status"].astype(str) == "placed").sum()),
+        "singles": int((board_df["ticket_type"].astype(str) == "single").sum()),
+        "parlays": int((board_df["ticket_type"].astype(str) == "parlay").sum()),
+    }
+
+
+def record_placed_bets_from_board(board_df):
+    if len(board_df) == 0:
+        return 0
+    placed = board_df[board_df["status"].astype(str) == "placed"].copy()
+    if len(placed) == 0:
+        return 0
+    hist = load_placed_bets()
+    add = pd.DataFrame({
+        "placed_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "execution_id": placed["execution_id"],
+        "bet_id": placed["bet_id"],
+        "ticket_type": placed["ticket_type"],
+        "slip_group": placed["slip_group"],
+        "sport": placed["sport"],
+        "event": placed["event"],
+        "market_bucket": placed["market_bucket"],
+        "selection": placed["selection"],
+        "bet_type": placed["bet_type"],
+        "book": placed["book"],
+        "odds": placed["odds"],
+        "ai_recommended_units": placed["recommended_units"],
+        "placed_units": placed["approved_units"],
+        "ai_recommended": placed["ai_recommended"],
+        "user_placed": placed["user_placed"],
+        "difference_flag": placed["difference_flag"],
+        "status": placed["status"],
+    })
+    hist = pd.concat([hist, add], ignore_index=True)
+    hist = hist.drop_duplicates(subset=["execution_id"], keep="last")
+    save_placed_bets(hist)
+    return len(add)
+
+
+def compare_ai_vs_placed(board_df):
+    if len(board_df) == 0:
+        return pd.DataFrame()
+    out = board_df.copy()
+    out["unit_delta"] = safe_to_numeric(out["approved_units"]) - safe_to_numeric(out["recommended_units"])
+    out["placement_alignment"] = np.where(
+        out["status"].astype(str) != "placed", "Not Placed",
+        np.where(out["difference_flag"].fillna(0) == 1, "Changed", "Matched AI")
+    )
+    return out
 
 
 # =========================
@@ -1500,8 +1570,7 @@ def append_new_bets_to_log(candidates_df, bet_log_df):
         "profile_key", "result", "profit_units", "clv", "notes"
     ]
     to_add = ensure_columns(to_add, keep_cols)
-    updated = pd.concat([base, to_add[keep_cols]], ignore_index=True)
-    return updated, len(to_add)
+    return pd.concat([base, to_add[keep_cols]], ignore_index=True), len(to_add)
 
 
 def update_bet_outcomes(log_df):
@@ -1526,17 +1595,7 @@ def summary_metrics(log_df):
     staked_units = settled["recommended_units"].fillna(0).sum()
     roi = profit_units / staked_units if staked_units else 0.0
     avg_clv = settled["clv"].dropna().mean() if "clv" in settled.columns else np.nan
-    return {
-        "total_bets": total_bets,
-        "settled": len(settled),
-        "pending": len(pending),
-        "wins": int(wins),
-        "losses": int(losses),
-        "pushes": int(pushes),
-        "profit_units": profit_units,
-        "roi": roi,
-        "avg_clv": avg_clv,
-    }
+    return {"total_bets": total_bets, "settled": len(settled), "pending": len(pending), "wins": int(wins), "losses": int(losses), "pushes": int(pushes), "profit_units": profit_units, "roi": roi, "avg_clv": avg_clv}
 
 
 def format_pick_card(row):
@@ -1562,6 +1621,8 @@ def export_download(df, filename, label):
 settings = load_settings()
 bet_log = update_bet_outcomes(load_bet_log())
 memory_df = load_model_memory()
+execution_board_df = load_execution_board()
+placed_bets_df = load_placed_bets()
 
 market_perf_df = summarize_market_performance(memory_df, min_samples=int(settings["learning_min_samples"]))
 book_perf_df = summarize_book_performance(memory_df, min_samples=int(settings["book_min_samples"]))
@@ -1575,7 +1636,6 @@ model_segment_perf_df = load_model_segment_performance()
 if len(votes_history_df) > 0:
     model_perf_df = summarize_model_performance(votes_history_df)
     save_model_performance(model_perf_df)
-
     model_segment_perf_df = summarize_model_segment_performance(votes_history_df, min_samples=int(settings["adaptive_min_samples"]))
     save_model_segment_performance(model_segment_perf_df)
 
@@ -1584,19 +1644,17 @@ if len(votes_history_df) > 0:
 # SIDEBAR
 # =========================
 with st.sidebar:
-    st.header("V18.1 Controls")
+    st.header("V19 Controls")
 
     settings["bankroll"] = st.number_input("Bankroll", min_value=100.0, value=float(settings["bankroll"]), step=50.0)
     settings["kelly_multiplier"] = st.slider("Kelly Multiplier", 0.05, 1.00, float(settings["kelly_multiplier"]), 0.05)
     settings["base_unit_pct"] = st.slider("Base Unit % of Bankroll", 0.0025, 0.05, float(settings["base_unit_pct"]), 0.0025)
     settings["max_unit"] = st.slider("Max Units Per Bet", 0.5, 5.0, float(settings["max_unit"]), 0.25)
-    settings["min_consensus"] = st.selectbox("Minimum Legacy Consensus", [2, 3, 4, 5], index=[2, 3, 4, 5].index(int(settings["min_consensus"])))
     settings["model_consensus_min"] = st.selectbox("Minimum Model Votes", [3, 4, 5], index=[3, 4, 5].index(int(settings["model_consensus_min"])))
-    settings["use_model_weights"] = st.checkbox("Use Weighted Model Influence", value=bool(settings["use_model_weights"]))
-    settings["debate_penalty_on"] = st.checkbox("Use Debate Penalty", value=bool(settings["debate_penalty_on"]))
-    settings["adaptive_thresholds_on"] = st.checkbox("Use Adaptive Thresholds", value=bool(settings["adaptive_thresholds_on"]))
-    settings["adaptive_segments_on"] = st.checkbox("Use Sport/Market Model Learning", value=bool(settings["adaptive_segments_on"]))
-    settings["adaptive_min_samples"] = st.number_input("Min Samples For Adaptive Model Learning", min_value=5, value=int(settings["adaptive_min_samples"]), step=1)
+    settings["execution_max_singles"] = st.slider("Max Singles On Execution Board", 2, 20, int(settings["execution_max_singles"]), 1)
+    settings["execution_max_parlays"] = st.slider("Max Parlays On Execution Board", 0, 10, int(settings["execution_max_parlays"]), 1)
+    settings["execution_min_priority"] = st.slider("Minimum Execution Priority", 40.0, 140.0, float(settings["execution_min_priority"]), 1.0)
+    settings["execution_auto_lock_elite"] = st.checkbox("Auto-Lock 5/5 Elite Singles", value=bool(settings["execution_auto_lock_elite"]))
 
     if st.button("Save Settings"):
         save_settings(settings)
@@ -1609,10 +1667,12 @@ with st.sidebar:
     st.write("Avg CLV:", pct(sharp_status.get("avg_clv", np.nan)))
 
     st.divider()
-    st.markdown("**Adaptive Model Status**")
-    if len(model_perf_df):
-        show_perf = model_perf_df[["model_name", "weight", "adaptive_threshold", "status"]].copy()
-        st.dataframe(show_perf, use_container_width=True, hide_index=True)
+    st.markdown("**Execution Status**")
+    ex_sum = execution_summary(execution_board_df)
+    st.write("Board items:", ex_sum["total"])
+    st.write("Locked:", ex_sum["locked"])
+    st.write("Review:", ex_sum["review"])
+    st.write("Placed:", ex_sum["placed"])
 
 
 # =========================
@@ -1621,12 +1681,12 @@ with st.sidebar:
 tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "Upload + Multi-AI Board",
     "Best Bets",
-    "Adaptive Debate",
+    "Execution Board",
+    "Approved Slips",
     "Portfolio Optimizer",
     "AI Parlays",
     "Bet Tracker + Learning",
-    "Model Performance",
-    "Segment Learning",
+    "Placed vs Recommended",
 ])
 
 input_df = pd.DataFrame()
@@ -1648,56 +1708,29 @@ with tab1:
 
     with st.expander("See sample input format"):
         st.dataframe(sample_df, use_container_width=True)
-        export_download(sample_df, "v18_1_sample_input.csv", "Download sample CSV")
+        export_download(sample_df, "v19_sample_input.csv", "Download sample CSV")
 
     if uploaded is not None:
         try:
             raw = pd.read_csv(uploaded)
             input_df = clean_input_df(raw)
             input_df = add_model_features(
-                input_df,
-                calibration_df,
-                market_perf_df,
-                book_perf_df,
-                profile_perf_df,
-                sharp_status,
-                model_perf_df,
-                model_segment_perf_df,
-                settings
+                input_df, calibration_df, market_perf_df, book_perf_df, profile_perf_df,
+                sharp_status, model_perf_df, model_segment_perf_df, settings
             )
             st.success(f"Loaded {len(input_df)} rows.")
         except Exception as e:
             st.error(f"Could not read CSV: {e}")
 
     if len(input_df) > 0:
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            sports = ["All"] + sorted(input_df["sport"].dropna().astype(str).unique().tolist())
-            sport_filter = st.selectbox("Sport", sports)
-        with c2:
-            mkts = ["All"] + sorted(input_df["market_bucket"].dropna().astype(str).unique().tolist())
-            market_filter = st.selectbox("Market Bucket", mkts)
-        with c3:
-            books = ["All"] + sorted(input_df["book"].dropna().astype(str).unique().tolist())
-            book_filter = st.selectbox("Book", books)
-
-        filtered = input_df.copy()
-        if sport_filter != "All":
-            filtered = filtered[filtered["sport"].astype(str) == sport_filter]
-        if market_filter != "All":
-            filtered = filtered[filtered["market_bucket"].astype(str) == market_filter]
-        if book_filter != "All":
-            filtered = filtered[filtered["book"].astype(str) == book_filter]
-
-        filtered = filtered.sort_values(["weighted_consensus_ratio", "model_yes_votes", "priority_score", "score", "ev"], ascending=[False, False, False, False, False])
-
+        filtered = input_df.sort_values(["weighted_consensus_ratio", "model_yes_votes", "priority_score", "score", "ev"], ascending=[False, False, False, False, False])
         st.subheader("Adaptive Multi-AI Board")
         st.dataframe(
             filtered[[
                 "sport", "event", "market_bucket", "selection", "bet_type", "book",
-                "odds", "model_prob", "calibrated_prob", "ev", "score", "priority_score",
-                "model_yes_votes", "weighted_yes_votes", "weighted_consensus_ratio",
-                "debate_label", "recommended_units", "sharp_flag"
+                "odds", "calibrated_prob", "ev", "score", "priority_score",
+                "model_yes_votes", "weighted_consensus_ratio", "debate_label",
+                "recommended_units", "sharp_flag"
             ]],
             use_container_width=True,
         )
@@ -1707,14 +1740,14 @@ with tab1:
             updated_log, added = append_new_bets_to_log(qualified, bet_log)
             save_bet_log(updated_log)
             vote_added = save_current_vote_snapshot(qualified)
-            st.success(f"Auto-saved {added} bets and {vote_added} adaptive vote snapshots.")
+            st.success(f"Auto-saved {added} bets and {vote_added} vote snapshots.")
             st.rerun()
 
 
 with tab2:
     st.subheader("Best Bets")
     if len(input_df) == 0:
-        st.info("Upload a CSV in the first tab to generate V18.1 best bets.")
+        st.info("Upload a CSV in the first tab to generate V19 best bets.")
     else:
         qualified = qualify_plays(input_df, settings).copy()
         qualified = qualified.sort_values(["weighted_consensus_ratio", "model_yes_votes", "priority_score", "score", "ev"], ascending=[False, False, False, False, False])
@@ -1726,64 +1759,123 @@ with tab2:
         c4.metric("5/5 Elite Plays", int((qualified["model_yes_votes"] == 5).sum()) if len(qualified) else 0)
 
         if len(qualified) == 0:
-            st.warning("No plays met the V18.1 filters.")
+            st.warning("No plays met the V19 filters.")
         else:
             st.dataframe(
                 qualified[[
                     "sport", "event", "market_bucket", "selection", "bet_type", "book", "odds",
-                    "model_prob", "calibrated_prob", "ev", "score", "priority_score",
-                    "model_yes_votes", "weighted_yes_votes", "weighted_consensus_ratio",
-                    "debate_label", "recommended_units", "sharp_flag"
+                    "calibrated_prob", "ev", "score", "priority_score",
+                    "model_yes_votes", "weighted_consensus_ratio", "debate_label",
+                    "recommended_units"
                 ]],
                 use_container_width=True,
             )
 
-            st.subheader("Top Pick Cards")
             top_cards = qualified.head(10).reset_index(drop=True)
+            st.subheader("Top Pick Cards")
             for i, row in top_cards.iterrows():
                 st.code(format_pick_card(row))
 
+            singles_for_exec = qualified.copy()
+            parlays_for_exec = build_consensus_parlays(qualified, settings)
+            if st.button("Build Ready-To-Place Execution Board"):
+                new_board = build_execution_board(singles_for_exec, parlays_for_exec, settings)
+                merged = merge_execution_board(new_board, execution_board_df)
+                save_execution_board(merged)
+                st.success(f"Execution board built with {len(new_board)} new items.")
+                st.rerun()
+
 
 with tab3:
-    st.subheader("Adaptive Debate")
-    if len(input_df) == 0:
-        st.info("Upload a CSV in the first tab to view adaptive model debate.")
-    else:
-        debate_df = input_df.copy().sort_values(["weighted_consensus_ratio", "model_yes_votes", "priority_score"], ascending=[False, False, False])
+    st.subheader("Execution Board")
+    board = load_execution_board()
+    summary = execution_summary(board)
 
-        st.dataframe(
-            debate_df[[
-                "sport", "event", "market_bucket", "selection", "bet_type", "book", "odds",
-                "Model_A_prob", "Model_A_vote", "Model_A_weight_used", "Model_A_threshold_used",
-                "Model_B_prob", "Model_B_vote", "Model_B_weight_used", "Model_B_threshold_used",
-                "Model_C_prob", "Model_C_vote", "Model_C_weight_used", "Model_C_threshold_used",
-                "Model_D_prob", "Model_D_vote", "Model_D_weight_used", "Model_D_threshold_used",
-                "Model_E_prob", "Model_E_vote", "Model_E_weight_used", "Model_E_threshold_used",
-                "model_yes_votes", "weighted_yes_votes", "weighted_consensus_ratio", "debate_label"
-            ]],
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    c1.metric("Items", summary["total"])
+    c2.metric("Singles", summary["singles"])
+    c3.metric("Parlays", summary["parlays"])
+    c4.metric("Locked", summary["locked"])
+    c5.metric("Review", summary["review"])
+    c6.metric("Placed", summary["placed"])
+
+    if len(board) == 0:
+        st.info("No execution items yet. Build the ready-to-place board from Best Bets.")
+    else:
+        editable = ensure_columns(board.copy(), ["approved_units", "status", "locked_flag", "review_flag", "placed_flag", "user_placed", "difference_flag", "notes"])
+        edited = st.data_editor(
+            editable.sort_values(["execution_priority", "ticket_type"], ascending=[False, True]),
             use_container_width=True,
+            num_rows="dynamic",
+            column_config={
+                "status": st.column_config.SelectboxColumn("status", options=["review", "locked", "placed", "passed"]),
+                "ticket_type": st.column_config.TextColumn("ticket_type", disabled=True),
+            },
+            key="execution_board_editor_v19",
         )
 
-        c1, c2, c3 = st.columns(3)
-        c1.metric("5/5 Elite", int((debate_df["model_yes_votes"] == 5).sum()))
-        c2.metric("4/5 Strong", int((debate_df["model_yes_votes"] == 4).sum()))
-        c3.metric("Weighted 0.75+", int((debate_df["weighted_consensus_ratio"] >= 0.75).sum()))
+        if st.button("Save Execution Board Changes"):
+            edited["locked_flag"] = np.where(edited["status"].astype(str) == "locked", 1, 0)
+            edited["review_flag"] = np.where(edited["status"].astype(str) == "review", 1, 0)
+            edited["placed_flag"] = np.where(edited["status"].astype(str) == "placed", 1, 0)
+            edited["user_placed"] = np.where(edited["status"].astype(str) == "placed", 1, edited["user_placed"].fillna(0))
+            edited["difference_flag"] = np.where(
+                (safe_to_numeric(edited["approved_units"]).round(2) != safe_to_numeric(edited["recommended_units"]).round(2)),
+                1, 0
+            )
+            save_execution_board(edited)
+            saved_count = record_placed_bets_from_board(edited)
+            st.success(f"Execution board updated. Recorded {saved_count} placed items.")
+            st.rerun()
 
-        with st.expander("Adaptive vote notes"):
-            st.dataframe(debate_df[["selection", "bet_type", "adaptive_vote_note"]], use_container_width=True)
+        export_download(board, "v19_execution_board.csv", "Download execution board CSV")
 
 
 with tab4:
+    st.subheader("Approved Slips")
+    board = load_execution_board()
+    if len(board) == 0:
+        st.info("No execution board yet.")
+    else:
+        locked = board[board["status"].astype(str) == "locked"].copy()
+        review = board[board["status"].astype(str) == "review"].copy()
+        placed = board[board["status"].astype(str) == "placed"].copy()
+
+        st.markdown("**Locked / approved now**")
+        if len(locked) == 0:
+            st.write("No locked items.")
+        else:
+            st.dataframe(locked.sort_values(["execution_priority"], ascending=[False]), use_container_width=True)
+
+        st.markdown("**Needs review**")
+        if len(review) == 0:
+            st.write("No review items.")
+        else:
+            st.dataframe(review.sort_values(["execution_priority"], ascending=[False]), use_container_width=True)
+
+        st.markdown("**Already placed**")
+        if len(placed) == 0:
+            st.write("No placed items yet.")
+        else:
+            st.dataframe(placed.sort_values(["execution_priority"], ascending=[False]), use_container_width=True)
+
+        by_group = board.groupby(["slip_group", "ticket_type"], dropna=False).agg(
+            items=("execution_id", "count"),
+            avg_priority=("execution_priority", "mean"),
+            total_units=("approved_units", "sum"),
+        ).reset_index().sort_values(["avg_priority"], ascending=[False])
+
+        st.markdown("**Slip summary**")
+        st.dataframe(by_group, use_container_width=True)
+
+
+with tab5:
     st.subheader("Portfolio Optimizer")
     if len(input_df) == 0:
         st.info("Upload a CSV in the first tab to generate an optimized portfolio.")
     else:
         qualified = qualify_plays(input_df, settings).copy()
-        portfolio_df, portfolio_summary = build_portfolio(
-            qualified,
-            settings=settings,
-            target_risk=settings["portfolio_target_risk"],
-        )
+        portfolio_df, portfolio_summary = build_portfolio(qualified, settings=settings, target_risk=settings["portfolio_target_risk"])
 
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Selected Bets", portfolio_summary["selected_bets"])
@@ -1794,16 +1886,7 @@ with tab4:
         if len(portfolio_df) == 0:
             st.warning("No portfolio could be built under the current constraints.")
         else:
-            st.dataframe(
-                portfolio_df[[
-                    "portfolio_rank", "sport", "event", "market_bucket", "selection", "bet_type",
-                    "book", "odds", "calibrated_prob", "ev", "score", "priority_score",
-                    "model_yes_votes", "weighted_yes_votes", "recommended_units",
-                    "portfolio_units", "allocation_pct", "risk_band", "portfolio_reason"
-                ]],
-                use_container_width=True,
-            )
-
+            st.dataframe(portfolio_df, use_container_width=True)
             by_event, by_market, by_book = build_portfolio_exposure_tables(portfolio_df)
             st.markdown("**Exposure by event**")
             st.dataframe(by_event, use_container_width=True)
@@ -1811,17 +1894,16 @@ with tab4:
             st.dataframe(by_market, use_container_width=True)
             st.markdown("**Exposure by book**")
             st.dataframe(by_book, use_container_width=True)
-
             c1, c2 = st.columns(2)
             with c1:
                 if st.button("Save Portfolio Snapshot"):
-                    added = save_portfolio_snapshot(portfolio_df, portfolio_name=f"V18.1 {settings['portfolio_target_risk']}")
+                    added = save_portfolio_snapshot(portfolio_df, portfolio_name=f"V19 {settings['portfolio_target_risk']}")
                     st.success(f"Saved {added} portfolio rows to history.")
             with c2:
-                export_download(portfolio_df, "v18_1_portfolio.csv", "Download portfolio CSV")
+                export_download(portfolio_df, "v19_portfolio.csv", "Download portfolio CSV")
 
 
-with tab5:
+with tab6:
     st.subheader("AI Parlays")
     if len(input_df) == 0:
         st.info("Upload a CSV in the first tab to generate adaptive AI parlays.")
@@ -1836,10 +1918,10 @@ with tab5:
             c2.metric("Best Weighted Support", f"{parlays['avg_weighted_ratio'].max():.2f}")
             c3.metric("Best EV", pct(parlays["ev"].max()))
             st.dataframe(parlays, use_container_width=True)
-            export_download(parlays, "v18_1_ai_parlays.csv", "Download AI parlays CSV")
+            export_download(parlays, "v19_ai_parlays.csv", "Download AI parlays CSV")
 
 
-with tab6:
+with tab7:
     st.subheader("Bet Tracker + Learning")
     bet_log = update_bet_outcomes(load_bet_log())
     metrics = summary_metrics(bet_log)
@@ -1859,7 +1941,7 @@ with tab6:
             use_container_width=True,
             num_rows="dynamic",
             column_config={"result": st.column_config.SelectboxColumn("result", options=["", "win", "loss", "push", "void"])},
-            key="bet_log_editor_v18_1",
+            key="bet_log_editor_v19",
         )
 
         if st.button("Save Tracker Changes"):
@@ -1886,53 +1968,35 @@ with tab6:
                     if "bet_id" in votes_hist.columns:
                         votes_hist["result"] = votes_hist["bet_id"].map(result_map).fillna(votes_hist.get("result"))
                         save_model_votes_history(votes_hist)
-
-                        perf = summarize_model_performance(votes_hist)
-                        seg = summarize_model_segment_performance(votes_hist, min_samples=int(settings["adaptive_min_samples"]))
-                        save_model_performance(perf)
-                        save_model_segment_performance(seg)
+                        save_model_performance(summarize_model_performance(votes_hist))
+                        save_model_segment_performance(summarize_model_segment_performance(votes_hist, min_samples=int(settings["adaptive_min_samples"])))
 
             st.success("Tracker, learning memory, adaptive model weights, and segment learning updated.")
             st.rerun()
 
-        export_download(bet_log, "v18_1_bet_log.csv", "Download bet log CSV")
-
-
-with tab7:
-    st.subheader("Model Performance")
-    model_perf_df = summarize_model_performance(load_model_votes_history())
-    save_model_performance(model_perf_df)
-
-    if len(model_perf_df) == 0:
-        st.info("No model performance history yet.")
-    else:
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Tracked Models", len(model_perf_df))
-        c2.metric("Hot Models", int((model_perf_df["status"] == "Hot").sum()))
-        c3.metric("Cold Models", int((model_perf_df["status"] == "Cold").sum()))
-
-        st.dataframe(
-            model_perf_df.sort_values(["weight", "win_rate"], ascending=[False, False]),
-            use_container_width=True,
-        )
-        export_download(model_perf_df, "v18_1_model_performance.csv", "Download model performance CSV")
+        export_download(bet_log, "v19_bet_log.csv", "Download bet log CSV")
 
 
 with tab8:
-    st.subheader("Segment Learning")
-    seg_df = summarize_model_segment_performance(load_model_votes_history(), min_samples=int(settings["adaptive_min_samples"]))
-    save_model_segment_performance(seg_df)
+    st.subheader("Placed vs Recommended")
+    board = load_execution_board()
+    placed = load_placed_bets()
+    compare_df = compare_ai_vs_placed(board)
 
-    if len(seg_df) == 0:
-        st.info("No segment-level model learning yet.")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Placed Rows", len(placed))
+    c2.metric("Matched AI", int((compare_df.get("placement_alignment", pd.Series(dtype=str)) == "Matched AI").sum()) if len(compare_df) else 0)
+    c3.metric("Changed By User", int((compare_df.get("placement_alignment", pd.Series(dtype=str)) == "Changed").sum()) if len(compare_df) else 0)
+
+    if len(compare_df) == 0:
+        st.info("No execution activity yet.")
     else:
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Tracked Segments", len(seg_df))
-        c2.metric("Favored Segments", int((seg_df["segment_status"] == "Favored").sum()))
-        c3.metric("Reduced Segments", int((seg_df["segment_status"] == "Reduced").sum()))
-
         st.dataframe(
-            seg_df.sort_values(["segment_weight", "win_rate", "bets"], ascending=[False, False, False]),
+            compare_df[[
+                "execution_id", "ticket_type", "sport", "event", "selection", "bet_type", "book",
+                "recommended_units", "approved_units", "unit_delta", "status",
+                "placement_alignment", "difference_flag", "execution_priority"
+            ]].sort_values(["execution_priority"], ascending=[False]),
             use_container_width=True,
         )
-        export_download(seg_df, "v18_1_model_segment_performance.csv", "Download segment learning CSV")
+        export_download(compare_df, "v19_placed_vs_recommended.csv", "Download comparison CSV")

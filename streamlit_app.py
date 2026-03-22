@@ -796,6 +796,8 @@ with st.sidebar:
     auto_log = st.toggle("Auto-log active plays", value=True)
     keep_per_game = st.selectbox("Max active plays per game", [1, 2, 3], index=1)
     best_bet_cap = st.selectbox("Max best bets on slate", [1, 2, 3], index=2)
+    max_tier_a = st.selectbox("Max Tier A plays", [1, 2, 3, 4], index=2)
+    skip_games_without_ab = st.toggle("Skip games without Tier A/B", value=True)
     st.caption("Upload a CSV with live rows to replace the demo feed.")
     upload = st.file_uploader("Live rows CSV", type=["csv"])
 

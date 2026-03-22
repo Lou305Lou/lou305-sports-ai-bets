@@ -15,7 +15,7 @@ import streamlit as st
 # =========================
 # CONFIG
 # =========================
-APP_TITLE = "Sports AI Betting Dashboard — V19"
+APP_TITLE = "Sports AI Betting Dashboard — V19.1"
 DATA_DIR = Path("data")
 DATA_DIR.mkdir(exist_ok=True)
 
@@ -31,6 +31,7 @@ MODEL_PERFORMANCE_PATH = DATA_DIR / "model_performance.csv"
 MODEL_SEGMENT_PERFORMANCE_PATH = DATA_DIR / "model_segment_performance.csv"
 EXECUTION_BOARD_PATH = DATA_DIR / "execution_board.csv"
 PLACED_BETS_PATH = DATA_DIR / "placed_bets.csv"
+EXECUTION_SETTLEMENT_PATH = DATA_DIR / "execution_settlement.csv"
 
 
 # =========================
@@ -38,7 +39,7 @@ PLACED_BETS_PATH = DATA_DIR / "placed_bets.csv"
 # =========================
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 st.title(APP_TITLE)
-st.caption("V19: Auto-execution layer with approved bet slips, ready-to-place board, singles vs parlays, and lock/review/placed workflow")
+st.caption("V19.1: settlement + recommendation accuracy with placed-vs-recommended P/L, conversion, execution split analysis, and unit-change impact")
 
 
 # =========================
@@ -559,6 +560,20 @@ def load_placed_bets():
 
 def save_placed_bets(df):
     safe_write_csv(df, PLACED_BETS_PATH)
+
+
+def load_execution_settlement():
+    cols = [
+        "execution_id", "bet_id", "ticket_type", "status_at_execution", "sport", "event", "selection",
+        "bet_type", "book", "odds", "result", "ai_recommended_units", "placed_units",
+        "ai_profit_units", "placed_profit_units", "unit_delta", "profit_delta",
+        "placement_alignment", "difference_flag", "linked_tracker_row"
+    ]
+    return safe_read_csv(EXECUTION_SETTLEMENT_PATH, cols)
+
+
+def save_execution_settlement(df):
+    safe_write_csv(df, EXECUTION_SETTLEMENT_PATH)
 
 
 # =========================
@@ -1243,7 +1258,6 @@ def build_portfolio(qualified_df, settings, target_risk="Balanced"):
                 break
         if duplicate:
             continue
-
         reason_parts = [
             f"priority {float(row.get('priority_score', 0)):.1f}",
             f"debate {int(row.get('model_yes_votes', 0))}/5",
@@ -1282,7 +1296,7 @@ def build_portfolio_exposure_tables(portfolio_df):
     return by_event, by_market, by_book
 
 
-def save_portfolio_snapshot(portfolio_df, portfolio_name="V19 Portfolio"):
+def save_portfolio_snapshot(portfolio_df, portfolio_name="V19.1 Portfolio"):
     if len(portfolio_df) == 0:
         return 0
     hist = load_portfolio_history()
@@ -1549,6 +1563,152 @@ def compare_ai_vs_placed(board_df):
 
 
 # =========================
+# SETTLEMENT / ACCURACY
+# =========================
+def link_execution_to_tracker(board_df, bet_log_df):
+    if len(board_df) == 0 or len(bet_log_df) == 0:
+        return pd.DataFrame()
+    board = board_df.copy()
+    log = bet_log_df.copy()
+    log = ensure_columns(log, ["bet_id", "result", "profit_units", "recommended_units"])
+
+    merged = board.merge(
+        log[["bet_id", "result", "profit_units", "recommended_units"]],
+        on="bet_id",
+        how="left",
+        suffixes=("", "_tracker")
+    )
+    merged["linked_tracker_row"] = np.where(merged["result"].notna(), 1, 0)
+    return merged
+
+
+def build_execution_settlement(board_df, bet_log_df):
+    linked = link_execution_to_tracker(board_df, bet_log_df)
+    if len(linked) == 0:
+        return pd.DataFrame(columns=[
+            "execution_id", "bet_id", "ticket_type", "status_at_execution", "sport", "event", "selection",
+            "bet_type", "book", "odds", "result", "ai_recommended_units", "placed_units",
+            "ai_profit_units", "placed_profit_units", "unit_delta", "profit_delta",
+            "placement_alignment", "difference_flag", "linked_tracker_row"
+        ])
+
+    settled = linked.copy()
+    settled["ai_recommended_units"] = safe_to_numeric(settled["recommended_units"])
+    settled["placed_units"] = safe_to_numeric(settled["approved_units"])
+    settled["unit_delta"] = settled["placed_units"] - settled["ai_recommended_units"]
+
+    settled["ai_profit_units"] = settled.apply(
+        lambda r: calculate_profit_units(r.get("result", np.nan), r.get("odds", np.nan), r.get("ai_recommended_units", np.nan)),
+        axis=1
+    )
+    settled["placed_profit_units"] = settled.apply(
+        lambda r: calculate_profit_units(r.get("result", np.nan), r.get("odds", np.nan), r.get("placed_units", np.nan)),
+        axis=1
+    )
+    settled["profit_delta"] = settled["placed_profit_units"] - settled["ai_profit_units"]
+    settled["placement_alignment"] = np.where(
+        settled["status"].astype(str) != "placed", "Not Placed",
+        np.where(settled["difference_flag"].fillna(0) == 1, "Changed", "Matched AI")
+    )
+    settled["status_at_execution"] = settled["status"]
+
+    cols = [
+        "execution_id", "bet_id", "ticket_type", "status_at_execution", "sport", "event", "selection",
+        "bet_type", "book", "odds", "result", "ai_recommended_units", "placed_units",
+        "ai_profit_units", "placed_profit_units", "unit_delta", "profit_delta",
+        "placement_alignment", "difference_flag", "linked_tracker_row"
+    ]
+    return ensure_columns(settled, cols)[cols]
+
+
+def execution_accuracy_summary(settlement_df):
+    if len(settlement_df) == 0:
+        return {
+            "conversion_rate": np.nan,
+            "placed_count": 0,
+            "recommended_count": 0,
+            "ai_profit_units": np.nan,
+            "placed_profit_units": np.nan,
+            "profit_delta": np.nan,
+        }
+
+    recommended_count = int((settlement_df["status_at_execution"].astype(str).isin(["review", "locked", "placed", "passed"])).sum())
+    placed_count = int((settlement_df["status_at_execution"].astype(str) == "placed").sum())
+    ai_profit = settlement_df["ai_profit_units"].dropna().sum() if "ai_profit_units" in settlement_df.columns else np.nan
+    placed_profit = settlement_df.loc[settlement_df["status_at_execution"].astype(str) == "placed", "placed_profit_units"].dropna().sum()
+    delta = placed_profit - ai_profit if pd.notna(ai_profit) else np.nan
+
+    return {
+        "conversion_rate": placed_count / recommended_count if recommended_count else np.nan,
+        "placed_count": placed_count,
+        "recommended_count": recommended_count,
+        "ai_profit_units": ai_profit,
+        "placed_profit_units": placed_profit,
+        "profit_delta": delta,
+    }
+
+
+def summarize_execution_splits(settlement_df):
+    if len(settlement_df) == 0:
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+
+    base = settlement_df.copy()
+    base["is_win"] = base["result"].astype(str).str.lower().eq("win").astype(int)
+
+    by_status = (
+        base.groupby("status_at_execution", dropna=False)
+        .agg(
+            bets=("execution_id", "count"),
+            wins=("is_win", "sum"),
+            ai_profit=("ai_profit_units", "sum"),
+            placed_profit=("placed_profit_units", "sum"),
+        )
+        .reset_index()
+    )
+    by_status["win_rate"] = by_status["wins"] / by_status["bets"].replace(0, np.nan)
+    by_status["profit_delta"] = by_status["placed_profit"] - by_status["ai_profit"]
+
+    by_alignment = (
+        base.groupby("placement_alignment", dropna=False)
+        .agg(
+            bets=("execution_id", "count"),
+            wins=("is_win", "sum"),
+            ai_profit=("ai_profit_units", "sum"),
+            placed_profit=("placed_profit_units", "sum"),
+        )
+        .reset_index()
+    )
+    by_alignment["win_rate"] = by_alignment["wins"] / by_alignment["bets"].replace(0, np.nan)
+    by_alignment["profit_delta"] = by_alignment["placed_profit"] - by_alignment["ai_profit"]
+
+    changed_only = base[base["placement_alignment"] == "Changed"].copy()
+    by_unit_change = pd.DataFrame()
+    if len(changed_only) > 0:
+        changed_only["change_direction"] = np.where(changed_only["unit_delta"] > 0, "Increased", np.where(changed_only["unit_delta"] < 0, "Decreased", "Same"))
+        by_unit_change = (
+            changed_only.groupby("change_direction", dropna=False)
+            .agg(
+                bets=("execution_id", "count"),
+                ai_profit=("ai_profit_units", "sum"),
+                placed_profit=("placed_profit_units", "sum"),
+            )
+            .reset_index()
+        )
+        by_unit_change["profit_delta"] = by_unit_change["placed_profit"] - by_unit_change["ai_profit"]
+
+    return by_status, by_alignment, by_unit_change
+
+
+def settlement_detail_table(settlement_df):
+    if len(settlement_df) == 0:
+        return settlement_df
+    out = settlement_df.copy()
+    out["result"] = out["result"].fillna("")
+    out = out.sort_values(["status_at_execution", "placement_alignment", "event"], ascending=[True, True, True])
+    return out
+
+
+# =========================
 # LOGGING / METRICS
 # =========================
 def append_new_bets_to_log(candidates_df, bet_log_df):
@@ -1623,6 +1783,7 @@ bet_log = update_bet_outcomes(load_bet_log())
 memory_df = load_model_memory()
 execution_board_df = load_execution_board()
 placed_bets_df = load_placed_bets()
+execution_settlement_df = load_execution_settlement()
 
 market_perf_df = summarize_market_performance(memory_df, min_samples=int(settings["learning_min_samples"]))
 book_perf_df = summarize_book_performance(memory_df, min_samples=int(settings["book_min_samples"]))
@@ -1644,7 +1805,7 @@ if len(votes_history_df) > 0:
 # SIDEBAR
 # =========================
 with st.sidebar:
-    st.header("V19 Controls")
+    st.header("V19.1 Controls")
 
     settings["bankroll"] = st.number_input("Bankroll", min_value=100.0, value=float(settings["bankroll"]), step=50.0)
     settings["kelly_multiplier"] = st.slider("Kelly Multiplier", 0.05, 1.00, float(settings["kelly_multiplier"]), 0.05)
@@ -1661,12 +1822,6 @@ with st.sidebar:
         st.success("Settings saved.")
 
     st.divider()
-    st.markdown("**Sharp Mode Status**")
-    st.write("Mode:", "ON" if sharp_status.get("sharp_mode", False) else "OFF")
-    st.write("ROI:", pct(sharp_status.get("roi", np.nan)))
-    st.write("Avg CLV:", pct(sharp_status.get("avg_clv", np.nan)))
-
-    st.divider()
     st.markdown("**Execution Status**")
     ex_sum = execution_summary(execution_board_df)
     st.write("Board items:", ex_sum["total"])
@@ -1674,11 +1829,18 @@ with st.sidebar:
     st.write("Review:", ex_sum["review"])
     st.write("Placed:", ex_sum["placed"])
 
+    acc = execution_accuracy_summary(execution_settlement_df)
+    st.divider()
+    st.markdown("**Recommendation Accuracy**")
+    st.write("Conversion:", pct(acc["conversion_rate"]))
+    st.write("AI P/L:", f"{acc['ai_profit_units']:.2f}u" if pd.notna(acc["ai_profit_units"]) else "—")
+    st.write("Placed P/L:", f"{acc['placed_profit_units']:.2f}u" if pd.notna(acc["placed_profit_units"]) else "—")
+
 
 # =========================
 # TABS
 # =========================
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
     "Upload + Multi-AI Board",
     "Best Bets",
     "Execution Board",
@@ -1687,6 +1849,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "AI Parlays",
     "Bet Tracker + Learning",
     "Placed vs Recommended",
+    "Settlement + Accuracy",
 ])
 
 input_df = pd.DataFrame()
@@ -1708,7 +1871,7 @@ with tab1:
 
     with st.expander("See sample input format"):
         st.dataframe(sample_df, use_container_width=True)
-        export_download(sample_df, "v19_sample_input.csv", "Download sample CSV")
+        export_download(sample_df, "v19_1_sample_input.csv", "Download sample CSV")
 
     if uploaded is not None:
         try:
@@ -1747,7 +1910,7 @@ with tab1:
 with tab2:
     st.subheader("Best Bets")
     if len(input_df) == 0:
-        st.info("Upload a CSV in the first tab to generate V19 best bets.")
+        st.info("Upload a CSV in the first tab to generate V19.1 best bets.")
     else:
         qualified = qualify_plays(input_df, settings).copy()
         qualified = qualified.sort_values(["weighted_consensus_ratio", "model_yes_votes", "priority_score", "score", "ev"], ascending=[False, False, False, False, False])
@@ -1759,7 +1922,7 @@ with tab2:
         c4.metric("5/5 Elite Plays", int((qualified["model_yes_votes"] == 5).sum()) if len(qualified) else 0)
 
         if len(qualified) == 0:
-            st.warning("No plays met the V19 filters.")
+            st.warning("No plays met the V19.1 filters.")
         else:
             st.dataframe(
                 qualified[[
@@ -1811,7 +1974,7 @@ with tab3:
                 "status": st.column_config.SelectboxColumn("status", options=["review", "locked", "placed", "passed"]),
                 "ticket_type": st.column_config.TextColumn("ticket_type", disabled=True),
             },
-            key="execution_board_editor_v19",
+            key="execution_board_editor_v19_1",
         )
 
         if st.button("Save Execution Board Changes"):
@@ -1828,7 +1991,7 @@ with tab3:
             st.success(f"Execution board updated. Recorded {saved_count} placed items.")
             st.rerun()
 
-        export_download(board, "v19_execution_board.csv", "Download execution board CSV")
+        export_download(board, "v19_1_execution_board.csv", "Download execution board CSV")
 
 
 with tab4:
@@ -1842,22 +2005,13 @@ with tab4:
         placed = board[board["status"].astype(str) == "placed"].copy()
 
         st.markdown("**Locked / approved now**")
-        if len(locked) == 0:
-            st.write("No locked items.")
-        else:
-            st.dataframe(locked.sort_values(["execution_priority"], ascending=[False]), use_container_width=True)
+        st.dataframe(locked.sort_values(["execution_priority"], ascending=[False]), use_container_width=True) if len(locked) else st.write("No locked items.")
 
         st.markdown("**Needs review**")
-        if len(review) == 0:
-            st.write("No review items.")
-        else:
-            st.dataframe(review.sort_values(["execution_priority"], ascending=[False]), use_container_width=True)
+        st.dataframe(review.sort_values(["execution_priority"], ascending=[False]), use_container_width=True) if len(review) else st.write("No review items.")
 
         st.markdown("**Already placed**")
-        if len(placed) == 0:
-            st.write("No placed items yet.")
-        else:
-            st.dataframe(placed.sort_values(["execution_priority"], ascending=[False]), use_container_width=True)
+        st.dataframe(placed.sort_values(["execution_priority"], ascending=[False]), use_container_width=True) if len(placed) else st.write("No placed items yet.")
 
         by_group = board.groupby(["slip_group", "ticket_type"], dropna=False).agg(
             items=("execution_id", "count"),
@@ -1897,10 +2051,10 @@ with tab5:
             c1, c2 = st.columns(2)
             with c1:
                 if st.button("Save Portfolio Snapshot"):
-                    added = save_portfolio_snapshot(portfolio_df, portfolio_name=f"V19 {settings['portfolio_target_risk']}")
+                    added = save_portfolio_snapshot(portfolio_df, portfolio_name=f"V19.1 {settings['portfolio_target_risk']}")
                     st.success(f"Saved {added} portfolio rows to history.")
             with c2:
-                export_download(portfolio_df, "v19_portfolio.csv", "Download portfolio CSV")
+                export_download(portfolio_df, "v19_1_portfolio.csv", "Download portfolio CSV")
 
 
 with tab6:
@@ -1918,7 +2072,7 @@ with tab6:
             c2.metric("Best Weighted Support", f"{parlays['avg_weighted_ratio'].max():.2f}")
             c3.metric("Best EV", pct(parlays["ev"].max()))
             st.dataframe(parlays, use_container_width=True)
-            export_download(parlays, "v19_ai_parlays.csv", "Download AI parlays CSV")
+            export_download(parlays, "v19_1_ai_parlays.csv", "Download AI parlays CSV")
 
 
 with tab7:
@@ -1941,7 +2095,7 @@ with tab7:
             use_container_width=True,
             num_rows="dynamic",
             column_config={"result": st.column_config.SelectboxColumn("result", options=["", "win", "loss", "push", "void"])},
-            key="bet_log_editor_v19",
+            key="bet_log_editor_v19_1",
         )
 
         if st.button("Save Tracker Changes"):
@@ -1971,10 +2125,13 @@ with tab7:
                         save_model_performance(summarize_model_performance(votes_hist))
                         save_model_segment_performance(summarize_model_segment_performance(votes_hist, min_samples=int(settings["adaptive_min_samples"])))
 
-            st.success("Tracker, learning memory, adaptive model weights, and segment learning updated.")
+            settlement = build_execution_settlement(load_execution_board(), edited)
+            save_execution_settlement(settlement)
+
+            st.success("Tracker, learning memory, adaptive model weights, and execution settlement updated.")
             st.rerun()
 
-        export_download(bet_log, "v19_bet_log.csv", "Download bet log CSV")
+        export_download(bet_log, "v19_1_bet_log.csv", "Download bet log CSV")
 
 
 with tab8:
@@ -1999,4 +2156,54 @@ with tab8:
             ]].sort_values(["execution_priority"], ascending=[False]),
             use_container_width=True,
         )
-        export_download(compare_df, "v19_placed_vs_recommended.csv", "Download comparison CSV")
+        export_download(compare_df, "v19_1_placed_vs_recommended.csv", "Download comparison CSV")
+
+
+with tab9:
+    st.subheader("Settlement + Accuracy")
+    settlement = build_execution_settlement(load_execution_board(), load_bet_log())
+    if len(settlement) > 0:
+        save_execution_settlement(settlement)
+
+    acc = execution_accuracy_summary(settlement)
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Conversion Rate", pct(acc["conversion_rate"]))
+    c2.metric("Recommended", acc["recommended_count"])
+    c3.metric("Placed", acc["placed_count"])
+    c4.metric("AI P/L", f"{acc['ai_profit_units']:.2f}u" if pd.notna(acc["ai_profit_units"]) else "—")
+    c5.metric("Placed P/L", f"{acc['placed_profit_units']:.2f}u" if pd.notna(acc["placed_profit_units"]) else "—")
+
+    c6, c7 = st.columns(2)
+    c6.metric("P/L Delta", f"{acc['profit_delta']:.2f}u" if pd.notna(acc["profit_delta"]) else "—")
+    c7.metric("Linked Tracker Rows", int(settlement["linked_tracker_row"].fillna(0).sum()) if len(settlement) else 0)
+
+    if len(settlement) == 0:
+        st.info("No settled execution items yet. Mark results in the bet tracker to populate this tab.")
+    else:
+        by_status, by_alignment, by_unit_change = summarize_execution_splits(settlement)
+
+        st.markdown("**Performance by execution status**")
+        st.dataframe(by_status, use_container_width=True)
+
+        st.markdown("**Performance by AI match vs changed**")
+        st.dataframe(by_alignment, use_container_width=True)
+
+        st.markdown("**Impact of changing unit size**")
+        if len(by_unit_change) == 0:
+            st.write("No changed unit sizes yet.")
+        else:
+            st.dataframe(by_unit_change, use_container_width=True)
+
+        st.markdown("**Settlement detail**")
+        st.dataframe(
+            settlement_detail_table(settlement)[[
+                "execution_id", "ticket_type", "status_at_execution", "sport", "event", "selection",
+                "bet_type", "result", "ai_recommended_units", "placed_units",
+                "ai_profit_units", "placed_profit_units", "profit_delta",
+                "placement_alignment", "difference_flag", "linked_tracker_row"
+            ]],
+            use_container_width=True,
+        )
+
+        export_download(settlement, "v19_1_execution_settlement.csv", "Download execution settlement CSV")

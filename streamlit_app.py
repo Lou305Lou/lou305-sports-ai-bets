@@ -3,7 +3,8 @@ import io
 import os
 import math
 import json
-from datetime import datetime, date
+import itertools
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -14,21 +15,22 @@ import streamlit as st
 # =========================
 # CONFIG
 # =========================
-APP_TITLE = "Sports AI Betting Dashboard — V16"
+APP_TITLE = "Sports AI Betting Dashboard — V16.1"
 DATA_DIR = Path("data")
 DATA_DIR.mkdir(exist_ok=True)
 
 BET_LOG_PATH = DATA_DIR / "bet_log.csv"
 SETTINGS_PATH = DATA_DIR / "settings.json"
 MODEL_MEMORY_PATH = DATA_DIR / "model_memory.csv"
+BOOK_PERF_PATH = DATA_DIR / "book_performance.csv"
 
 
 # =========================
-# PAGE SETUP
+# PAGE
 # =========================
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 st.title(APP_TITLE)
-st.caption("All-market betting AI + auto-save + tracking + CLV + consensus parlays + self-learning foundation")
+st.caption("V16.1 learning upgrade: adaptive sizing, book performance, parlay correlation filter, and profitable market prioritization")
 
 
 # =========================
@@ -43,11 +45,33 @@ def safe_read_csv(path: Path, columns=None):
     return pd.DataFrame(columns=columns if columns is not None else [])
 
 
+def safe_write_csv(df: pd.DataFrame, path: Path):
+    try:
+        df.to_csv(path, index=False)
+    except Exception:
+        pass
+
+
 def safe_to_numeric(series, default=np.nan):
     try:
         return pd.to_numeric(series, errors="coerce")
     except Exception:
         return pd.Series([default] * len(series))
+
+
+def normalize_text(x):
+    try:
+        return str(x).strip()
+    except Exception:
+        return ""
+
+
+def ensure_columns(df: pd.DataFrame, required_cols):
+    out = df.copy()
+    for c in required_cols:
+        if c not in out.columns:
+            out[c] = np.nan
+    return out
 
 
 def american_to_decimal(odds):
@@ -70,33 +94,47 @@ def american_implied_prob(odds):
         return np.nan
 
 
-def kelly_fraction(p, odds_american):
+def decimal_to_american(decimal_odds):
     try:
-        p = float(p)
-        dec = american_to_decimal(odds_american)
-        if np.isnan(dec) or dec <= 1:
-            return 0.0
-        b = dec - 1
-        q = 1 - p
-        k = (b * p - q) / b
-        return max(0.0, k)
+        d = float(decimal_odds)
+        if d <= 1:
+            return np.nan
+        if d >= 2:
+            return int(round((d - 1) * 100))
+        return int(round(-100 / (d - 1)))
     except Exception:
-        return 0.0
+        return np.nan
 
 
-def normalize_text(x):
+def compute_ev(prob, odds):
     try:
-        return str(x).strip()
+        dec = american_to_decimal(odds)
+        if np.isnan(dec):
+            return np.nan
+        return prob * (dec - 1) - (1 - prob)
     except Exception:
-        return ""
+        return np.nan
 
 
-def ensure_columns(df: pd.DataFrame, required_cols):
-    out = df.copy()
-    for c in required_cols:
-        if c not in out.columns:
-            out[c] = np.nan
-    return out
+def pct(x):
+    try:
+        return f"{100 * float(x):.1f}%"
+    except Exception:
+        return "—"
+
+
+def score_to_emoji(score):
+    try:
+        s = float(score)
+    except Exception:
+        return "⚪"
+    if s >= 85:
+        return "🟢"
+    if s >= 75:
+        return "🟡"
+    if s >= 65:
+        return "🟠"
+    return "⚪"
 
 
 def letter_grade(score):
@@ -127,25 +165,18 @@ def tier_label(score):
     return "Tier 4"
 
 
-def score_to_emoji(score):
+def kelly_fraction(p, odds_american):
     try:
-        s = float(score)
+        p = float(p)
+        dec = american_to_decimal(odds_american)
+        if np.isnan(dec) or dec <= 1:
+            return 0.0
+        b = dec - 1
+        q = 1 - p
+        k = (b * p - q) / b
+        return max(0.0, k)
     except Exception:
-        return "⚪"
-    if s >= 85:
-        return "🟢"
-    if s >= 75:
-        return "🟡"
-    if s >= 65:
-        return "🟠"
-    return "⚪"
-
-
-def pct(x):
-    try:
-        return f"{100 * float(x):.1f}%"
-    except Exception:
-        return "—"
+        return 0.0
 
 
 def plus_money_range_ok(odds, min_odds=-200, max_odds=150):
@@ -156,14 +187,66 @@ def plus_money_range_ok(odds, min_odds=-200, max_odds=150):
         return False
 
 
-def compute_ev(prob, odds):
+def market_bucket(market_text):
+    m = normalize_text(market_text).lower()
+    if "player" in m or "prop" in m:
+        return "Player Props"
+    if "spread" in m:
+        return "Spreads"
+    if "total" in m:
+        return "Totals"
+    if "moneyline" in m or m == "ml" or "mainline" in m:
+        return "Moneylines"
+    return "Other"
+
+
+def same_family_conflict_text(selection_a, bet_type_a, selection_b, bet_type_b):
+    sa = normalize_text(selection_a).lower()
+    sb = normalize_text(selection_b).lower()
+    ba = normalize_text(bet_type_a).lower()
+    bb = normalize_text(bet_type_b).lower()
+    return sa == sb and ba == bb
+
+
+def clv_value(odds, closing_odds):
     try:
-        dec = american_to_decimal(odds)
-        if np.isnan(dec):
-            return np.nan
-        return prob * (dec - 1) - (1 - prob)
+        open_ip = american_implied_prob(odds)
+        close_ip = american_implied_prob(closing_odds)
+        return close_ip - open_ip
     except Exception:
         return np.nan
+
+
+def calculate_profit_units(result, odds, units):
+    try:
+        odds = float(odds)
+        units = float(units)
+        result = normalize_text(result).lower()
+        if result == "win":
+            if odds > 0:
+                return units * odds / 100.0
+            return units * 100.0 / abs(odds)
+        if result == "loss":
+            return -units
+        if result in {"push", "void"}:
+            return 0.0
+    except Exception:
+        pass
+    return np.nan
+
+
+def build_bet_id(row):
+    parts = [
+        normalize_text(row.get("sport", "")),
+        normalize_text(row.get("event", "")),
+        normalize_text(row.get("market", "")),
+        normalize_text(row.get("bet_type", "")),
+        normalize_text(row.get("selection", "")),
+        normalize_text(row.get("book", "")),
+        normalize_text(row.get("line", "")),
+        normalize_text(row.get("odds", "")),
+    ]
+    return "|".join(parts)
 
 
 def load_settings():
@@ -177,6 +260,10 @@ def load_settings():
         "max_parlay_legs": 4,
         "default_odds_min": -200,
         "default_odds_max": 150,
+        "learning_min_samples": 15,
+        "book_min_samples": 10,
+        "correlation_penalty_on": True,
+        "auto_prioritize_profitable_markets": True,
     }
     try:
         if SETTINGS_PATH.exists():
@@ -196,79 +283,39 @@ def save_settings(settings):
         pass
 
 
-def load_model_memory():
-    cols = [
-        "date",
-        "market",
-        "sport",
-        "book",
-        "bet_type",
-        "selection",
-        "odds",
-        "model_prob",
-        "closing_odds",
-        "result",
-        "units",
-        "profit_units",
-    ]
-    return safe_read_csv(MODEL_MEMORY_PATH, cols)
-
-
-def save_model_memory(df):
-    try:
-        df.to_csv(MODEL_MEMORY_PATH, index=False)
-    except Exception:
-        pass
-
-
 def load_bet_log():
     cols = [
-        "bet_id",
-        "date_added",
-        "sport",
-        "event",
-        "market",
-        "bet_type",
-        "selection",
-        "book",
-        "odds",
-        "closing_odds",
-        "projection",
-        "line",
-        "edge",
-        "model_prob",
-        "implied_prob",
-        "ev",
-        "score",
-        "consensus",
-        "tier",
-        "recommended_units",
-        "result",
-        "profit_units",
-        "notes",
+        "bet_id", "date_added", "sport", "event", "market", "market_bucket",
+        "bet_type", "selection", "book", "odds", "closing_odds", "projection", "line",
+        "edge", "model_prob", "implied_prob", "ev", "score", "consensus", "tier",
+        "recommended_units", "result", "profit_units", "notes"
     ]
     return safe_read_csv(BET_LOG_PATH, cols)
 
 
 def save_bet_log(df):
-    try:
-        df.to_csv(BET_LOG_PATH, index=False)
-    except Exception:
-        pass
+    safe_write_csv(df, BET_LOG_PATH)
 
 
-def build_bet_id(row):
-    parts = [
-        normalize_text(row.get("sport", "")),
-        normalize_text(row.get("event", "")),
-        normalize_text(row.get("market", "")),
-        normalize_text(row.get("bet_type", "")),
-        normalize_text(row.get("selection", "")),
-        normalize_text(row.get("book", "")),
-        normalize_text(row.get("line", "")),
-        normalize_text(row.get("odds", "")),
+def load_model_memory():
+    cols = [
+        "date", "market", "market_bucket", "sport", "book", "bet_type", "selection", "event",
+        "odds", "model_prob", "closing_odds", "result", "units", "profit_units", "clv"
     ]
-    return "|".join(parts)
+    return safe_read_csv(MODEL_MEMORY_PATH, cols)
+
+
+def save_model_memory(df):
+    safe_write_csv(df, MODEL_MEMORY_PATH)
+
+
+def load_book_performance():
+    cols = ["sport", "book", "bets", "units", "profit_units", "roi", "win_rate", "avg_clv", "temperature"]
+    return safe_read_csv(BOOK_PERF_PATH, cols)
+
+
+def save_book_performance(df):
+    safe_write_csv(df, BOOK_PERF_PATH)
 
 
 def clean_input_df(df: pd.DataFrame):
@@ -309,17 +356,17 @@ def clean_input_df(df: pd.DataFrame):
         df["model_prob"] = df["model_prob"] / 100.0
 
     df["implied_prob"] = df["odds"].apply(american_implied_prob)
-    if df["edge"].isna().all() and ("projection" in df.columns and "line" in df.columns):
+
+    if df["edge"].isna().all():
         df["edge"] = df["projection"] - df["line"]
 
     if df["score"].isna().all():
-        comp = (
+        df["score"] = (
             df["model_prob"].fillna(0) * 55
-            + (df["edge"].fillna(0).clip(lower=0) * 4)
-            + (df["consensus"].fillna(0) * 6)
-            + (df["odds"].apply(lambda x: 10 if plus_money_range_ok(x, -200, 150) else 0).fillna(0))
-        )
-        df["score"] = comp.clip(0, 99)
+            + df["edge"].fillna(0).clip(lower=0) * 4
+            + df["consensus"].fillna(0) * 6
+            + df["odds"].apply(lambda x: 10 if plus_money_range_ok(x, -200, 150) else 0).fillna(0)
+        ).clip(0, 99)
 
     if df["consensus"].isna().all():
         df["consensus"] = np.where(df["score"] >= 85, 5, np.where(df["score"] >= 75, 4, np.where(df["score"] >= 65, 3, 2)))
@@ -327,13 +374,135 @@ def clean_input_df(df: pd.DataFrame):
     df["ev"] = df.apply(lambda r: compute_ev(r.get("model_prob", np.nan), r.get("odds", np.nan)), axis=1)
     df["tier"] = df["score"].apply(tier_label)
     df["grade"] = df["score"].apply(letter_grade)
+    df["market_bucket"] = df["market"].apply(market_bucket)
     df["bet_id"] = df.apply(build_bet_id, axis=1)
-
     df["date_added"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     return df
 
 
-def recommend_units(row, bankroll, kelly_multiplier=0.35, base_unit_pct=0.01, max_unit=2.0, memory_df=None):
+def summarize_market_performance(memory_df, min_samples=15):
+    if len(memory_df) == 0:
+        return pd.DataFrame(columns=["sport", "market", "market_bucket", "bets", "units", "profit_units", "roi", "win_rate", "avg_clv", "market_signal"])
+
+    m = ensure_columns(memory_df.copy(), ["sport", "market", "market_bucket", "units", "profit_units", "result", "clv"])
+    settled = m[m["result"].astype(str).str.lower().isin(["win", "loss", "push", "void"])].copy()
+
+    if len(settled) == 0:
+        return pd.DataFrame(columns=["sport", "market", "market_bucket", "bets", "units", "profit_units", "roi", "win_rate", "avg_clv", "market_signal"])
+
+    grp = (
+        settled.groupby(["sport", "market", "market_bucket"], dropna=False)
+        .agg(
+            bets=("result", "count"),
+            units=("units", "sum"),
+            profit_units=("profit_units", "sum"),
+            wins=("result", lambda s: (s.astype(str).str.lower() == "win").sum()),
+            avg_clv=("clv", "mean"),
+        )
+        .reset_index()
+    )
+    grp["win_rate"] = grp["wins"] / grp["bets"].replace(0, np.nan)
+    grp["roi"] = grp["profit_units"] / grp["units"].replace(0, np.nan)
+
+    grp["market_signal"] = np.where(
+        (grp["bets"] >= min_samples) & (grp["roi"] > 0.08), "Prioritize",
+        np.where((grp["bets"] >= min_samples) & (grp["roi"] < -0.08), "De-prioritize", "Neutral")
+    )
+    return grp.drop(columns=["wins"])
+
+
+def summarize_book_performance(memory_df, min_samples=10):
+    if len(memory_df) == 0:
+        return pd.DataFrame(columns=["sport", "book", "bets", "units", "profit_units", "roi", "win_rate", "avg_clv", "temperature"])
+
+    m = ensure_columns(memory_df.copy(), ["sport", "book", "units", "profit_units", "result", "clv"])
+    settled = m[m["result"].astype(str).str.lower().isin(["win", "loss", "push", "void"])].copy()
+    if len(settled) == 0:
+        return pd.DataFrame(columns=["sport", "book", "bets", "units", "profit_units", "roi", "win_rate", "avg_clv", "temperature"])
+
+    grp = (
+        settled.groupby(["sport", "book"], dropna=False)
+        .agg(
+            bets=("result", "count"),
+            units=("units", "sum"),
+            profit_units=("profit_units", "sum"),
+            wins=("result", lambda s: (s.astype(str).str.lower() == "win").sum()),
+            avg_clv=("clv", "mean"),
+        )
+        .reset_index()
+    )
+    grp["win_rate"] = grp["wins"] / grp["bets"].replace(0, np.nan)
+    grp["roi"] = grp["profit_units"] / grp["units"].replace(0, np.nan)
+
+    grp["temperature"] = np.where(
+        (grp["bets"] >= min_samples) & (grp["roi"] > 0.08), "Hot",
+        np.where((grp["bets"] >= min_samples) & (grp["roi"] < -0.08), "Cold", "Neutral")
+    )
+    return grp.drop(columns=["wins"])
+
+
+def market_weight(row, market_perf_df, settings):
+    if not settings.get("auto_prioritize_profitable_markets", True) or len(market_perf_df) == 0:
+        return 1.0
+
+    sport = normalize_text(row.get("sport", "")).lower()
+    market = normalize_text(row.get("market", "")).lower()
+
+    seg = market_perf_df[
+        market_perf_df["sport"].astype(str).str.lower().eq(sport) &
+        market_perf_df["market"].astype(str).str.lower().eq(market)
+    ]
+    if len(seg) == 0:
+        return 1.0
+
+    s = seg.iloc[0]
+    if pd.isna(s.get("bets", np.nan)) or float(s["bets"]) < float(settings["learning_min_samples"]):
+        return 1.0
+
+    roi = float(s.get("roi", 0) if pd.notna(s.get("roi", np.nan)) else 0)
+    if roi > 0.08:
+        return 1.12
+    if roi > 0.03:
+        return 1.05
+    if roi < -0.08:
+        return 0.85
+    if roi < -0.03:
+        return 0.93
+    return 1.0
+
+
+def book_weight(row, book_perf_df, settings):
+    if len(book_perf_df) == 0:
+        return 1.0
+
+    sport = normalize_text(row.get("sport", "")).lower()
+    book = normalize_text(row.get("book", "")).lower()
+
+    seg = book_perf_df[
+        book_perf_df["sport"].astype(str).str.lower().eq(sport) &
+        book_perf_df["book"].astype(str).str.lower().eq(book)
+    ]
+    if len(seg) == 0:
+        return 1.0
+
+    s = seg.iloc[0]
+    if pd.isna(s.get("bets", np.nan)) or float(s["bets"]) < float(settings["book_min_samples"]):
+        return 1.0
+
+    temp = normalize_text(s.get("temperature", "Neutral"))
+    if temp == "Hot":
+        return 1.06
+    if temp == "Cold":
+        return 0.90
+    return 1.0
+
+
+def recommend_units(row, settings, market_perf_df=None, book_perf_df=None):
+    bankroll = float(settings["bankroll"])
+    kelly_multiplier = float(settings["kelly_multiplier"])
+    base_unit_pct = float(settings["base_unit_pct"])
+    max_unit = float(settings["max_unit"])
+
     p = row.get("model_prob", np.nan)
     odds = row.get("odds", np.nan)
     score = row.get("score", 0)
@@ -354,52 +523,28 @@ def recommend_units(row, bankroll, kelly_multiplier=0.35, base_unit_pct=0.01, ma
     elif consensus <= 2:
         units *= 0.80
 
-    # self-learning adjustment
-    adj = 1.0
-    if memory_df is not None and len(memory_df) > 0:
-        m = memory_df.copy()
-        market = normalize_text(row.get("market", "")).lower()
-        sport = normalize_text(row.get("sport", "")).lower()
-        seg = m[
-            m["market"].astype(str).str.lower().eq(market) &
-            m["sport"].astype(str).str.lower().eq(sport) &
-            m["result"].notna()
-        ]
-        if len(seg) >= 15:
-            roi = seg["profit_units"].sum() / max(seg["units"].sum(), 1e-9)
-            if roi > 0.08:
-                adj = 1.10
-            elif roi < -0.08:
-                adj = 0.85
-    units *= adj
+    units *= market_weight(row, market_perf_df if market_perf_df is not None else pd.DataFrame(), settings)
+    units *= book_weight(row, book_perf_df if book_perf_df is not None else pd.DataFrame(), settings)
 
-    units = max(0.1, min(max_unit, units))
+    units = max(0.10, min(max_unit, units))
     return round(units, 2)
 
 
-def format_pick_card(row):
-    grade = row.get("grade", "D")
-    emoji = score_to_emoji(row.get("score", 0))
-    return f"""#{int(row.name)+1} {normalize_text(row.get("selection", ""))} — {normalize_text(row.get("bet_type", ""))}
-{normalize_text(row.get("event", ""))} • {normalize_text(row.get("market", ""))} • {normalize_text(row.get("book", ""))}
-Projection: {row.get("projection", np.nan):.2f} | Edge: {row.get("edge", np.nan):.2f} | Odds: {int(row.get("odds", 0)) if pd.notna(row.get("odds")) else "—"} | Hit %: {pct(row.get("model_prob", np.nan))} | EV Edge: {pct(row.get("ev", np.nan))} | Score: {row.get("score", np.nan):.1f} ({emoji} {grade})
-Tier: {row.get("tier", "Tier 4")} | Units: {row.get("recommended_units", np.nan):.2f}u | Consensus: {int(row.get("consensus", 0))}/5"""
-
-
-def add_recommended_units(df, settings, memory_df):
-    df = df.copy()
-    df["recommended_units"] = df.apply(
-        lambda r: recommend_units(
-            r,
-            bankroll=settings["bankroll"],
-            kelly_multiplier=settings["kelly_multiplier"],
-            base_unit_pct=settings["base_unit_pct"],
-            max_unit=settings["max_unit"],
-            memory_df=memory_df,
-        ),
+def add_recommended_units(df, settings, market_perf_df, book_perf_df):
+    out = df.copy()
+    out["recommended_units"] = out.apply(
+        lambda r: recommend_units(r, settings, market_perf_df, book_perf_df),
         axis=1,
     )
-    return df
+    return out
+
+
+def adjusted_priority_score(row, market_perf_df, book_perf_df, settings):
+    base_score = float(row.get("score", 0) if pd.notna(row.get("score", np.nan)) else 0)
+    m_w = market_weight(row, market_perf_df, settings)
+    b_w = book_weight(row, book_perf_df, settings)
+    ev_bonus = 10 * float(row.get("ev", 0) if pd.notna(row.get("ev", np.nan)) else 0)
+    return round(base_score * m_w * b_w + ev_bonus, 2)
 
 
 def qualify_plays(df, settings):
@@ -412,69 +557,88 @@ def qualify_plays(df, settings):
         (out["odds"] >= settings["default_odds_min"]) &
         (out["odds"] <= settings["default_odds_max"])
     ].copy()
-    out = out.sort_values(["score", "ev", "model_prob"], ascending=[False, False, False])
     return out
 
 
-def market_buckets(df):
-    labels = []
-    for m in df.get("market", pd.Series(dtype=str)).astype(str).str.lower():
-        if "player" in m or "prop" in m:
-            labels.append("Player Props")
-        elif "spread" in m:
-            labels.append("Spreads")
-        elif "total" in m:
-            labels.append("Totals")
-        elif "moneyline" in m or "mainline" in m or "ml" == m:
-            labels.append("Moneylines")
-        else:
-            labels.append("Other")
-    out = df.copy()
-    out["market_bucket"] = labels
-    return out
+def parlay_correlation_penalty(legs):
+    penalty = 0.0
+    reasons = []
+
+    if legs["event"].nunique() < len(legs):
+        dup_count = len(legs) - legs["event"].nunique()
+        penalty += 8.0 * dup_count
+        reasons.append("same-event overlap")
+
+    market_buckets = legs["market_bucket"].astype(str).tolist()
+    if market_buckets.count("Totals") >= 2 and legs["event"].nunique() < len(legs):
+        penalty += 6.0
+        reasons.append("same-event totals linkage")
+
+    # same selection duplication
+    selections = legs["selection"].astype(str).str.lower()
+    if selections.nunique() < len(legs):
+        penalty += 10.0
+        reasons.append("duplicate selection")
+
+    # direct same pick duplication
+    for i in range(len(legs)):
+        for j in range(i + 1, len(legs)):
+            a = legs.iloc[i]
+            b = legs.iloc[j]
+            if same_family_conflict_text(a["selection"], a["bet_type"], b["selection"], b["bet_type"]):
+                penalty += 12.0
+                reasons.append("same pick repeated")
+
+    return penalty, ", ".join(sorted(set(reasons))) if reasons else "low correlation"
 
 
-def build_consensus_parlays(df, min_legs=2, max_legs=4, min_parlay_odds=200):
+def build_consensus_parlays(df, settings):
     if len(df) == 0:
         return pd.DataFrame()
 
-    df = df.copy().head(12)
+    df = df.copy()
+    df = df.sort_values(["priority_score", "score", "ev"], ascending=[False, False, False]).head(14)
+
     rows = []
+    min_legs = int(settings["min_parlay_legs"])
+    max_legs = int(settings["max_parlay_legs"])
 
     for leg_count in range(min_legs, max_legs + 1):
-        combos = list(__import__("itertools").combinations(df.index.tolist(), leg_count))
-        for combo in combos:
+        for combo in itertools.combinations(df.index.tolist(), leg_count):
             legs = df.loc[list(combo)].copy()
-
-            # Avoid same event duplicates when possible
-            if legs["event"].nunique() < len(legs):
-                continue
 
             dec_odds = legs["odds"].apply(american_to_decimal)
             if dec_odds.isna().any():
                 continue
 
-            parlay_dec = dec_odds.prod()
-            parlay_american = int(round((parlay_dec - 1) * 100)) if parlay_dec >= 2 else int(round(-100 / (parlay_dec - 1)))
-            if parlay_american < min_parlay_odds:
+            parlay_dec = float(dec_odds.prod())
+            parlay_american = decimal_to_american(parlay_dec)
+            if pd.isna(parlay_american) or parlay_american < 200:
                 continue
 
-            joint_prob = legs["model_prob"].clip(lower=0.01, upper=0.99).prod()
+            joint_prob = float(legs["model_prob"].clip(lower=0.01, upper=0.99).prod())
             implied = american_implied_prob(parlay_american)
             ev = compute_ev(joint_prob, parlay_american)
-            score = (
-                legs["score"].mean() * 0.55
-                + (legs["consensus"].mean() / 5.0) * 20
-                + min(15, max(0, (joint_prob - implied) * 100))
+
+            penalty, penalty_reason = parlay_correlation_penalty(legs)
+            raw_score = (
+                legs["priority_score"].mean() * 0.50
+                + legs["consensus"].mean() * 5.0
+                + max(0, (joint_prob - implied) * 100) * 0.8
+                + min(10, len(legs))
             )
+            final_score = raw_score - penalty if settings.get("correlation_penalty_on", True) else raw_score
 
             rows.append({
                 "legs": len(legs),
-                "parlay_odds": parlay_american,
+                "parlay_odds": int(parlay_american),
                 "joint_prob": joint_prob,
                 "implied_prob": implied,
                 "ev": ev,
-                "score": round(score, 1),
+                "raw_score": round(raw_score, 2),
+                "correlation_penalty": round(penalty, 2),
+                "score": round(final_score, 2),
+                "correlation_note": penalty_reason,
                 "summary": " + ".join(legs["selection"].astype(str) + " " + legs["bet_type"].astype(str)),
                 "events": " | ".join(legs["event"].astype(str)),
             })
@@ -482,8 +646,9 @@ def build_consensus_parlays(df, min_legs=2, max_legs=4, min_parlay_odds=200):
     out = pd.DataFrame(rows)
     if len(out) == 0:
         return out
+
     out = out.sort_values(["score", "ev", "joint_prob"], ascending=[False, False, False]).drop_duplicates(subset=["summary"])
-    return out.head(10)
+    return out.head(12)
 
 
 def append_new_bets_to_log(candidates_df, bet_log_df):
@@ -491,62 +656,36 @@ def append_new_bets_to_log(candidates_df, bet_log_df):
         return bet_log_df.copy(), 0
 
     base = bet_log_df.copy()
-    if "bet_id" not in base.columns:
-        base["bet_id"] = ""
+    base = ensure_columns(base, ["bet_id"])
 
     new_rows = candidates_df.copy()
     new_rows["bet_id"] = new_rows.apply(build_bet_id, axis=1)
 
     existing = set(base["bet_id"].astype(str).tolist())
     to_add = new_rows[~new_rows["bet_id"].astype(str).isin(existing)].copy()
-
     if len(to_add) == 0:
         return base, 0
 
     keep_cols = [
-        "bet_id", "date_added", "sport", "event", "market", "bet_type", "selection", "book", "odds",
-        "closing_odds", "projection", "line", "edge", "model_prob", "implied_prob", "ev", "score",
-        "consensus", "tier", "recommended_units", "result", "profit_units", "notes"
+        "bet_id", "date_added", "sport", "event", "market", "market_bucket",
+        "bet_type", "selection", "book", "odds", "closing_odds", "projection", "line",
+        "edge", "model_prob", "implied_prob", "ev", "score", "consensus", "tier",
+        "recommended_units", "result", "profit_units", "notes"
     ]
     to_add = ensure_columns(to_add, keep_cols)
     updated = pd.concat([base, to_add[keep_cols]], ignore_index=True)
     return updated, len(to_add)
 
 
-def calculate_profit_units(result, odds, units):
-    try:
-        odds = float(odds)
-        units = float(units)
-        result = str(result).strip().lower()
-        if result == "win":
-            if odds > 0:
-                return units * odds / 100.0
-            return units * 100.0 / abs(odds)
-        if result == "loss":
-            return -units
-        if result in {"push", "void"}:
-            return 0.0
-    except Exception:
-        pass
-    return np.nan
-
-
 def update_bet_outcomes(log_df):
     out = log_df.copy()
+    out = ensure_columns(out, ["odds", "recommended_units", "result", "closing_odds"])
     out["profit_units"] = out.apply(
         lambda r: calculate_profit_units(r.get("result", np.nan), r.get("odds", np.nan), r.get("recommended_units", np.nan)),
         axis=1,
     )
+    out["clv"] = out.apply(lambda r: clv_value(r.get("odds", np.nan), r.get("closing_odds", np.nan)), axis=1)
     return out
-
-
-def clv_value(odds, closing_odds):
-    try:
-        open_ip = american_implied_prob(odds)
-        close_ip = american_implied_prob(closing_odds)
-        return close_ip - open_ip
-    except Exception:
-        return np.nan
 
 
 def summary_metrics(log_df):
@@ -554,32 +693,35 @@ def summary_metrics(log_df):
     pending = log_df[~log_df.index.isin(settled.index)].copy()
 
     total_bets = len(log_df)
-    settled_count = len(settled)
     wins = (settled["result"].astype(str).str.lower() == "win").sum()
     losses = (settled["result"].astype(str).str.lower() == "loss").sum()
     pushes = (settled["result"].astype(str).str.lower().isin(["push", "void"])).sum()
-    units = settled["profit_units"].fillna(0).sum()
-    stake = settled["recommended_units"].fillna(0).sum()
-    roi = units / stake if stake else 0.0
 
-    clv_df = settled.dropna(subset=["closing_odds"]).copy()
-    if len(clv_df) > 0:
-        clv_df["clv"] = clv_df.apply(lambda r: clv_value(r.get("odds", np.nan), r.get("closing_odds", np.nan)), axis=1)
-        avg_clv = clv_df["clv"].mean()
-    else:
-        avg_clv = np.nan
+    profit_units = settled["profit_units"].fillna(0).sum()
+    staked_units = settled["recommended_units"].fillna(0).sum()
+    roi = profit_units / staked_units if staked_units else 0.0
+    avg_clv = settled["clv"].dropna().mean() if "clv" in settled.columns else np.nan
 
     return {
         "total_bets": total_bets,
-        "settled": settled_count,
+        "settled": len(settled),
         "pending": len(pending),
         "wins": int(wins),
         "losses": int(losses),
         "pushes": int(pushes),
-        "profit_units": units,
+        "profit_units": profit_units,
         "roi": roi,
         "avg_clv": avg_clv,
     }
+
+
+def format_pick_card(row):
+    grade = row.get("grade", "D")
+    emoji = score_to_emoji(row.get("score", 0))
+    return f"""#{int(row.name)+1} {normalize_text(row.get("selection", ""))} — {normalize_text(row.get("bet_type", ""))}
+{normalize_text(row.get("event", ""))} • {normalize_text(row.get("market_bucket", ""))} • {normalize_text(row.get("book", ""))}
+Projection: {row.get("projection", np.nan):.2f} | Edge: {row.get("edge", np.nan):.2f} | Odds: {int(row.get("odds", 0)) if pd.notna(row.get("odds")) else "—"} | Hit %: {pct(row.get("model_prob", np.nan))} | EV: {pct(row.get("ev", np.nan))} | Score: {row.get("score", np.nan):.1f} ({emoji} {grade})
+Priority: {row.get("priority_score", np.nan):.1f} | Tier: {row.get("tier", "Tier 4")} | Units: {row.get("recommended_units", np.nan):.2f}u | Consensus: {int(row.get("consensus", 0))}/5"""
 
 
 def export_download(df, filename, label):
@@ -588,14 +730,21 @@ def export_download(df, filename, label):
 
 
 # =========================
-# SIDEBAR
+# LOAD STATE
 # =========================
 settings = load_settings()
-memory_df = load_model_memory()
 bet_log = update_bet_outcomes(load_bet_log())
+memory_df = load_model_memory()
 
+market_perf_df = summarize_market_performance(memory_df, min_samples=int(settings["learning_min_samples"]))
+book_perf_df = summarize_book_performance(memory_df, min_samples=int(settings["book_min_samples"]))
+
+
+# =========================
+# SIDEBAR
+# =========================
 with st.sidebar:
-    st.header("V16 Controls")
+    st.header("V16.1 Controls")
 
     settings["bankroll"] = st.number_input("Bankroll", min_value=100.0, value=float(settings["bankroll"]), step=50.0)
     settings["kelly_multiplier"] = st.slider("Kelly Multiplier", 0.05, 1.00, float(settings["kelly_multiplier"]), 0.05)
@@ -606,30 +755,39 @@ with st.sidebar:
     settings["default_odds_max"] = st.number_input("Maximum Odds", value=int(settings["default_odds_max"]), step=5)
     settings["min_parlay_legs"] = st.selectbox("Min Parlay Legs", [2, 3], index=0 if int(settings["min_parlay_legs"]) == 2 else 1)
     settings["max_parlay_legs"] = st.selectbox("Max Parlay Legs", [3, 4, 5], index=[3, 4, 5].index(int(settings["max_parlay_legs"])))
+    settings["learning_min_samples"] = st.number_input("Min Samples For Market Learning", min_value=5, value=int(settings["learning_min_samples"]), step=1)
+    settings["book_min_samples"] = st.number_input("Min Samples For Book Temperature", min_value=5, value=int(settings["book_min_samples"]), step=1)
+    settings["correlation_penalty_on"] = st.checkbox("Use Correlation Penalty In Parlays", value=bool(settings["correlation_penalty_on"]))
+    settings["auto_prioritize_profitable_markets"] = st.checkbox("Auto-Prioritize Profitable Markets", value=bool(settings["auto_prioritize_profitable_markets"]))
+
     if st.button("Save Settings"):
         save_settings(settings)
         st.success("Settings saved.")
 
     st.divider()
-    st.markdown("**Auto-Save Status**")
-    st.write("Bet log:", "Ready")
-    st.write("Model memory:", "Ready")
+    st.markdown("**Learning Status**")
+    st.write("Market segments learned:", len(market_perf_df))
+    st.write("Book segments learned:", len(book_perf_df))
 
 
 # =========================
-# INPUT AREA
+# TABS
 # =========================
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "Upload + AI Board",
     "Best Bets",
     "Consensus Parlays",
     "Bet Tracker + CLV",
-    "Self-Learning Engine",
+    "Learning Engine",
+    "Book Heatmap",
 ])
+
+input_df = pd.DataFrame()
 
 with tab1:
     st.subheader("Upload Market Data")
-    st.write("Upload a CSV containing your betting candidates. Flexible columns are supported.")
+    st.write("Upload a CSV of candidate bets. V16.1 will score, prioritize, and size them using learned market and book performance.")
+
     uploaded = st.file_uploader("Upload CSV", type=["csv"])
 
     sample_cols = [
@@ -645,16 +803,16 @@ with tab1:
 
     with st.expander("See sample input format"):
         st.dataframe(sample_df, use_container_width=True)
-        export_download(sample_df, "v16_sample_input.csv", "Download sample CSV")
-
-    input_df = pd.DataFrame()
+        export_download(sample_df, "v16_1_sample_input.csv", "Download sample CSV")
 
     if uploaded is not None:
         try:
             raw = pd.read_csv(uploaded)
             input_df = clean_input_df(raw)
-            input_df = add_recommended_units(input_df, settings, memory_df)
-            input_df = market_buckets(input_df)
+            input_df = add_recommended_units(input_df, settings, market_perf_df, book_perf_df)
+            input_df["priority_score"] = input_df.apply(
+                lambda r: adjusted_priority_score(r, market_perf_df, book_perf_df, settings), axis=1
+            )
             st.success(f"Loaded {len(input_df)} rows.")
         except Exception as e:
             st.error(f"Could not read CSV: {e}")
@@ -662,13 +820,13 @@ with tab1:
     if len(input_df) > 0:
         c1, c2, c3 = st.columns(3)
         with c1:
-            sports = ["All"] + sorted([x for x in input_df["sport"].dropna().astype(str).unique().tolist()])
+            sports = ["All"] + sorted(input_df["sport"].dropna().astype(str).unique().tolist())
             sport_filter = st.selectbox("Sport", sports)
         with c2:
-            mkts = ["All"] + sorted([x for x in input_df["market_bucket"].dropna().astype(str).unique().tolist()])
+            mkts = ["All"] + sorted(input_df["market_bucket"].dropna().astype(str).unique().tolist())
             market_filter = st.selectbox("Market Bucket", mkts)
         with c3:
-            books = ["All"] + sorted([x for x in input_df["book"].dropna().astype(str).unique().tolist()])
+            books = ["All"] + sorted(input_df["book"].dropna().astype(str).unique().tolist())
             book_filter = st.selectbox("Book", books)
 
         filtered = input_df.copy()
@@ -679,11 +837,15 @@ with tab1:
         if book_filter != "All":
             filtered = filtered[filtered["book"].astype(str) == book_filter]
 
+        filtered = filtered.sort_values(["priority_score", "score", "ev"], ascending=[False, False, False])
+
         st.subheader("AI Board")
         st.dataframe(
-            filtered[
-                ["sport", "event", "market_bucket", "selection", "bet_type", "book", "odds", "projection", "line", "edge", "model_prob", "ev", "score", "consensus", "recommended_units"]
-            ].sort_values(["score", "ev"], ascending=[False, False]),
+            filtered[[
+                "sport", "event", "market_bucket", "selection", "bet_type", "book",
+                "odds", "projection", "line", "edge", "model_prob", "ev",
+                "score", "priority_score", "consensus", "recommended_units"
+            ]],
             use_container_width=True,
         )
 
@@ -697,24 +859,30 @@ with tab1:
 
 with tab2:
     st.subheader("Best Bets")
-    if uploaded is None:
-        st.info("Upload a CSV in the first tab to generate the V16 board.")
+    if len(input_df) == 0:
+        st.info("Upload a CSV in the first tab to generate V16.1 best bets.")
     else:
-        qualified = qualify_plays(input_df, settings)
+        qualified = qualify_plays(input_df, settings).copy()
+        qualified["priority_score"] = qualified.apply(
+            lambda r: adjusted_priority_score(r, market_perf_df, book_perf_df, settings), axis=1
+        )
+        qualified = qualified.sort_values(["priority_score", "score", "ev"], ascending=[False, False, False])
 
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Qualified Bets", len(qualified))
         c2.metric("Avg Score", f"{qualified['score'].mean():.1f}" if len(qualified) else "—")
         c3.metric("Avg EV", pct(qualified["ev"].mean()) if len(qualified) else "—")
-        c4.metric("Avg Hit Rate", pct(qualified["model_prob"].mean()) if len(qualified) else "—")
+        c4.metric("Avg Priority", f"{qualified['priority_score'].mean():.1f}" if len(qualified) else "—")
 
         if len(qualified) == 0:
-            st.warning("No plays met the V16 filters. Try loosening consensus or odds range.")
+            st.warning("No plays met the filters. Try loosening consensus or odds range.")
         else:
             st.dataframe(
-                qualified[
-                    ["sport", "event", "market_bucket", "selection", "bet_type", "book", "odds", "edge", "model_prob", "ev", "score", "consensus", "tier", "recommended_units"]
-                ],
+                qualified[[
+                    "sport", "event", "market_bucket", "selection", "bet_type", "book",
+                    "odds", "edge", "model_prob", "ev", "score", "priority_score",
+                    "consensus", "tier", "recommended_units"
+                ]],
                 use_container_width=True,
             )
 
@@ -726,21 +894,24 @@ with tab2:
 
 with tab3:
     st.subheader("Consensus Parlays")
-    if uploaded is None:
+    if len(input_df) == 0:
         st.info("Upload a CSV in the first tab to generate parlays.")
     else:
-        qualified = qualify_plays(input_df, settings)
-        parlays = build_consensus_parlays(
-            qualified,
-            min_legs=int(settings["min_parlay_legs"]),
-            max_legs=int(settings["max_parlay_legs"]),
-            min_parlay_odds=200,
+        qualified = qualify_plays(input_df, settings).copy()
+        qualified["priority_score"] = qualified.apply(
+            lambda r: adjusted_priority_score(r, market_perf_df, book_perf_df, settings), axis=1
         )
+        parlays = build_consensus_parlays(qualified, settings)
         if len(parlays) == 0:
             st.warning("No qualifying parlays found.")
         else:
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Parlays Found", len(parlays))
+            c2.metric("Best Score", f"{parlays['score'].max():.1f}")
+            c3.metric("Best EV", pct(parlays["ev"].max()))
+
             st.dataframe(parlays, use_container_width=True)
-            export_download(parlays, "v16_consensus_parlays.csv", "Download parlays CSV")
+            export_download(parlays, "v16_1_consensus_parlays.csv", "Download parlays CSV")
 
 
 with tab4:
@@ -761,8 +932,7 @@ with tab4:
     if len(bet_log) == 0:
         st.info("No tracked bets yet. Use Auto-Save in the first tab.")
     else:
-        editable = bet_log.copy()
-        editable = ensure_columns(editable, ["closing_odds", "result", "notes"])
+        editable = ensure_columns(bet_log.copy(), ["closing_odds", "result", "notes"])
         edited = st.data_editor(
             editable,
             use_container_width=True,
@@ -770,44 +940,47 @@ with tab4:
             column_config={
                 "result": st.column_config.SelectboxColumn("result", options=["", "win", "loss", "push", "void"]),
             },
-            key="bet_log_editor",
+            key="bet_log_editor_v16_1",
         )
 
         if st.button("Save Tracker Changes"):
             edited = update_bet_outcomes(edited)
             save_bet_log(edited)
 
-            # push settled bets to memory
             settled = edited[edited["result"].astype(str).str.lower().isin(["win", "loss", "push", "void"])].copy()
-            mem = load_model_memory()
-
             if len(settled) > 0:
+                mem = load_model_memory()
                 mem_add = settled[[
-                    "market", "sport", "book", "bet_type", "selection", "odds", "model_prob",
-                    "closing_odds", "result", "recommended_units", "profit_units"
+                    "market", "market_bucket", "sport", "book", "bet_type", "selection", "event",
+                    "odds", "model_prob", "closing_odds", "result", "recommended_units", "profit_units", "clv"
                 ]].copy()
                 mem_add = mem_add.rename(columns={"recommended_units": "units"})
                 mem_add["date"] = datetime.now().strftime("%Y-%m-%d")
                 mem = pd.concat([mem, mem_add], ignore_index=True)
-                mem = mem.drop_duplicates(subset=["date", "market", "sport", "selection", "odds", "result"], keep="last")
+                mem = mem.drop_duplicates(
+                    subset=["date", "sport", "market", "selection", "book", "odds", "result"],
+                    keep="last"
+                )
                 save_model_memory(mem)
 
-            st.success("Tracker and model memory updated.")
+                book_perf = summarize_book_performance(mem, min_samples=int(settings["book_min_samples"]))
+                save_book_performance(book_perf)
+
+            st.success("Tracker, model memory, and book performance updated.")
             st.rerun()
 
-        export_download(bet_log, "v16_bet_log.csv", "Download bet log CSV")
+        export_download(bet_log, "v16_1_bet_log.csv", "Download bet log CSV")
 
 
 with tab5:
-    st.subheader("Self-Learning Engine Foundation")
+    st.subheader("Learning Engine")
     memory_df = load_model_memory()
+    market_perf_df = summarize_market_performance(memory_df, min_samples=int(settings["learning_min_samples"]))
 
     if len(memory_df) == 0:
-        st.info("No settled history yet. Once tracked bets are graded, V16 will start adapting unit sizing by market and sport.")
+        st.info("No settled history yet. Once tracked bets are graded, V16.1 will start adapting by market and book.")
     else:
-        memory_df = ensure_columns(memory_df, ["units", "profit_units", "result", "sport", "market"])
         settled = memory_df[memory_df["result"].astype(str).str.lower().isin(["win", "loss", "push", "void"])].copy()
-
         overall_roi = settled["profit_units"].fillna(0).sum() / max(settled["units"].fillna(0).sum(), 1e-9)
         win_rate = (settled["result"].astype(str).str.lower() == "win").mean() if len(settled) else 0.0
 
@@ -816,27 +989,40 @@ with tab5:
         c2.metric("Win Rate", f"{win_rate*100:.1f}%")
         c3.metric("ROI", f"{overall_roi*100:.1f}%")
 
-        sport_market = (
-            settled.groupby(["sport", "market"], dropna=False)
-            .agg(
-                bets=("selection", "count"),
-                units=("units", "sum"),
-                profit_units=("profit_units", "sum"),
+        st.markdown("**Market performance weighting**")
+        if len(market_perf_df) == 0:
+            st.info("Not enough segmented history yet.")
+        else:
+            st.dataframe(
+                market_perf_df.sort_values(["roi", "bets"], ascending=[False, False]),
+                use_container_width=True,
             )
-            .reset_index()
-        )
-        sport_market["roi"] = sport_market["profit_units"] / sport_market["units"].replace(0, np.nan)
-        sport_market["unit_adjustment_signal"] = np.where(
-            sport_market["roi"] > 0.08, "Increase slightly",
-            np.where(sport_market["roi"] < -0.08, "Reduce slightly", "Hold steady")
-        )
+            export_download(market_perf_df, "v16_1_market_learning.csv", "Download market learning CSV")
 
-        st.dataframe(sport_market.sort_values(["roi", "bets"], ascending=[False, False]), use_container_width=True)
-
-        st.markdown("**How V16 learns**")
+        st.markdown("**How V16.1 learns**")
         st.write(
-            "V16 adjusts recommended units by sport + market when there is enough settled history. "
-            "Strong positive ROI slightly increases sizing, while negative ROI reduces exposure."
+            "V16.1 raises priority and units for sport-market segments with enough positive ROI, "
+            "reduces exposure in underperforming segments, and also adjusts sizing slightly by sportsbook temperature."
         )
 
-        export_download(memory_df, "v16_model_memory.csv", "Download model memory CSV")
+
+with tab6:
+    st.subheader("Book Heatmap")
+    memory_df = load_model_memory()
+    book_perf_df = summarize_book_performance(memory_df, min_samples=int(settings["book_min_samples"]))
+
+    if len(book_perf_df) == 0:
+        st.info("No book-level history yet.")
+    else:
+        c1, c2, c3 = st.columns(3)
+        hot_count = (book_perf_df["temperature"] == "Hot").sum()
+        cold_count = (book_perf_df["temperature"] == "Cold").sum()
+        c1.metric("Tracked Book Segments", len(book_perf_df))
+        c2.metric("Hot Segments", int(hot_count))
+        c3.metric("Cold Segments", int(cold_count))
+
+        st.dataframe(
+            book_perf_df.sort_values(["roi", "bets"], ascending=[False, False]),
+            use_container_width=True,
+        )
+        export_download(book_perf_df, "v16_1_book_heatmap.csv", "Download book heatmap CSV")

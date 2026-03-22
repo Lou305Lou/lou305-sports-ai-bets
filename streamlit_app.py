@@ -6,10 +6,10 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Sports Betting AI Dashboard V30", layout="wide")
+st.set_page_config(page_title="Sports Betting AI Dashboard V31", layout="wide")
 
-APP_TITLE = "🔥 Sports Betting AI Dashboard V30"
-APP_SUBTITLE = "True Self-Learning AI"
+APP_TITLE = "🔥 Sports Betting AI Dashboard V31"
+APP_SUBTITLE = "Dynamic Consensus + Best Price Optimizer"
 BET_LOG_PATH = Path("bet_log.csv")
 LEARNING_PROFILE_PATH = Path("learning_profile.csv")
 SNAPSHOT_PATH = Path("snapshot.csv")
@@ -24,6 +24,11 @@ ADAPTIVE_MIN_SAMPLE = 10
 HOT_STREAK_BONUS = 0.20
 COLD_STREAK_PENALTY = 0.20
 DEFAULT_MAX_SINGLE_BET = 1.15
+LOW_BOOK_THRESHOLD = 3
+STRONG_BOOK_THRESHOLD = 4
+PRICE_EDGE_STRONG_THRESHOLD = 1.25
+DISPERSION_ALERT_THRESHOLD = 3.0
+
 
 
 # -----------------------------
@@ -46,6 +51,51 @@ def american_to_prob(odds):
         return 100 / (odds + 100)
     except Exception:
         return np.nan
+
+
+def prob_to_american(prob):
+    try:
+        prob = float(prob)
+        if prob <= 0 or prob >= 1:
+            return np.nan
+        if prob >= 0.5:
+            return -round((prob / (1 - prob)) * 100)
+        return round(((1 - prob) / prob) * 100)
+    except Exception:
+        return np.nan
+
+
+def price_edge_from_market(current_odds, market_odds):
+    """
+    Positive means current price is better than the market consensus.
+    """
+    current_prob = american_to_prob(current_odds)
+    market_prob = american_to_prob(market_odds)
+    if pd.isna(current_prob) or pd.isna(market_prob):
+        return np.nan
+    return (market_prob - current_prob) * 100.0
+
+
+def market_average_american(odds_series):
+    probs = pd.to_numeric(pd.Series(odds_series), errors="coerce").dropna().apply(american_to_prob).dropna()
+    if probs.empty:
+        return np.nan
+    return prob_to_american(probs.mean())
+
+
+def best_odds_in_series(odds_series):
+    s = pd.to_numeric(pd.Series(odds_series), errors="coerce").dropna()
+    if s.empty:
+        return np.nan
+    probs = s.apply(american_to_prob)
+    return float(s.loc[probs.idxmin()])
+
+
+def implied_prob_dispersion(odds_series):
+    probs = pd.to_numeric(pd.Series(odds_series), errors="coerce").dropna().apply(american_to_prob).dropna()
+    if probs.empty:
+        return np.nan
+    return (probs.max() - probs.min()) * 100.0
 
 
 def implied_edge(model_prob, odds):
@@ -72,7 +122,9 @@ def expected_value_proxy(row):
     confidence = str(row.get("confidence", ""))
     conf_boost = {"Elite": 4.0, "High": 2.0, "Medium": 0.5}.get(confidence, 0.0)
     adaptive = safe_float(row.get("adaptive_adj"), 0.0)
-    return round(edge * 0.60 + clv * 0.28 + adaptive * 0.12 + conf_boost, 3)
+    price_edge = max(0.0, safe_float(row.get("price_edge_pct")))
+    consensus = safe_float(row.get("consensus_strength"), 0.0) / 100.0
+    return round(edge * 0.46 + price_edge * 0.28 + consensus * 8.0 * 0.14 + adaptive * 0.07 + clv * 0.05 + conf_boost, 3)
 
 
 def odds_bucket(odds):
@@ -486,32 +538,129 @@ def default_live_rows():
 # -----------------------------
 # Board building
 # -----------------------------
+def selection_market_key(row):
+    line = row.get("line")
+    if pd.isna(line):
+        line = "ML"
+    return f"{row.get('game')}|{row.get('market')}|{line}"
+
+
+def enrich_market_context(df):
+    df = df.copy()
+    if df.empty:
+        return df
+
+    df["selection_market_key"] = df.apply(selection_market_key, axis=1)
+
+    available_map = df.groupby("selection_market_key")["book"].nunique(dropna=True).to_dict()
+    avg_odds_map = df.groupby("selection_market_key")["odds"].apply(market_average_american).to_dict()
+    best_odds_map = df.groupby("selection_market_key")["odds"].apply(best_odds_in_series).to_dict()
+    dispersion_map = df.groupby("selection_market_key")["odds"].apply(implied_prob_dispersion).to_dict()
+
+    best_book_map = {}
+    for key, grp in df.groupby("selection_market_key", dropna=False):
+        grp = grp.copy()
+        grp["price_edge_tmp"] = grp.apply(
+            lambda r: price_edge_from_market(r.get("odds"), avg_odds_map.get(key, np.nan)),
+            axis=1,
+        )
+        grp = grp.sort_values(["price_edge_tmp", "odds"], ascending=[False, False])
+        best_book_map[key] = grp.iloc[0].get("book", "") if not grp.empty else ""
+
+    df["available_books_count"] = df["selection_market_key"].map(available_map).fillna(0).astype(int)
+    df["market_avg_odds"] = df["selection_market_key"].map(avg_odds_map)
+    df["best_market_odds"] = df["selection_market_key"].map(best_odds_map)
+    df["price_dispersion"] = df["selection_market_key"].map(dispersion_map)
+    df["best_book"] = df["selection_market_key"].map(best_book_map)
+    df["price_edge_pct"] = df.apply(
+        lambda r: price_edge_from_market(r.get("odds"), r.get("consensus_price", r.get("market_avg_odds"))),
+        axis=1,
+    )
+    fallback_market_odds = df["market_avg_odds"].where(df["market_avg_odds"].notna(), df["consensus_price"])
+    df["market_avg_odds"] = fallback_market_odds
+    df["best_price_flag"] = (
+        (df["best_book"].astype(str) == df["book"].astype(str))
+        | (pd.to_numeric(df["best_market_odds"], errors="coerce") == pd.to_numeric(df["odds"], errors="coerce"))
+    )
+    df["consensus_strength"] = (
+        np.minimum(df["consensus_count"].fillna(0), df["available_books_count"].replace(0, np.nan).fillna(df["consensus_count"].fillna(0)))
+        / np.maximum(df["available_books_count"].replace(0, np.nan).fillna(df["consensus_count"].fillna(0)), 1)
+    ) * 100.0
+    df["consensus_strength"] = df["consensus_strength"].fillna(0).round(1)
+    df["low_book_warning"] = (
+        (df["available_books_count"].fillna(0) < LOW_BOOK_THRESHOLD)
+        | (df["consensus_count"].fillna(0) < LOW_BOOK_THRESHOLD)
+    )
+    df["consensus_quality"] = np.where(
+        df["available_books_count"].fillna(0) >= STRONG_BOOK_THRESHOLD,
+        "Strong",
+        np.where(df["available_books_count"].fillna(0) >= LOW_BOOK_THRESHOLD, "Fair", "Thin"),
+    )
+    df["market_depth_score"] = (
+        np.clip(df["available_books_count"].fillna(0), 0, 5) * 4.0
+        + np.clip(df["consensus_strength"].fillna(0) / 20.0, 0, 5) * 2.0
+    )
+    df["price_edge_score"] = np.clip(df["price_edge_pct"].fillna(0), -2.5, 3.5) * 8.0
+    df["best_price_boost"] = np.where(df["best_price_flag"], 5.0, 0.0)
+    df["dispersion_penalty"] = np.clip(df["price_dispersion"].fillna(0) - DISPERSION_ALERT_THRESHOLD, 0, 8) * 0.9
+    df["disagreement_signal"] = (
+        df["book_disagreement"].fillna(0) * 4.0
+        + np.clip(df["price_dispersion"].fillna(0), 0, 8) * 0.8
+    )
+    return df
+
+
 def prepare_rows(df, adaptive_context=None):
     df = df.copy()
     adaptive_context = adaptive_context or {}
     if df.empty:
         return df
 
-    for col in ["line", "consensus_price", "consensus_count", "sharp_score", "model_prob", "book_disagreement", "clv_projection", "prev_odds", "closing_odds"]:
+    for col in [
+        "line", "consensus_price", "consensus_count", "sharp_score", "model_prob",
+        "book_disagreement", "clv_projection", "prev_odds", "closing_odds", "book", "odds"
+    ]:
         if col not in df.columns:
             df[col] = np.nan
 
+    df = enrich_market_context(df)
     df["edge_pct"] = df.apply(lambda r: implied_edge(r.get("model_prob"), r.get("odds")), axis=1)
     df["odds_bucket"] = df["odds"].apply(odds_bucket)
     df["consensus_bucket"] = df["consensus_count"].apply(consensus_bucket)
     df["market_priority"] = df["market"].map({"moneyline": 3, "spread": 2, "total": 1}).fillna(0)
-    df["consensus_boost"] = np.where(df["consensus_count"].fillna(0) >= 5, 14, np.where(df["consensus_count"].fillna(0) >= 4, 9, np.where(df["consensus_count"].fillna(0) >= 3, 4, 0)))
-    df["clv_boost"] = np.clip(df["clv_projection"].fillna(0), -5, 20) * 0.7
-    df["disagreement_boost"] = df["book_disagreement"].fillna(0) * 6.5
-    df["sharp_component"] = np.clip((df["sharp_score"].fillna(0) - 35) * 1.35, 0, 40)
-    df["edge_component"] = np.clip(df["edge_pct"].fillna(0) * 11.5, -20, 45)
-    df["raw_score"] = 26 + df["edge_component"] + df["sharp_component"] + df["consensus_boost"] + df["clv_boost"] + df["disagreement_boost"]
+    df["consensus_boost"] = np.where(
+        df["consensus_count"].fillna(0) >= 5, 12,
+        np.where(df["consensus_count"].fillna(0) >= 4, 8, np.where(df["consensus_count"].fillna(0) >= 3, 3, -3))
+    )
+    df["depth_boost"] = np.where(
+        df["available_books_count"].fillna(0) >= 5, 10,
+        np.where(df["available_books_count"].fillna(0) >= 4, 7, np.where(df["available_books_count"].fillna(0) >= 3, 3, -4))
+    )
+    df["clv_boost"] = np.clip(df["clv_projection"].fillna(0), -5, 20) * 0.18
+    df["disagreement_boost"] = df["disagreement_signal"].fillna(0)
+    df["sharp_component"] = np.clip((df["sharp_score"].fillna(0) - 35) * 1.25, 0, 36)
+    df["edge_component"] = np.clip(df["edge_pct"].fillna(0) * 11.0, -20, 45)
+    df["consensus_strength_boost"] = np.clip((df["consensus_strength"].fillna(0) - 50) / 10.0, -5, 5) * 2.2
+    df["raw_score"] = (
+        24
+        + df["edge_component"]
+        + df["sharp_component"]
+        + df["consensus_boost"]
+        + df["depth_boost"]
+        + df["consensus_strength_boost"]
+        + df["price_edge_score"].fillna(0)
+        + df["best_price_boost"].fillna(0)
+        + df["clv_boost"]
+        + df["disagreement_boost"]
+        - df["dispersion_penalty"].fillna(0)
+    )
     df["market_adaptive_adj"] = df["market"].astype(str).map(adaptive_context.get("market_map", {})).fillna(0.0)
     df["bucket_key"] = list(zip(df["market"].astype(str), df["odds_bucket"].astype(str), df["consensus_bucket"].astype(str)))
     df["bucket_adaptive_adj"] = df["bucket_key"].map(adaptive_context.get("bucket_map", {})).fillna(0.0)
     df["clv_adaptive_adj"] = df["bucket_key"].map(adaptive_context.get("clv_map", {})).fillna(0.0)
     df["adaptive_adj"] = (df["market_adaptive_adj"] + df["bucket_adaptive_adj"] + df["clv_adaptive_adj"]).round(3)
     df["raw_score"] = df["raw_score"] + df["adaptive_adj"]
+
     max_raw = max(float(df["raw_score"].max()), 1.0)
     min_raw = float(df["raw_score"].min())
     spread = max(max_raw - min_raw, 1.0)
@@ -530,23 +679,27 @@ def prepare_rows(df, adaptive_context=None):
         axis=1,
     )
     df["market_win_rate_adj"] = df["market"].astype(str).map(adaptive_context.get("market_map", {})).fillna(0.0)
-    df["market_clv_hit_rate"] = np.where(df["bucket_key"].map(adaptive_context.get("clv_map", {})).fillna(0.0) > 0, 0.60, np.where(df["bucket_key"].map(adaptive_context.get("clv_map", {})).fillna(0.0) < 0, 0.40, 0.50))
+    df["market_clv_hit_rate"] = np.where(
+        df["bucket_key"].map(adaptive_context.get("clv_map", {})).fillna(0.0) > 0,
+        0.60,
+        np.where(df["bucket_key"].map(adaptive_context.get("clv_map", {})).fillna(0.0) < 0, 0.40, 0.50),
+    )
     df["adaptive_flag"] = np.where(df["adaptive_adj"] > 1.5, "Boosted", np.where(df["adaptive_adj"] < -1.5, "Cautious", "Neutral"))
     return df
-
 
 def assign_tier(row):
     edge = safe_float(row.get("edge_pct"))
     score = safe_float(row.get("score"))
     consensus = safe_float(row.get("consensus_count"))
-    if edge >= 3.0 and score >= 86 and consensus >= 4:
+    books = safe_float(row.get("available_books_count"))
+    price_edge = safe_float(row.get("price_edge_pct"))
+    if edge >= 3.0 and score >= 86 and consensus >= 4 and books >= 3:
         return "A"
-    if edge >= 1.8 and score >= 74:
+    if edge >= 1.8 and score >= 74 and books >= 3:
         return "B"
-    if edge >= 1.0 and score >= 62:
+    if edge >= 1.0 and score >= 62 and not bool(row.get("low_book_warning", False)):
         return "C"
     return "Watch"
-
 
 def correlation_tag(row):
     market = str(row.get("market", ""))
@@ -582,18 +735,25 @@ def explainability(row):
     reasons = []
     if safe_float(row.get("edge_pct")) >= 2.0:
         reasons.append("model edge")
-    if safe_float(row.get("book_disagreement")) >= 1:
-        reasons.append("book disagreement")
+    if safe_float(row.get("price_edge_pct")) >= PRICE_EDGE_STRONG_THRESHOLD:
+        reasons.append("best price edge")
+    if bool(row.get("best_price_flag")):
+        reasons.append("best available price")
     if safe_float(row.get("consensus_count")) >= 4:
-        reasons.append(f"{int(safe_float(row.get('consensus_count')))}-book consensus")
-    if safe_float(row.get("clv_projection")) >= 8:
-        reasons.append("positive CLV projection")
+        reasons.append(f"{int(safe_float(row.get('consensus_count')))}-book support")
+    elif safe_float(row.get("consensus_count")) >= 3:
+        reasons.append("usable consensus")
+    if safe_float(row.get("available_books_count")) >= STRONG_BOOK_THRESHOLD:
+        reasons.append("solid market depth")
     if safe_float(row.get("sharp_score")) >= 55:
         reasons.append("sharp support")
+    if safe_float(row.get("book_disagreement")) >= 1 or safe_float(row.get("price_dispersion")) >= DISPERSION_ALERT_THRESHOLD:
+        reasons.append("market disagreement")
+    if bool(row.get("low_book_warning", False)):
+        reasons.append("thin book pool")
     if not reasons:
         reasons.append("watch only")
     return " • ".join(reasons[:4])
-
 
 def compute_stackable(df):
     df = df.copy()
@@ -607,14 +767,28 @@ def compute_stackable(df):
 
 def final_rank_score(row):
     edge = max(0.0, safe_float(row.get("edge_pct")))
-    clv = max(0.0, safe_float(row.get("clv_projection")))
     consensus = min(5.0, max(0.0, safe_float(row.get("consensus_count"))))
+    books = min(5.0, max(0.0, safe_float(row.get("available_books_count"))))
     adaptive = safe_float(row.get("adaptive_adj"), 0.0)
     clv_hit_rate = safe_float(row.get("market_clv_hit_rate"), 0.5)
     win_rate_adj = safe_float(row.get("market_win_rate_adj"), 0.0)
-    score = (edge * 0.42) + (clv * 0.28) + (consensus * 0.12) + (adaptive * 0.10) + ((clv_hit_rate - 0.5) * 10.0 * 0.08) + (win_rate_adj * 0.08)
+    price_edge = max(-2.5, min(3.5, safe_float(row.get("price_edge_pct"), 0.0)))
+    consensus_strength = safe_float(row.get("consensus_strength"), 0.0) / 100.0
+    best_price = 1.0 if bool(row.get("best_price_flag")) else 0.0
+    low_book_penalty = -0.45 if bool(row.get("low_book_warning", False)) else 0.0
+    score = (
+        (edge * 0.36)
+        + (price_edge * 0.22)
+        + (consensus * 0.10)
+        + (books * 0.08)
+        + (consensus_strength * 0.12 * 10.0)
+        + (best_price * 0.40)
+        + (adaptive * 0.07)
+        + ((clv_hit_rate - 0.5) * 10.0 * 0.03)
+        + (win_rate_adj * 0.04)
+        + low_book_penalty
+    )
     return round(score, 3)
-
 
 def apply_correlation_risk_adjustment(df):
     df = df.copy()
@@ -791,13 +965,13 @@ def build_ai_bet_slip(board_df):
     active = board_df[
         (board_df["status"] == "Active")
         & (board_df["tier"].isin(["A", "B"]))
-        & (board_df["clv_projection"].fillna(0) >= 8)
+        & ((board_df["price_edge_pct"].fillna(0) >= 0.75) | (board_df["best_price_flag"]))
     ].copy()
     if active.empty:
         return None
 
     active["ev_proxy"] = active.apply(expected_value_proxy, axis=1)
-    active = active.sort_values(["ev_proxy", "final_rank", "score"], ascending=False)
+    active = active.sort_values(["ev_proxy", "price_edge_pct", "final_rank", "score"], ascending=False)
 
     rows = [r for _, r in active.iterrows()]
     best_combo = None
@@ -807,7 +981,7 @@ def build_ai_bet_slip(board_df):
     import itertools
     for r in rows:
         combo = [r]
-        combo_score = safe_float(r.get("ev_proxy")) + safe_float(r.get("final_rank")) * 0.5
+        combo_score = safe_float(r.get("ev_proxy")) + safe_float(r.get("final_rank")) * 0.45 + max(0.0, safe_float(r.get("price_edge_pct"))) * 0.8
         if combo_score > best_combo_score:
             best_combo_score = combo_score
             best_combo = combo
@@ -851,7 +1025,7 @@ def build_ai_bet_slip(board_df):
     else:
         slip_conf = "Low"
 
-    risk_level = "Controlled" if len(best_combo) >= 2 else "Low"
+    risk_level = "Controlled" if len(best_combo) >= 2 else ("Low" if all(bool(r.get("best_price_flag")) for r in best_combo) else "Medium")
     return {
         "picks": best_combo,
         "parlay_odds": parlay_odds,
@@ -868,7 +1042,7 @@ def ensure_bet_log():
     cols = [
         "timestamp", "game", "market", "selection", "line", "book", "bet_odds", "prev_odds",
         "consensus_price", "consensus_count", "closing_odds", "result", "units", "tier",
-        "score", "edge_pct", "status", "why", "adaptive_adj", "adaptive_flag", "clv_hit", "clv_value", "auto_logged"
+        "score", "edge_pct", "status", "why", "adaptive_adj", "adaptive_flag", "clv_hit", "clv_value", "available_books_count", "market_avg_odds", "best_book", "best_market_odds", "price_edge_pct", "price_dispersion", "consensus_strength", "best_price_flag", "low_book_warning", "auto_logged"
     ]
     if BET_LOG_PATH.exists():
         try:
@@ -923,6 +1097,15 @@ def auto_log_active_plays(board_df):
             "adaptive_flag": row.get("adaptive_flag"),
             "clv_hit": clv_hit(row.get("odds"), row.get("closing_odds")),
             "clv_value": (american_to_prob(row.get("closing_odds")) - american_to_prob(row.get("odds"))) * 100 if pd.notna(american_to_prob(row.get("closing_odds"))) and pd.notna(american_to_prob(row.get("odds"))) else np.nan,
+            "available_books_count": row.get("available_books_count"),
+            "market_avg_odds": row.get("market_avg_odds"),
+            "best_book": row.get("best_book"),
+            "best_market_odds": row.get("best_market_odds"),
+            "price_edge_pct": row.get("price_edge_pct"),
+            "price_dispersion": row.get("price_dispersion"),
+            "consensus_strength": row.get("consensus_strength"),
+            "best_price_flag": row.get("best_price_flag"),
+            "low_book_warning": row.get("low_book_warning"),
             "auto_logged": True,
         })
 
@@ -1147,11 +1330,17 @@ def render_play_cards(df, title):
                     <div>Score: <b>{safe_float(row['score']):.1f}</b></div>
                     <div>Sharp: <b>{safe_float(row['sharp_score']):.1f}</b></div>
                     <div>Edge: <b>{safe_float(row['edge_pct']):.2f}%</b></div>
-                    <div>Consensus: <b>{int(safe_float(row['consensus_count']))} books</b></div>
-                    <div>Stackable: <b>{'Yes' if bool(row['stackable']) else 'No'}</b></div>
+                    <div>Books Seen: <b>{int(safe_float(row['available_books_count']))}</b></div>
+                    <div>Support: <b>{int(safe_float(row['consensus_count']))} books</b></div>
+                    <div>Best Book: <b>{row['best_book'] if str(row.get('best_book', '')) else row['book']}</b></div>
+                    <div>Price Edge: <b>{safe_float(row['price_edge_pct']):.2f}%</b></div>
+                    <div>Consensus: <b>{safe_float(row['consensus_strength']):.0f}%</b></div>
+                    <div>Dispersion: <b>{safe_float(row['price_dispersion']):.2f}%</b></div>
                     <div>Confidence: <b>{row['confidence']}</b></div>
                     <div>Correlation: <b>{row['correlation']}</b></div>
-                    <div>CLV Proj: <b>{safe_float(row['clv_projection']):.1f}</b></div>
+                    <div>Best Price: <b>{'Yes' if bool(row.get('best_price_flag', False)) else 'No'}</b></div>
+                    <div>Thin Market: <b>{'Yes' if bool(row.get('low_book_warning', False)) else 'No'}</b></div>
+                    <div>Stackable: <b>{'Yes' if bool(row['stackable']) else 'No'}</b></div>
                     <div>Skip Game: <b>{'Yes' if bool(row.get('skip_game', False)) else 'No'}</b></div>
                 </div>
                 <div class='why'>{row['why']}</div>
@@ -1169,7 +1358,7 @@ st.title(APP_TITLE)
 st.caption(APP_SUBTITLE)
 
 with st.sidebar:
-    st.header("V30 Controls")
+    st.header("V31 Controls")
     aggressive = st.toggle("Aggressive mode", value=True)
     auto_log = st.toggle("Auto-log active plays", value=True)
     elite_only = st.toggle("Elite plays only", value=False)
@@ -1199,7 +1388,7 @@ with st.expander("🎛️ Adaptive Thresholds"):
     st.write(f"• Max total units: {max_total_units:.1f}u")
     st.write(f"• Elite only mode: {'On' if elite_only else 'Off'}")
     st.write(f"• Adaptive state: {adaptive_context.get('risk_label', 'Neutral')}")
-    st.write("• Ranking weights: edge 42% • CLV 28% • consensus 12% • adaptive/CLV accuracy 18%")
+    st.write("• Ranking weights: edge • best price • consensus strength • market depth • adaptive")
     st.write(f"• Adaptive learning minimum sample: {ADAPTIVE_MIN_SAMPLE} graded bets per bucket")
     st.write("• Positive same-game correlation triggers unit reduction")
     st.write(f"• Skip weak games: {'On' if skip_games_without_ab else 'Off'}")
@@ -1233,7 +1422,7 @@ if slip:
 st.markdown("<div class='section-h'>✅ Quick Table</div>", unsafe_allow_html=True)
 quick_cols = [
     "tier", "status", "game", "market", "selection_label", "book", "odds", "units",
-    "score", "final_rank", "edge_pct", "clv_projection", "confidence", "consensus_count", "best_bet_tag", "stackable", "correlation", "skip_game"
+    "score", "final_rank", "edge_pct", "price_edge_pct", "available_books_count", "consensus_count", "consensus_strength", "best_book", "confidence", "best_bet_tag", "stackable", "correlation", "skip_game"
 ]
 st.dataframe(board_df[quick_cols].rename(columns={"selection_label": "selection"}), use_container_width=True, hide_index=True)
 
@@ -1289,6 +1478,15 @@ with st.form("manual_bet_form"):
                 "edge_pct": None,
                 "status": "Manual",
                 "why": "manual entry",
+                "available_books_count": np.nan,
+                "market_avg_odds": consensus_price,
+                "best_book": book,
+                "best_market_odds": bet_odds,
+                "price_edge_pct": price_edge_from_market(bet_odds, consensus_price),
+                "price_dispersion": np.nan,
+                "consensus_strength": np.nan,
+                "best_price_flag": True,
+                "low_book_warning": consensus_count < LOW_BOOK_THRESHOLD,
                 "auto_logged": False,
             }
         ])
@@ -1349,5 +1547,5 @@ st.download_button("Download Learning Profile CSV", profile_buf.getvalue(), file
 st.download_button("Download Snapshot CSV", snap_buf.getvalue(), file_name="snapshot.csv", mime="text/csv")
 
 st.caption(
-    "V30 adds minimum-sample adaptive learning, win-rate weighting, CLV accuracy tracking, EV-optimized bet slips, and data-driven threshold tuning."
+    "V31 adds dynamic consensus scoring, best-price optimization, market-depth awareness, price-dispersion checks, and cleaner thin-market filtering."
 )

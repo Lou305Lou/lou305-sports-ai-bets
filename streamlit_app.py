@@ -3,12 +3,18 @@ import io
 import json
 import itertools
 from datetime import datetime, date
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Sports AI Dashboard V13 Adaptive Edge Intelligence Engine", layout="wide")
+st.set_page_config(page_title="Sports AI Dashboard V13.1 Auto-Track + Auto-Save", layout="wide")
+
+BET_LOG_FILE = Path("bet_log_auto.csv")
+PARLAY_LOG_FILE = Path("parlay_log_auto.csv")
+APP_STATE_FILE = Path("sports_ai_auto_state.json")
+
 
 # ---------- SESSION ----------
 if "active_df" not in st.session_state:
@@ -28,7 +34,7 @@ if "parlay_log" not in st.session_state:
         "avg_leg_score", "min_leg_score", "avg_leg_adjusted", "avg_leg_consensus", "consensus_label", "same_game_overlap",
         "same_team_overlap", "result", "profit", "notes", "leg_keys_json", "legs_preview", "parlay_rank", "parlay_grade",
         "parlay_expected_roi", "duplication_penalty", "correlation_penalty", "slip_profile", "portfolio_share",
-        "portfolio_target_stake", "estimated_hit_rate", "diversity_score"
+        "portfolio_target_stake", "estimated_hit_rate", "diversity_score", "adaptive_edge", "adaptive_notes"
     ])
 if "learning_state" not in st.session_state:
     st.session_state.learning_state = {
@@ -71,11 +77,19 @@ if "launch_settings" not in st.session_state:
         "portfolio_support_share": 0.45,
         "portfolio_max_total_pct": 0.025,
         "portfolio_min_slip_prob": 0.05,
-        "adaptive_mode": "Auto-Adaptive",
-        "adaptive_history_min": 6,
-        "adaptive_leg_bias": "Auto",
-        "adaptive_odds_bias": "Auto",
+        "adaptive_auto_mode": True,
+        "adaptive_weight": 0.18,
+        "adaptive_min_samples": 5,
+        "auto_track_enabled": False,
+        "auto_track_singles": True,
+        "auto_track_parlays": True,
+        "auto_track_support_slips": 2,
+        "auto_track_mode": "Paper",
     }
+if "auto_storage_loaded" not in st.session_state:
+    st.session_state.auto_storage_loaded = False
+if "auto_last_summary" not in st.session_state:
+    st.session_state.auto_last_summary = "Auto-track idle."
 
 # ---------- HELPERS ----------
 def normalize_columns(df):
@@ -285,6 +299,83 @@ def safe_float(x, default=0.0):
     except Exception:
         return default
 
+def ensure_columns(df, columns):
+    if df is None or df.empty:
+        return pd.DataFrame(columns=columns)
+    out = df.copy()
+    for col in columns:
+        if col not in out.columns:
+            out[col] = np.nan
+    return out[columns]
+
+
+def save_logs_to_disk():
+    try:
+        ensure_columns(st.session_state.bet_log, list(st.session_state.bet_log.columns)).to_csv(BET_LOG_FILE, index=False)
+        ensure_columns(st.session_state.parlay_log, list(st.session_state.parlay_log.columns)).to_csv(PARLAY_LOG_FILE, index=False)
+    except Exception:
+        pass
+
+
+def load_logs_from_disk():
+    bet_cols = list(st.session_state.bet_log.columns)
+    parlay_cols = list(st.session_state.parlay_log.columns)
+    try:
+        if BET_LOG_FILE.exists():
+            st.session_state.bet_log = ensure_columns(pd.read_csv(BET_LOG_FILE), bet_cols)
+    except Exception:
+        st.session_state.bet_log = ensure_columns(st.session_state.bet_log, bet_cols)
+    try:
+        if PARLAY_LOG_FILE.exists():
+            st.session_state.parlay_log = ensure_columns(pd.read_csv(PARLAY_LOG_FILE), parlay_cols)
+    except Exception:
+        st.session_state.parlay_log = ensure_columns(st.session_state.parlay_log, parlay_cols)
+    st.session_state.auto_storage_loaded = True
+
+
+def maybe_load_auto_storage():
+    if not bool(st.session_state.get("auto_storage_loaded", False)):
+        load_logs_from_disk()
+
+
+def save_full_auto_state():
+    payload = {
+        "bet_log": st.session_state.bet_log.to_dict("records"),
+        "parlay_log": st.session_state.parlay_log.to_dict("records"),
+        "learning_state": st.session_state.learning_state,
+        "launch_settings": st.session_state.launch_settings,
+    }
+    try:
+        APP_STATE_FILE.write_text(json.dumps(payload, indent=2, default=str))
+    except Exception:
+        pass
+    save_logs_to_disk()
+
+
+def maybe_restore_full_auto_state():
+    if not APP_STATE_FILE.exists():
+        return
+    try:
+        payload = json.loads(APP_STATE_FILE.read_text())
+    except Exception:
+        return
+    if st.session_state.bet_log.empty and payload.get("bet_log"):
+        st.session_state.bet_log = ensure_columns(pd.DataFrame(payload["bet_log"]), list(st.session_state.bet_log.columns))
+    if st.session_state.parlay_log.empty and payload.get("parlay_log"):
+        st.session_state.parlay_log = ensure_columns(pd.DataFrame(payload["parlay_log"]), list(st.session_state.parlay_log.columns))
+    if isinstance(payload.get("learning_state"), dict):
+        st.session_state.learning_state = payload["learning_state"]
+    if isinstance(payload.get("launch_settings"), dict):
+        merged = st.session_state.launch_settings.copy()
+        merged.update(payload["launch_settings"])
+        st.session_state.launch_settings = merged
+    save_full_auto_state()
+
+
+maybe_load_auto_storage()
+maybe_restore_full_auto_state()
+
+
 # ---------- SAMPLE DATA ----------
 def sample_data():
     rows = [
@@ -320,181 +411,6 @@ def get_settled_parlay_log():
     return log[log["result"].isin(["Win", "Loss", "Push"])].copy()
 
 
-
-
-def compute_parlay_bucket_metrics(settled_parlays):
-    if settled_parlays.empty:
-        return {
-            "legs": {}, "odds_band": {}, "profile": {}, "consensus": {},
-            "sample_size": 0, "best_leg_count": 2, "best_odds_band": "Balanced",
-            "best_profile": "Balanced", "system_state": "Warm-Up"
-        }
-
-    work = settled_parlays.copy()
-    work["win_flag"] = (work["result"] == "Win").astype(int)
-    work["roi_pct"] = np.where(work["stake"].fillna(0) > 0, (work["profit"].fillna(0) / work["stake"].fillna(0)) * 100, 0.0)
-    work["odds_band"] = pd.cut(
-        pd.to_numeric(work["combined_odds"], errors="coerce").fillna(0),
-        bins=[-99999, 250, 450, 800, 999999],
-        labels=["Low", "Balanced", "Upside", "Longshot"]
-    ).astype(str)
-
-    def summarize(df, key_col):
-        out = {}
-        if key_col not in df.columns:
-            return out
-        for key, g in df.groupby(key_col, dropna=False):
-            if len(g) == 0:
-                continue
-            roi = float(g["roi_pct"].mean())
-            wr_denom = max(1, g["result"].isin(["Win", "Loss"]).sum())
-            win_rate = float(g["result"].eq("Win").sum() / wr_denom * 100)
-            out[str(key)] = {
-                "bets": int(len(g)),
-                "roi": round(roi, 2),
-                "win_rate": round(win_rate, 2),
-                "score": round((roi * 0.55) + ((win_rate - 50) * 0.9) + (len(g) * 1.5), 2),
-            }
-        return out
-
-    legs = summarize(work, "legs")
-    odds_band = summarize(work, "odds_band")
-    profile = summarize(work, "slip_profile") if "slip_profile" in work.columns else {}
-    consensus = summarize(work, "consensus_label") if "consensus_label" in work.columns else {}
-
-    total_roi = float(work["profit"].fillna(0).sum() / max(1e-9, work["stake"].fillna(0).sum()) * 100)
-    if total_roi >= 8:
-        state = "HOT"
-    elif total_roi <= -8:
-        state = "COLD"
-    else:
-        state = "NEUTRAL"
-
-    def pick_best(d, default):
-        if not d:
-            return default
-        return sorted(d.items(), key=lambda kv: kv[1]["score"], reverse=True)[0][0]
-
-    best_leg_raw = pick_best(legs, '2')
-    try:
-        best_leg_count = int(float(best_leg_raw))
-    except Exception:
-        best_leg_count = 2
-
-    return {
-        "legs": legs,
-        "odds_band": odds_band,
-        "profile": profile,
-        "consensus": consensus,
-        "sample_size": int(len(work)),
-        "best_leg_count": best_leg_count,
-        "best_odds_band": pick_best(odds_band, 'Balanced'),
-        "best_profile": pick_best(profile, 'Balanced'),
-        "system_state": state,
-        "total_roi": round(total_roi, 2),
-    }
-
-
-def compute_adaptive_parlay_strategy():
-    settings = st.session_state.launch_settings
-    settled_parlays = get_settled_parlay_log()
-    min_hist = int(settings.get("adaptive_history_min", 6))
-    metrics = compute_parlay_bucket_metrics(settled_parlays)
-
-    plan = {
-        "mode": str(settings.get("adaptive_mode", "Auto-Adaptive")),
-        "history_ready": metrics["sample_size"] >= min_hist,
-        "preferred_legs": int(settings.get("parlay_max_legs", 3)),
-        "min_hit_rate": float(settings.get("portfolio_min_slip_prob", 0.05)),
-        "max_total_pct": float(settings.get("portfolio_max_total_pct", 0.025)),
-        "best_share": float(settings.get("portfolio_best_share", 0.55)),
-        "support_slips": int(settings.get("parlay_support_slips", 3)),
-        "pool_size": int(settings.get("parlay_pool_size", 16)),
-        "max_leg_reuse": int(settings.get("parlay_max_leg_reuse", 2)),
-        "preferred_odds_band": "Balanced",
-        "preferred_profile": "Balanced",
-        "system_state": metrics.get("system_state", "Warm-Up"),
-        "notes": [],
-        "metrics": metrics,
-    }
-
-    manual_leg_bias = str(settings.get("adaptive_leg_bias", "Auto"))
-    manual_odds_bias = str(settings.get("adaptive_odds_bias", "Auto"))
-    if manual_leg_bias == "2-Leg":
-        plan["preferred_legs"] = 2
-    elif manual_leg_bias == "3-Leg":
-        plan["preferred_legs"] = 3
-    if manual_odds_bias != "Auto":
-        plan["preferred_odds_band"] = manual_odds_bias
-
-    if not plan["history_ready"] or plan["mode"] != "Auto-Adaptive":
-        plan["notes"].append("Warm-up/manual mode: using configured portfolio settings until enough adaptive parlay history is available.")
-        return plan
-
-    if manual_leg_bias == "Auto":
-        plan["preferred_legs"] = max(2, min(int(metrics.get("best_leg_count", 2)), int(settings.get("parlay_max_legs", 3))))
-    plan["preferred_odds_band"] = metrics.get("best_odds_band", plan.get("preferred_odds_band", "Balanced")) if manual_odds_bias == "Auto" else manual_odds_bias
-    plan["preferred_profile"] = metrics.get("best_profile", "Balanced")
-
-    if plan["preferred_legs"] == 2:
-        plan["min_hit_rate"] = max(plan["min_hit_rate"], 0.08)
-        plan["best_share"] = min(0.65, max(plan["best_share"], 0.58))
-        plan["support_slips"] = min(plan["support_slips"], 2)
-        plan["notes"].append("Adaptive tilt: 2-leg parlays are outperforming, so the engine is prioritizing smoother bankroll growth.")
-    else:
-        plan["min_hit_rate"] = max(plan["min_hit_rate"], 0.06)
-        plan["best_share"] = min(0.60, max(plan["best_share"], 0.52))
-        plan["support_slips"] = min(plan["support_slips"], 3)
-        plan["notes"].append("Adaptive tilt: 3-leg parlays remain viable, but the engine is keeping portfolio concentration controlled.")
-
-    if plan["preferred_odds_band"] == "Low":
-        plan["max_total_pct"] = min(plan["max_total_pct"], 0.022)
-        plan["pool_size"] = min(plan["pool_size"], 14)
-        plan["notes"].append("Adaptive odds bias: lower-odds slips have been strongest, so volatility is being reduced.")
-    elif plan["preferred_odds_band"] == "Upside":
-        plan["max_total_pct"] = min(0.03, max(plan["max_total_pct"], 0.025))
-        plan["pool_size"] = max(plan["pool_size"], 16)
-        plan["notes"].append("Adaptive odds bias: upside slips are working, so the engine is keeping a wider search pool.")
-    else:
-        plan["notes"].append("Adaptive odds bias: balanced payout range remains the preferred zone.")
-
-    if plan["system_state"] == "COLD":
-        plan["max_total_pct"] = max(0.015, plan["max_total_pct"] - 0.005)
-        plan["best_share"] = min(0.68, plan["best_share"] + 0.05)
-        plan["support_slips"] = min(plan["support_slips"], 2)
-        plan["max_leg_reuse"] = 1
-        plan["notes"].append("Cold-state protection active: tighter portfolio concentration and lower bankroll exposure applied.")
-    elif plan["system_state"] == "HOT":
-        plan["max_total_pct"] = min(0.035, plan["max_total_pct"] + 0.0025)
-        plan["notes"].append("Hot-state boost active: modestly wider portfolio exposure is allowed while results remain strong.")
-
-    return plan
-
-
-def adaptive_leg_rank_bonus(leg_count, adaptive_plan):
-    pref = int(adaptive_plan.get("preferred_legs", 3))
-    return 5.0 if leg_count == pref else (-1.5 if leg_count > pref else 1.0)
-
-
-def adaptive_odds_band(combined_odds):
-    odds = safe_float(combined_odds, 0)
-    if odds <= 250:
-        return "Low"
-    if odds <= 450:
-        return "Balanced"
-    if odds <= 800:
-        return "Upside"
-    return "Longshot"
-
-
-def adaptive_odds_bonus(combined_odds, adaptive_plan):
-    pref = str(adaptive_plan.get("preferred_odds_band", "Balanced"))
-    band = adaptive_odds_band(combined_odds)
-    if band == pref:
-        return 4.0
-    if pref == "Balanced" and band in ["Low", "Upside"]:
-        return 1.5
-    return -2.0 if band == "Longshot" and pref != "Longshot" else -0.5
 def stable_score_bucket(score):
     try:
         s = float(score)
@@ -958,6 +874,20 @@ def can_add_slip_item(row, stake):
     return True, "OK"
 
 
+def existing_single_fingerprints():
+    log = st.session_state.bet_log.copy()
+    if log.empty:
+        return set()
+    fingerprints = set()
+    for _, row in log.iterrows():
+        fingerprints.add(f"{row.get('sport', '')}|{row.get('player', '')}|{row.get('market', '')}|{row.get('book', '')}|{row.get('line', '')}")
+    return fingerprints
+
+
+def is_duplicate_single_in_tracker(row):
+    return slip_key(row) in existing_single_fingerprints()
+
+
 def confirm_slip_to_tracker(mode):
     count = 0
     for item in st.session_state.bet_slip:
@@ -1143,10 +1073,9 @@ def build_portfolio_plan(final_slips, bankroll, risk_mode, drawdown_pct, roi_pct
     if not final_slips:
         return final_slips
 
-    adaptive_plan = compute_adaptive_parlay_strategy()
-    max_total_pct = safe_float(adaptive_plan.get("max_total_pct", settings.get("portfolio_max_total_pct", 0.025)), 0.025)
-    best_share = safe_float(adaptive_plan.get("best_share", settings.get("portfolio_best_share", 0.55)), 0.55)
-    support_share = round(max(0.0, 1.0 - best_share), 4)
+    max_total_pct = safe_float(settings.get("portfolio_max_total_pct", 0.025), 0.025)
+    best_share = safe_float(settings.get("portfolio_best_share", 0.55), 0.55)
+    support_share = safe_float(settings.get("portfolio_support_share", 0.45), 0.45)
     total_budget = max(3.0, round(float(bankroll) * max_total_pct, 2))
 
     best_slips = [s for s in final_slips if s.get("is_best")]
@@ -1189,6 +1118,168 @@ def build_portfolio_plan(final_slips, bankroll, risk_mode, drawdown_pct, roi_pct
     return final_slips
 
 
+def parlay_odds_bucket(combined_odds):
+    odds = safe_float(combined_odds, 0.0)
+    if odds < 300:
+        return "+200 to +299"
+    if odds < 500:
+        return "+300 to +499"
+    if odds < 800:
+        return "+500 to +799"
+    return "+800+"
+
+
+def adaptive_parlay_history_summary():
+    settings = st.session_state.launch_settings
+    settled = get_settled_parlay_log().copy()
+    default = {
+        "samples": 0,
+        "legs_roi": {},
+        "profile_roi": {},
+        "odds_bucket_roi": {},
+        "consensus_roi": {},
+        "best_legs": None,
+        "best_profile": None,
+        "best_odds_bucket": None,
+        "mode": "Warm-up",
+        "confidence": "Low",
+        "notes": ["Settle more parlays to activate adaptive bias."],
+    }
+    if settled.empty:
+        return default
+
+    settled["stake"] = pd.to_numeric(settled["stake"], errors="coerce").fillna(0)
+    settled["profit"] = pd.to_numeric(settled["profit"], errors="coerce").fillna(0)
+    settled["legs"] = pd.to_numeric(settled["legs"], errors="coerce").fillna(0).astype(int)
+    settled["odds_bucket"] = settled["combined_odds"].apply(parlay_odds_bucket)
+    settled["slip_profile"] = settled.get("slip_profile", pd.Series("Unknown", index=settled.index)).fillna("Unknown")
+    settled["consensus_label"] = settled.get("consensus_label", pd.Series("Unknown", index=settled.index)).fillna("Unknown")
+
+    def build_roi_map(df, col):
+        out = {}
+        for key, g in df.groupby(col, dropna=False):
+            stake = g["stake"].sum()
+            roi = (g["profit"].sum() / stake * 100) if stake > 0 else 0.0
+            out[str(key)] = {
+                "samples": int(len(g)),
+                "roi": round(float(roi), 2),
+                "win_rate": round(float((g["result"] == "Win").mean() * 100), 2),
+            }
+        return out
+
+    legs_roi = build_roi_map(settled, "legs")
+    profile_roi = build_roi_map(settled, "slip_profile")
+    odds_bucket_roi = build_roi_map(settled, "odds_bucket")
+    consensus_roi = build_roi_map(settled, "consensus_label")
+
+    min_samples = int(settings.get("adaptive_min_samples", 5))
+
+    def best_key(d):
+        eligible = {k: v for k, v in d.items() if int(v.get("samples", 0)) >= min_samples}
+        if not eligible:
+            return None
+        return max(eligible.items(), key=lambda kv: (kv[1].get("roi", 0.0), kv[1].get("win_rate", 0.0)))[0]
+
+    best_legs = best_key(legs_roi)
+    best_profile = best_key(profile_roi)
+    best_odds_bucket = best_key(odds_bucket_roi)
+
+    total_stake = settled["stake"].sum()
+    total_roi = (settled["profit"].sum() / total_stake * 100) if total_stake > 0 else 0.0
+    if len(settled) >= 20:
+        confidence = "High"
+    elif len(settled) >= 10:
+        confidence = "Medium"
+    else:
+        confidence = "Low"
+
+    notes = []
+    if best_legs is not None:
+        notes.append(f"Best leg count so far: {best_legs}-leg")
+    if best_profile is not None:
+        notes.append(f"Best profile so far: {best_profile}")
+    if best_odds_bucket is not None:
+        notes.append(f"Best odds range so far: {best_odds_bucket}")
+    if not notes:
+        notes.append("Adaptive engine is collecting evidence.")
+
+    mode = "Neutral"
+    if total_roi >= 10:
+        mode = "Press edge"
+    elif total_roi <= -10:
+        mode = "Tighten risk"
+
+    return {
+        "samples": int(len(settled)),
+        "legs_roi": legs_roi,
+        "profile_roi": profile_roi,
+        "odds_bucket_roi": odds_bucket_roi,
+        "consensus_roi": consensus_roi,
+        "best_legs": best_legs,
+        "best_profile": best_profile,
+        "best_odds_bucket": best_odds_bucket,
+        "mode": mode,
+        "confidence": confidence,
+        "notes": notes,
+        "total_roi": round(float(total_roi), 2),
+    }
+
+
+def adaptive_rank_modifier(combo_df, slip_profile, combined_odds, consensus_text):
+    settings = st.session_state.launch_settings
+    if not bool(settings.get("adaptive_auto_mode", True)):
+        return 0.0, []
+
+    summary = adaptive_parlay_history_summary()
+    if int(summary.get("samples", 0)) < int(settings.get("adaptive_min_samples", 5)):
+        return 0.0, ["adaptive warm-up"]
+
+    weight = safe_float(settings.get("adaptive_weight", 0.18), 0.18)
+    notes = []
+    modifier = 0.0
+    legs_key = str(len(combo_df))
+    profile_key = str(slip_profile)
+    odds_key = parlay_odds_bucket(combined_odds)
+    consensus_key = str(consensus_text)
+
+    legs_map = summary.get("legs_roi", {})
+    profile_map = summary.get("profile_roi", {})
+    odds_map = summary.get("odds_bucket_roi", {})
+    consensus_map = summary.get("consensus_roi", {})
+
+    def apply_from_map(mapping, key, scale, label):
+        nonlocal modifier
+        item = mapping.get(str(key))
+        if not item:
+            return
+        if int(item.get("samples", 0)) < int(settings.get("adaptive_min_samples", 5)):
+            return
+        roi = safe_float(item.get("roi", 0.0), 0.0)
+        adj = float(np.clip(roi * scale * weight, -8, 8))
+        modifier += adj
+        if adj > 0.2:
+            notes.append(f"{label} tailwind")
+        elif adj < -0.2:
+            notes.append(f"{label} headwind")
+
+    apply_from_map(legs_map, legs_key, 0.20, f"{legs_key}-leg")
+    apply_from_map(profile_map, profile_key, 0.18, profile_key)
+    apply_from_map(odds_map, odds_key, 0.16, odds_key)
+    apply_from_map(consensus_map, consensus_key, 0.12, consensus_key)
+
+    if str(summary.get("best_legs")) == legs_key:
+        modifier += 1.25 * weight * 5
+        notes.append("best leg-count match")
+    if str(summary.get("best_profile")) == profile_key:
+        modifier += 1.10 * weight * 5
+        notes.append("best profile match")
+    if str(summary.get("best_odds_bucket")) == odds_key:
+        modifier += 0.95 * weight * 5
+        notes.append("best odds-band match")
+
+    return round(float(np.clip(modifier, -12, 12)), 2), notes
+
+
 def existing_parlay_fingerprints():
     log = st.session_state.parlay_log.copy()
     if log.empty or "leg_keys_json" not in log.columns:
@@ -1217,16 +1308,12 @@ def is_duplicate_parlay_in_tracker(slip):
 
 def optimize_ai_parlay_slips(df, bankroll, risk_mode, drawdown_pct, roi_pct):
     settings = st.session_state.launch_settings
-    adaptive_plan = compute_adaptive_parlay_strategy()
     pool = candidate_parlay_pool(df)
-    adaptive_pool_size = int(adaptive_plan.get("pool_size", settings.get("parlay_pool_size", 16)))
-    if len(pool) > adaptive_pool_size:
-        pool = pool.head(adaptive_pool_size).copy()
     slips = []
     if len(pool) < 2:
         return slips
 
-    max_legs = min(int(settings["parlay_max_legs"]), int(adaptive_plan.get("preferred_legs", settings["parlay_max_legs"])))
+    max_legs = int(settings["parlay_max_legs"])
     allow_same_game = bool(settings["allow_same_game_parlays"])
     min_combined_odds = float(settings["parlay_min_combined_odds"])
     allow_same_market_family_same_game = bool(settings.get("parlay_allow_same_market_family_same_game", False))
@@ -1279,12 +1366,20 @@ def optimize_ai_parlay_slips(df, bankroll, risk_mode, drawdown_pct, roi_pct):
                 continue
 
             expected_hit_rate = estimate_parlay_success(combo)
-            min_hit_rate = float(adaptive_plan.get("min_hit_rate", settings.get("portfolio_min_slip_prob", 0.05)))
+            min_hit_rate = float(settings.get("portfolio_min_slip_prob", 0.05))
             if expected_hit_rate < min_hit_rate:
                 continue
             expected_roi_pct = estimate_parlay_roi_pct(combo, combined_odds)
             if expected_roi_pct < -2:
                 continue
+
+            slip_profile_name = parlay_profile(leg_count, int(combined_odds))
+            adaptive_edge, adaptive_notes = adaptive_rank_modifier(
+                combo,
+                slip_profile_name,
+                int(combined_odds),
+                consensus_label(committee_votes),
+            )
 
             raw_rank = (
                 avg_adj * 0.42
@@ -1297,9 +1392,8 @@ def optimize_ai_parlay_slips(df, bankroll, risk_mode, drawdown_pct, roi_pct):
                 - (same_game_overlap * 5)
                 - (same_team_overlap * 2)
                 - (2 if leg_count == 3 else 0)
+                + adaptive_edge
             )
-            raw_rank += adaptive_leg_rank_bonus(leg_count, adaptive_plan)
-            raw_rank += adaptive_odds_bonus(combined_odds, adaptive_plan)
 
             slip = {
                 "slip_id": f"AI-PARLAY-{leg_count}-{'-'.join(map(str, idxs))}",
@@ -1329,7 +1423,9 @@ def optimize_ai_parlay_slips(df, bankroll, risk_mode, drawdown_pct, roi_pct):
                 "correlation_penalty": corr_penalty,
                 "correlation_note": corr_note,
                 "duplication_penalty": 0.0,
-                "slip_profile": parlay_profile(leg_count, int(combined_odds)),
+                "slip_profile": slip_profile_name,
+                "adaptive_edge": adaptive_edge,
+                "adaptive_notes": ", ".join(adaptive_notes) if adaptive_notes else "Neutral",
             }
             slips.append(slip)
 
@@ -1353,12 +1449,12 @@ def optimize_ai_parlay_slips(df, bankroll, risk_mode, drawdown_pct, roi_pct):
     elif style == "Aggressive":
         max_support = 4
     else:
-        max_support = int(adaptive_plan.get("support_slips", settings.get("parlay_support_slips", 3)))
+        max_support = int(settings.get("parlay_support_slips", 3))
 
     total_target = 1 + max_support
     final_slips = []
     leg_use_count = {}
-    max_reuse = int(adaptive_plan.get("max_leg_reuse", settings.get("parlay_max_leg_reuse", 2)))
+    max_reuse = int(settings.get("parlay_max_leg_reuse", 2))
 
     best_slip = slips[0]
     final_slips.append(best_slip)
@@ -1402,11 +1498,12 @@ def optimize_ai_parlay_slips(df, bankroll, risk_mode, drawdown_pct, roi_pct):
         slip["parlay_rank"] = i
         slip["is_best"] = i == 1
         slip["parlay_grade"] = parlay_grade(slip["rank_score"])
-        slip["builder"] = "AI Portfolio Optimizer" if style == "Hybrid" else f"AI {style} Portfolio Optimizer"
+        adaptive_tag = "Adaptive " if bool(settings.get("adaptive_auto_mode", True)) else ""
+        slip["builder"] = f"AI {adaptive_tag}Portfolio Optimizer" if style == "Hybrid" else f"AI {adaptive_tag}{style} Portfolio Optimizer"
         slip["estimated_hit_rate"] = round(estimate_parlay_success(combo_df) * 100, 1)
         unique_sports = combo_df["sport"].astype(str).nunique() if not combo_df.empty and "sport" in combo_df.columns else 1
         repeated_sports = sum(1 for s in combo_df.get("sport", pd.Series(dtype=str)).astype(str).tolist() if s in seen_sports)
-        slip["diversity_score"] = round(max(0.0, (unique_sports * 20) + (10 if repeated_sports == 0 else 0) - (safe_float(slip.get("duplication_penalty"), 0.0) * 1.2)), 1)
+        slip["diversity_score"] = round(max(0.0, (unique_sports * 20) + (10 if repeated_sports == 0 else 0) - (safe_float(slip.get("duplication_penalty"), 0.0) * 1.2) - (safe_float(slip.get("correlation_penalty"), 0.0) * 0.4)), 1)
         seen_sports.extend(combo_df.get("sport", pd.Series(dtype=str)).astype(str).tolist())
 
     final_slips = build_portfolio_plan(final_slips, bankroll, risk_mode, drawdown_pct, roi_pct)
@@ -1451,8 +1548,11 @@ def add_ai_parlay_to_log(slip, mode):
         "portfolio_target_stake": slip.get("portfolio_target_stake", np.nan),
         "estimated_hit_rate": slip.get("estimated_hit_rate", np.nan),
         "diversity_score": slip.get("diversity_score", np.nan),
+        "adaptive_edge": slip.get("adaptive_edge", np.nan),
+        "adaptive_notes": slip.get("adaptive_notes", ""),
     }
     st.session_state.parlay_log = pd.concat([log, pd.DataFrame([new_row])], ignore_index=True)
+    save_full_auto_state()
     return True, parlay_id
 
 # ---------- TRACKER ----------
@@ -1498,6 +1598,7 @@ def add_bet_to_log(row, stake, risk_mode, bankroll_snapshot, mode):
         "clv_win": "",
     }
     st.session_state.bet_log = pd.concat([log, pd.DataFrame([new_row])], ignore_index=True)
+    save_full_auto_state()
 
 
 def refresh_bet_log_metrics():
@@ -1569,6 +1670,58 @@ def import_state_json(text):
         merged = st.session_state.launch_settings.copy()
         merged.update(payload["launch_settings"])
         st.session_state.launch_settings = merged
+
+def auto_track_engine(df):
+    settings = st.session_state.launch_settings
+    if not bool(settings.get("auto_track_enabled", False)):
+        st.session_state.auto_last_summary = "Auto-track disabled."
+        return {"singles_added": 0, "parlays_added": 0}
+
+    auto_mode = settings.get("auto_track_mode", settings.get("default_mode", "Paper"))
+    bankroll = float(settings.get("starting_bankroll", 250.0))
+    risk_mode = settings.get("risk_mode", "Balanced")
+    drawdown_pct = 0.0
+    roi_pct = float(refresh_bet_log_metrics().get("roi", 0.0))
+
+    singles_added = 0
+    parlays_added = 0
+
+    if bool(settings.get("auto_track_singles", True)):
+        singles_df = high_probability_singles(df).copy()
+        for _, row in singles_df.iterrows():
+            rowd = row.to_dict()
+            if is_duplicate_single_in_tracker(rowd):
+                continue
+            stake = suggested_stake_from_units(rowd.get("units", 0), bankroll, risk_mode, drawdown_pct, roi_pct)
+            ok, _ = can_add_slip_item(rowd, stake)
+            if not ok:
+                continue
+            add_bet_to_log(rowd, stake, risk_mode, bankroll, auto_mode)
+            singles_added += 1
+
+    if bool(settings.get("auto_track_parlays", True)):
+        slips = optimize_ai_parlay_slips(df, bankroll, risk_mode, drawdown_pct, roi_pct)
+        limit = 1 + int(settings.get("auto_track_support_slips", 2))
+        for slip in slips[:limit]:
+            added, _ = add_ai_parlay_to_log(slip, auto_mode)
+            if added:
+                parlays_added += 1
+
+    st.session_state.auto_last_summary = f"Auto-track added {singles_added} single(s) and {parlays_added} parlay(s) in {auto_mode} mode."
+    if singles_added > 0 or parlays_added > 0:
+        save_full_auto_state()
+    return {"singles_added": singles_added, "parlays_added": parlays_added}
+
+
+def maybe_run_auto_track():
+    if st.session_state.active_df is None:
+        return
+    try:
+        df = filtered_launch_ready(st.session_state.active_df)
+    except Exception:
+        return
+    auto_track_engine(df)
+
 
 # ---------- RENDER ----------
 def render_mobile_bet_picker(df, bankroll, risk_mode, drawdown_pct, roi_pct, key_prefix):
@@ -1651,13 +1804,9 @@ def render_ai_parlay_builder(df, bankroll, risk_mode, drawdown_pct, roi_pct):
         st.warning("No optimized parlay today. The AI optimizer did not find enough strong, low-correlation combinations above your thresholds.")
         return
 
-    adaptive_plan = compute_adaptive_parlay_strategy()
-    if adaptive_plan.get("history_ready"):
-        st.success("Auto-adaptive portfolio mode active: the engine is adjusting slip style and bankroll allocation from tracked results.")
-        if adaptive_plan.get("notes"):
-            st.caption("Adaptive notes: " + " | ".join(adaptive_plan.get("notes", [])[:3]))
-    else:
-        st.success("Balanced portfolio mode active: 1 best parlay plus supporting slips with bankroll allocation.")
+    adaptive_state = adaptive_parlay_history_summary()
+    st.success("Adaptive portfolio mode active: 1 best parlay plus supporting slips with bankroll allocation.")
+    st.caption(f"Adaptive state: {adaptive_state.get('mode', 'Neutral')} | Confidence: {adaptive_state.get('confidence', 'Low')} | Settled parlays: {adaptive_state.get('samples', 0)}")
     for i, slip in enumerate(slips):
         header_prefix = "🔥 Best AI Parlay" if slip.get("is_best") else f"Support Slip {slip.get('parlay_rank', i+1)}"
         st.markdown(
@@ -1675,13 +1824,18 @@ def render_ai_parlay_builder(df, bankroll, risk_mode, drawdown_pct, roi_pct):
         )
         st.write(
             f"Profile: {slip['slip_profile']} | Sports: {slip['sport_mix']} | "
-            f"Correlation Penalty: {slip['correlation_penalty']:.1f} | Duplication Penalty: {slip['duplication_penalty']:.1f}"
+            f"Correlation Penalty: {slip['correlation_penalty']:.1f} | Duplication Penalty: {slip['duplication_penalty']:.1f} | Adaptive Edge: {safe_float(slip.get('adaptive_edge'), 0.0):.1f}"
         )
         st.write(f"Legs: {slip['legs_preview']}")
         if slip["same_game_overlap"] > 0:
             st.warning("Same-game overlap present.")
+        notes_line = []
         if str(slip.get("correlation_note", "Clean")) != "Clean":
-            st.caption("Correlation notes: " + str(slip.get("correlation_note", "")))
+            notes_line.append("Correlation notes: " + str(slip.get("correlation_note", "")))
+        if str(slip.get("adaptive_notes", "Neutral")) not in ["", "Neutral"]:
+            notes_line.append("Adaptive notes: " + str(slip.get("adaptive_notes", "")))
+        if notes_line:
+            st.caption(" | ".join(notes_line))
 
         b1, b2 = st.columns([1, 1])
         with b1:
@@ -1700,14 +1854,16 @@ def render_ai_parlay_builder(df, bankroll, risk_mode, drawdown_pct, roi_pct):
         st.divider()
 
 # ---------- APP ----------
-st.title("Sports AI Dashboard V13 Adaptive Edge Intelligence Engine")
-st.caption("Adaptive edge intelligence for Mainline, Spread, and Total singles plus self-adjusting AI-built consensus parlay portfolios.")
+st.title("Sports AI Dashboard V13.1 Auto-Track + Auto-Save")
+st.caption("Adaptive portfolio intelligence for Mainline, Spread, and Total singles plus self-adjusting AI-built consensus parlays.")
 
 tabs = st.tabs([
     "Dashboard", "Data Input", "Launch Settings", "All-Market Board", "High-Probability Singles", "AI Parlay Builder",
     "Bet Slip", "CLV Tracker", "Singles Tracker", "Parlay Tracker", "Performance", "All-Market Stats", "30-Day Test",
-    "Multi-AI Lab", "Learning Dashboard", "Adaptive Edge", "Import / Export"
+    "Multi-AI Lab", "Learning Dashboard", "Adaptive Edge AI", "Import / Export"
 ])
+
+maybe_run_auto_track()
 
 with tabs[0]:
     st.write("Active Source:", st.session_state.active_source)
@@ -1723,6 +1879,7 @@ with tabs[0]:
     today_bets, today_stake = today_counts_and_exposure()
     d2.metric("Today's Entries", today_bets)
     d3.metric("Today's Exposure", f"${today_stake:.2f}")
+    st.caption(st.session_state.get("auto_last_summary", "Auto-track idle."))
 
 with tabs[1]:
     c1, c2 = st.columns(2)
@@ -1797,17 +1954,25 @@ with tabs[2]:
     settings["portfolio_min_slip_prob"] = r3.slider("Min slip hit rate %", 1.0, 15.0, float(settings.get("portfolio_min_slip_prob", 5.0)), 0.5) / 100.0
     r4.metric("Support share", f"{float(settings['portfolio_support_share'])*100:.0f}%")
 
-    a1, a2, a3, a4 = st.columns(4)
-    settings["adaptive_mode"] = a1.selectbox("Adaptive mode", ["Auto-Adaptive", "Manual"], index=["Auto-Adaptive", "Manual"].index(str(settings.get("adaptive_mode", "Auto-Adaptive"))))
-    settings["adaptive_history_min"] = a2.selectbox("Adaptive min history", [4, 6, 8, 10], index=[4, 6, 8, 10].index(int(settings.get("adaptive_history_min", 6))))
-    settings["adaptive_leg_bias"] = a3.selectbox("Leg bias", ["Auto", "2-Leg", "3-Leg"], index=["Auto", "2-Leg", "3-Leg"].index(str(settings.get("adaptive_leg_bias", "Auto"))))
-    settings["adaptive_odds_bias"] = a4.selectbox("Odds bias", ["Auto", "Low", "Balanced", "Upside"], index=["Auto", "Low", "Balanced", "Upside"].index(str(settings.get("adaptive_odds_bias", "Auto"))))
+    a1, a2, a3 = st.columns(3)
+    settings["adaptive_auto_mode"] = a1.toggle("Adaptive auto mode", value=bool(settings.get("adaptive_auto_mode", True)))
+    settings["adaptive_weight"] = a2.slider("Adaptive weight", 0.05, 0.40, float(settings.get("adaptive_weight", 0.18)), 0.01)
+    settings["adaptive_min_samples"] = a3.selectbox("Adaptive min samples", [3, 5, 8, 10], index=[3, 5, 8, 10].index(int(settings.get("adaptive_min_samples", 5))))
+
+    st.markdown("**Auto-Track + Auto-Save**")
+    t1, t2, t3, t4 = st.columns(4)
+    settings["auto_track_enabled"] = t1.toggle("Enable auto-track", value=bool(settings.get("auto_track_enabled", False)))
+    settings["auto_track_singles"] = t2.toggle("Auto singles", value=bool(settings.get("auto_track_singles", True)))
+    settings["auto_track_parlays"] = t3.toggle("Auto parlays", value=bool(settings.get("auto_track_parlays", True)))
+    settings["auto_track_mode"] = t4.selectbox("Auto-track mode", ["Paper", "Live"], index=0 if settings.get("auto_track_mode", settings["default_mode"]) == "Paper" else 1)
+    settings["auto_track_support_slips"] = st.selectbox("Auto support parlays", [0, 1, 2, 3], index=[0, 1, 2, 3].index(int(settings.get("auto_track_support_slips", 2))))
 
     settings["allow_same_game_parlays"] = st.toggle("Allow same-game parlays", value=bool(settings["allow_same_game_parlays"]))
     settings["parlay_allow_same_market_family_same_game"] = st.toggle(
         "Allow same market family in same game",
         value=bool(settings.get("parlay_allow_same_market_family_same_game", False))
     )
+    save_full_auto_state()
     st.success("Settings saved in session.")
 
 with tabs[3]:
@@ -2057,30 +2222,31 @@ with tabs[14]:
         st.dataframe(mt, use_container_width=True)
 
 with tabs[15]:
-    st.subheader("Adaptive Edge")
-    adaptive = compute_adaptive_parlay_strategy()
-    metrics = adaptive.get("metrics", {})
-    a1, a2, a3, a4 = st.columns(4)
-    a1.metric("Adaptive Mode", adaptive.get("mode", "Auto-Adaptive"))
-    a2.metric("History Ready", "Yes" if adaptive.get("history_ready") else "No")
-    a3.metric("Preferred Legs", adaptive.get("preferred_legs", 2))
-    a4.metric("System State", adaptive.get("system_state", "Warm-Up"))
-    st.write(f"Preferred Odds Band: {adaptive.get('preferred_odds_band', 'Balanced')} | Preferred Profile: {adaptive.get('preferred_profile', 'Balanced')} | Max Portfolio %: {safe_float(adaptive.get('max_total_pct', 0.025))*100:.2f}%")
-    if adaptive.get("notes"):
-        for note in adaptive.get("notes", []):
-            st.caption(note)
-    leg_df = pd.DataFrame([{"legs": k, **v} for k, v in metrics.get("legs", {}).items()])
-    odds_df = pd.DataFrame([{"odds_band": k, **v} for k, v in metrics.get("odds_band", {}).items()])
-    profile_df = pd.DataFrame([{"profile": k, **v} for k, v in metrics.get("profile", {}).items()])
-    if not leg_df.empty:
-        st.markdown("**Parlay results by leg count**")
-        st.dataframe(leg_df, use_container_width=True)
-    if not odds_df.empty:
-        st.markdown("**Parlay results by odds band**")
-        st.dataframe(odds_df, use_container_width=True)
-    if not profile_df.empty:
-        st.markdown("**Parlay results by profile**")
-        st.dataframe(profile_df, use_container_width=True)
+    st.subheader("Adaptive Edge AI")
+    adaptive = adaptive_parlay_history_summary()
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Adaptive Mode", adaptive.get("mode", "Neutral"))
+    c2.metric("Confidence", adaptive.get("confidence", "Low"))
+    c3.metric("Settled Parlays", adaptive.get("samples", 0))
+    c4.metric("Parlay ROI", f"{safe_float(adaptive.get('total_roi'), 0.0):.2f}%")
+
+    for note in adaptive.get("notes", []):
+        st.caption("• " + str(note))
+
+    def map_to_df(title, mapping, key_name):
+        rows = []
+        for k, v in mapping.items():
+            rows.append({key_name: k, "samples": v.get("samples", 0), "roi": v.get("roi", 0.0), "win_rate": v.get("win_rate", 0.0)})
+        st.markdown(f"**{title}**")
+        if rows:
+            st.dataframe(pd.DataFrame(rows).sort_values(["roi", "win_rate"], ascending=False), use_container_width=True)
+        else:
+            st.info("Not enough settled parlays yet.")
+
+    map_to_df("Adaptive by Legs", adaptive.get("legs_roi", {}), "legs")
+    map_to_df("Adaptive by Profile", adaptive.get("profile_roi", {}), "profile")
+    map_to_df("Adaptive by Odds Bucket", adaptive.get("odds_bucket_roi", {}), "odds_bucket")
+    map_to_df("Adaptive by Consensus", adaptive.get("consensus_roi", {}), "consensus")
 
 with tabs[16]:
     st.subheader("Import / Export")
@@ -2099,5 +2265,15 @@ with tabs[16]:
             st.success("Session state imported.")
         except Exception as e:
             st.error(f"Import failed: {e}")
+    x1, x2 = st.columns(2)
+    with x1:
+        if st.button("Force Auto-Save Now", use_container_width=True):
+            save_full_auto_state()
+            st.success("Auto-save completed.")
+    with x2:
+        if st.button("Reload Saved Logs", use_container_width=True):
+            load_logs_from_disk()
+            maybe_restore_full_auto_state()
+            st.success("Saved logs reloaded.")
 
-st.success("V13 Adaptive Edge Intelligence Engine ready.")
+st.success("V13.1 Auto-Track + Auto-Save ready.")

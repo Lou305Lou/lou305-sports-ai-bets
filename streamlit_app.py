@@ -681,8 +681,9 @@ def classify_parlay_candidates(candidates):
         )
 
         fallback_ok = (
-            c["total_penalty"] <= FALLBACK_PARLAY_MAX_PENALTY
-        )
+    c["total_penalty"] <= FALLBACK_PARLAY_MAX_PENALTY
+    and c["combined_odds_int"] >= (MIN_PARLAY_ODDS + 30)
+)
 
         if sharp_ok:
             sharp_candidates.append(c)

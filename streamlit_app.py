@@ -6,9 +6,9 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Sports Betting AI Dashboard V31.1", layout="wide")
+st.set_page_config(page_title="Sports Betting AI Dashboard V31.2", layout="wide")
 
-APP_TITLE = "🔥 Sports Betting AI Dashboard V31.1"
+APP_TITLE = "🔥 Sports Betting AI Dashboard V31.2"
 APP_SUBTITLE = "Dynamic Consensus + Best Price Optimizer"
 BET_LOG_PATH = Path("bet_log.csv")
 LEARNING_PROFILE_PATH = Path("learning_profile.csv")
@@ -28,6 +28,10 @@ LOW_BOOK_THRESHOLD = 3
 STRONG_BOOK_THRESHOLD = 4
 PRICE_EDGE_STRONG_THRESHOLD = 1.25
 DISPERSION_ALERT_THRESHOLD = 3.0
+PROMOTION_MIN_BOOKS = 2
+PROMOTION_MIN_PRICE_EDGE = 1.50
+PROMOTION_MIN_EDGE = 1.50
+PROMOTION_MIN_SCORE = 78.0
 
 
 
@@ -726,9 +730,13 @@ def assign_tier(row):
     score = safe_float(row.get("score"))
     consensus = safe_float(row.get("consensus_count"))
     books = safe_float(row.get("available_books_count"))
+    price_edge = safe_float(row.get("price_edge_pct"))
     if edge >= 3.0 and score >= 86 and consensus >= 3 and books >= 3:
         return "A"
-    if edge >= 1.8 and score >= 74 and consensus >= 2 and books >= 2:
+    if (
+        ((edge >= 1.5 and score >= 74) or (price_edge >= PROMOTION_MIN_PRICE_EDGE and score >= PROMOTION_MIN_SCORE))
+        and consensus >= 2 and books >= 2
+    ):
         return "B"
     if edge >= 1.0 and score >= 62:
         return "C"
@@ -803,6 +811,24 @@ def compute_stackable(df):
             df.loc[grp.index, "stackable"] = False
     return df
 
+
+def smart_promotable(row):
+    books = safe_float(row.get("available_books_count"))
+    support = safe_float(row.get("consensus_count"))
+    price_edge = safe_float(row.get("price_edge_pct"))
+    edge = safe_float(row.get("edge_pct"))
+    score = safe_float(row.get("score"))
+    consensus_quality = str(row.get("consensus_quality", ""))
+    skip_game = bool(row.get("skip_game", False))
+    if skip_game:
+        return False
+    if books < PROMOTION_MIN_BOOKS or support < 2:
+        return False
+    if consensus_quality not in {"Fair", "Strong"}:
+        return False
+    if score < PROMOTION_MIN_SCORE:
+        return False
+    return (price_edge >= PROMOTION_MIN_PRICE_EDGE) or (edge >= PROMOTION_MIN_EDGE)
 
 
 def final_rank_score(row):
@@ -915,7 +941,11 @@ def resolve_board(
     df["skip_game"] = False
 
     effective_min_edge = MIN_ACTIVE_EDGE * safe_float(adaptive_context.get("edge_multiplier"), 1.0)
-    candidates = df[(df["tier"].isin(["A", "B", "C"])) & (df["edge_pct"].fillna(-999) >= effective_min_edge)].copy()
+    candidate_mask = (
+        (df["tier"].isin(["A", "B"]))
+        & (df["edge_pct"].fillna(-999) >= effective_min_edge)
+    ) | df.apply(smart_promotable, axis=1)
+    candidates = df[candidate_mask].copy()
     if elite_only:
         candidates = candidates[candidates["tier"].isin(["A", "B"]) & (candidates["score"] >= 75)].copy()
 
@@ -923,14 +953,20 @@ def resolve_board(
     chosen = []
 
     for game, grp in candidates.groupby("game", dropna=False):
-        grp = grp.sort_values(["final_rank", "score", "edge_pct", "consensus_count", "market_priority"], ascending=False)
+        grp = grp.sort_values(["final_rank", "score", "price_edge_pct", "edge_pct", "consensus_count", "market_priority"], ascending=False)
 
+        promo_mask = grp.apply(smart_promotable, axis=1)
         game_has_ab = grp["tier"].isin(["A", "B"]).any()
-        max_game_clv = safe_float(grp["clv_projection"].max())
+        game_has_promotable = bool(promo_mask.any())
+        max_game_books = safe_float(grp["available_books_count"].max())
         max_game_consensus = safe_float(grp["consensus_count"].max())
-        if skip_games_without_ab and ((not game_has_ab) or (max_game_clv < 4.0) or (max_game_consensus < 3)):
+        if skip_games_without_ab and (not game_has_ab) and (not game_has_promotable):
             df.loc[df["game"].eq(game), "skip_game"] = True
             df.loc[df["game"].eq(game), "why"] = "skip game • weak game quality"
+            continue
+        if skip_games_without_ab and (max_game_books < 2 or max_game_consensus < 2):
+            df.loc[df["game"].eq(game), "skip_game"] = True
+            df.loc[df["game"].eq(game), "why"] = "skip game • thin market"
             continue
 
         used_conflicts = set()
@@ -939,6 +975,8 @@ def resolve_board(
             if len(game_selected) >= max_per_game:
                 break
             if row["conflict_key"] in used_conflicts:
+                continue
+            if row["tier"] == "C" and not smart_promotable(row):
                 continue
             game_selected.append(idx)
             used_conflicts.add(row["conflict_key"])
@@ -1587,5 +1625,5 @@ st.download_button("Download Learning Profile CSV", profile_buf.getvalue(), file
 st.download_button("Download Snapshot CSV", snap_buf.getvalue(), file_name="snapshot.csv", mime="text/csv")
 
 st.caption(
-    "V31 adds dynamic consensus scoring, best-price optimization, market-depth awareness, price-dispersion checks, and cleaner thin-market filtering."
+    "V31.2 adds smart promotion logic so high-quality fair-depth markets can surface as top plays without overpromoting weak games."
 )

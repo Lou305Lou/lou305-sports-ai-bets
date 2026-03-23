@@ -1170,38 +1170,6 @@ def build_ai_portfolio(best_single, chosen_parlay, parlay_candidates):
 
 
 # =========================================================
-# DATA BUILD
-# =========================================================
-df = generate_ai_plays()
-auto_logged_count = auto_log_active_plays(df)
-
-active_df = df[df["status"] == "Active"].copy().reset_index(drop=True)
-watch_df = df[df["status"] == "Watch"].copy().reset_index(drop=True)
-
-best_row = None
-if not active_df.empty:
-    best_row = active_df.sort_values(["rank_score", "true_confidence"], ascending=False).iloc[0]
-
-best_parlay, parlay_candidates, parlay_mode = choose_best_parlay(active_df)
-
-portfolio = build_ai_portfolio(
-    best_row,
-    best_parlay,
-   best_parlay, parlay_candidates, parlay_mode = choose_best_parlay(active_df)
-
-portfolio = build_ai_portfolio(
-    best_row,
-    best_parlay,
-    parlay_candidates
-)
-    parlay_candidates
-)
-
-avg_active_edge = active_df["edge"].mean() if not active_df.empty else 0.0
-best_score = best_row["score"] if best_row is not None else "—"
-avg_true_conf = active_df["true_confidence"].mean() if not active_df.empty else 0.0
-total_units = active_df["units"].sum() if not active_df.empty else 0.0
-# =========================================================
 # V32 PORTFOLIO ENGINE
 # =========================================================
 def build_ai_portfolio(best_single, chosen_parlay, parlay_candidates):
@@ -1223,8 +1191,10 @@ def build_ai_portfolio(best_single, chosen_parlay, parlay_candidates):
             "data": chosen_parlay
         })
 
-    # Fallback 2-leg
-    fallback_2 = [c for c in parlay_candidates if c["leg_count"] == 2 and c.get("approval_type") != "Sharp Approved"]
+    fallback_2 = [
+        c for c in parlay_candidates
+        if c["leg_count"] == 2 and c.get("approval_type") != "Sharp Approved"
+    ]
     if fallback_2:
         portfolio.append({
             "type": "Parlay",
@@ -1233,8 +1203,10 @@ def build_ai_portfolio(best_single, chosen_parlay, parlay_candidates):
             "data": fallback_2[0]
         })
 
-    # Fallback 3-leg
-    fallback_3 = [c for c in parlay_candidates if c["leg_count"] == 3]
+    fallback_3 = [
+        c for c in parlay_candidates
+        if c["leg_count"] == 3
+    ]
     if fallback_3:
         portfolio.append({
             "type": "Parlay",
@@ -1244,6 +1216,38 @@ def build_ai_portfolio(best_single, chosen_parlay, parlay_candidates):
         })
 
     return portfolio
+
+
+# =========================================================
+# DATA BUILD
+# =========================================================
+df = generate_ai_plays()
+auto_logged_count = auto_log_active_plays(df)
+
+active_df = df[df["status"] == "Active"].copy().reset_index(drop=True)
+watch_df = df[df["status"] == "Watch"].copy().reset_index(drop=True)
+
+best_row = None
+if not active_df.empty:
+    best_row = active_df.sort_values(
+        ["rank_score", "true_confidence"],
+        ascending=False
+    ).iloc[0]
+
+best_parlay, parlay_candidates, parlay_mode = choose_best_parlay(active_df)
+
+portfolio = build_ai_portfolio(
+    best_row,
+    best_parlay,
+    parlay_candidates
+)
+
+avg_active_edge = active_df["edge"].mean() if not active_df.empty else 0.0
+best_score = best_row["score"] if best_row is not None else "—"
+avg_true_conf = active_df["true_confidence"].mean() if not active_df.empty else 0.0
+total_units = active_df["units"].sum() if not active_df.empty else 0.0
+
+
 # =========================================================
 # PAGE STYLES
 # =========================================================

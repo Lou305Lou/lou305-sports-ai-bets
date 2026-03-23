@@ -538,3 +538,305 @@ def generate_ai_plays():
         return pd.DataFrame(columns=empty_cols)
 
     return combined.sort_values(["status", "rank_score"], ascending=[True, False]).reset_index(drop=True)
+# =========================================================
+# PARLAY INTELLIGENCE
+# =========================================================
+def calculate_correlation_score(legs):
+    score = 0.0
+    for i in range(len(legs)):
+        for j in range(i + 1, len(legs)):
+            a = legs[i]
+            b = legs[j]
+            same_game = a.get("game") == b.get("game")
+            market_a = market_family(a.get("market"))
+            market_b = market_family(b.get("market"))
+            sel_a = str(a.get("selection", "")).lower()
+            sel_b = str(b.get("selection", "")).lower()
+
+            if same_game:
+                if {market_a, market_b} == {"spread", "total"}:
+                    if ("under" in sel_a) or ("under" in sel_b):
+                        score += 1.5
+                    elif ("over" in sel_a) or ("over" in sel_b):
+                        score -= 2.0
+                elif {market_a, market_b} == {"moneyline", "total"}:
+                    score += 0.25
+                elif market_a == market_b:
+                    score -= 1.0
+            else:
+                score += 0.5
+    return score
+
+
+def selections_conflict(row_a, row_b):
+    if row_a["game"] != row_b["game"]:
+        return False
+
+    fam_a = market_family(row_a["market"])
+    fam_b = market_family(row_b["market"])
+    sel_a = str(row_a["selection"]).lower()
+    sel_b = str(row_b["selection"]).lower()
+
+    if fam_a == fam_b and row_a["selection"] != row_b["selection"]:
+        return True
+    if "over" in sel_a and "under" in sel_b:
+        return True
+    if "under" in sel_a and "over" in sel_b:
+        return True
+
+    teams = [t.strip().lower() for t in str(row_a["game"]).split("vs")]
+    if len(teams) == 2:
+        t1, t2 = teams[0], teams[1]
+        if (t1 in sel_a and t2 in sel_b) or (t2 in sel_a and t1 in sel_b):
+            return True
+    return False
+
+
+def pair_correlation_penalty(row_a, row_b):
+    penalty = 0.0
+    reasons = []
+
+    if selections_conflict(row_a, row_b):
+        return 1.0, ["conflicting legs"]
+
+    if row_a["game"] == row_b["game"]:
+        penalty += 0.18
+        reasons.append("same-game correlation")
+
+        fam_a = market_family(row_a["market"])
+        fam_b = market_family(row_b["market"])
+
+        if fam_a == fam_b:
+            penalty += 0.12
+            reasons.append("same-market overlap")
+
+        if {fam_a, fam_b} == {"moneyline", "spread"}:
+            penalty += 0.08
+            reasons.append("side correlation")
+
+    return clamp(penalty, 0.0, 1.0), reasons
+
+
+def score_parlay_combo(combo):
+    total_penalty = 0.0
+    penalty_reasons = []
+    valid = True
+
+    for a, b in combinations(combo, 2):
+        penalty, reasons = pair_correlation_penalty(a, b)
+        if penalty >= 1.0:
+            valid = False
+            break
+        total_penalty += penalty
+        penalty_reasons.extend(reasons)
+
+    if not valid:
+        return None
+
+    decimal_odds = 1.0
+    for leg in combo:
+        dec = american_to_decimal(leg["odds"])
+        if dec is None:
+            return None
+        decimal_odds *= dec
+
+    combined_american = decimal_to_american(decimal_odds)
+    if combined_american is None or combined_american < MIN_PARLAY_ODDS:
+        return None
+
+    avg_true_conf = sum(float(leg["true_confidence"]) for leg in combo) / len(combo)
+    avg_edge = sum(float(leg["edge"]) for leg in combo) / len(combo)
+    avg_books = sum(float(leg["books_seen"]) for leg in combo) / len(combo)
+    avg_price_edge = sum(float(leg["price_edge"]) for leg in combo) / len(combo)
+
+    distinct_games = len(set(leg["game"] for leg in combo))
+    cross_game = distinct_games == len(combo)
+    game_diversity_bonus = 0.12 if cross_game else 0.02
+
+    raw_score = (
+        avg_true_conf * 0.55
+        + avg_edge * 6.0
+        + avg_price_edge * 4.0
+        + avg_books * 1.2
+        + (game_diversity_bonus * 100)
+    )
+    correlation_score = calculate_correlation_score(list(combo))
+    conservative_score = raw_score - (total_penalty * 30) + (correlation_score * 5)
+    fallback_score = (raw_score * (1 - total_penalty)) + (correlation_score * 5)
+
+    if total_penalty <= 0.08 and avg_true_conf >= 64:
+        risk_label = "Low"
+    elif total_penalty <= 0.22 and avg_true_conf >= 58:
+        risk_label = "Moderate"
+    else:
+        risk_label = "Elevated"
+
+    reasons = []
+    if cross_game:
+        reasons.append("cross-game diversification")
+    else:
+        reasons.append("same-game correlation adjusted")
+    if correlation_score > 1:
+        reasons.append("positive correlation")
+    elif correlation_score < -1:
+        reasons.append("conflict risk")
+    if avg_true_conf >= 62:
+        reasons.append("high true confidence")
+    elif avg_true_conf >= 57:
+        reasons.append("solid true confidence")
+    if avg_books >= 3:
+        reasons.append("broad book support")
+    if avg_price_edge >= 1.2:
+        reasons.append("price support")
+
+    return {
+        "legs": list(combo),
+        "leg_count": len(combo),
+        "combined_odds": format_american(combined_american),
+        "combined_odds_int": combined_american,
+        "avg_true_conf": round(avg_true_conf, 1),
+        "avg_edge": round(avg_edge, 2),
+        "avg_books": round(avg_books, 2),
+        "avg_price_edge": round(avg_price_edge, 2),
+        "total_penalty": round(total_penalty, 3),
+        "cross_game": cross_game,
+        "correlation_score": round(correlation_score, 2),
+        "conservative_score": round(conservative_score, 1),
+        "fallback_score": round(fallback_score, 1),
+        "score": round(fallback_score, 1),
+        "display_score": round(fallback_score, 1),
+        "risk_label": risk_label,
+        "reasons": (reasons + penalty_reasons)[:6],
+    }
+
+
+def build_all_parlay_candidates(active_df):
+    if active_df.empty or len(active_df) < 2:
+        return []
+
+    rows = active_df.to_dict("records")
+    candidates = []
+
+    for leg_count in range(MIN_PARLAY_LEGS, min(MAX_PARLAY_LEGS, len(rows)) + 1):
+        for combo in combinations(rows, leg_count):
+            scored = score_parlay_combo(combo)
+            if scored is not None:
+                candidates.append(scored)
+
+    return candidates
+
+
+def classify_parlay_candidates(candidates):
+    sharp_candidates = []
+    fallback_candidates = []
+
+    for c in candidates:
+        sharp_ok = (
+            c["avg_true_conf"] >= SHARP_PARLAY_MIN_TRUE_CONF
+            and c["total_penalty"] <= SHARP_PARLAY_MAX_PENALTY
+            and c["cross_game"]
+            and c["correlation_score"] >= 0
+        )
+        fallback_ok = (
+            c["total_penalty"] <= (FALLBACK_PARLAY_MAX_PENALTY + 0.08)
+            and c["combined_odds_int"] >= (MIN_PARLAY_ODDS + 40)
+            and c["avg_true_conf"] >= 55
+        )
+
+        if sharp_ok:
+            sharp_copy = c.copy()
+            sharp_copy["approval_type"] = "Sharp Approved"
+            sharp_copy["display_score"] = sharp_copy["conservative_score"]
+            sharp_copy["score"] = sharp_copy["conservative_score"]
+            sharp_candidates.append(sharp_copy)
+
+        if fallback_ok:
+            fallback_copy = c.copy()
+            fallback_copy["approval_type"] = "Balanced Fallback"
+            fallback_copy["display_score"] = fallback_copy["fallback_score"]
+            fallback_copy["score"] = fallback_copy["fallback_score"]
+            fallback_candidates.append(fallback_copy)
+
+    sharp_candidates.sort(
+        key=lambda x: (
+            x["conservative_score"],
+            x["avg_true_conf"],
+            x["combined_odds_int"],
+        ),
+        reverse=True,
+    )
+    fallback_candidates.sort(
+        key=lambda x: (
+            x["fallback_score"],
+            x["avg_true_conf"],
+            x["combined_odds_int"],
+        ),
+        reverse=True,
+    )
+
+    return sharp_candidates, fallback_candidates
+
+
+def choose_best_parlay(active_df):
+    all_candidates = build_all_parlay_candidates(active_df)
+    sharp_candidates, fallback_candidates = classify_parlay_candidates(all_candidates)
+
+    sharp_best = sharp_candidates[0] if sharp_candidates else None
+    fallback_best = fallback_candidates[0] if fallback_candidates else None
+
+    if sharp_best is not None:
+        chosen = sharp_best.copy()
+        chosen["approval_type"] = "Sharp Approved"
+        chosen["display_score"] = chosen["conservative_score"]
+        chosen["score"] = chosen["conservative_score"]
+        return chosen, sharp_candidates, fallback_candidates
+
+    if fallback_best is not None:
+        chosen = fallback_best.copy()
+        chosen["approval_type"] = "Balanced Fallback"
+        chosen["display_score"] = chosen["fallback_score"]
+        chosen["score"] = chosen["fallback_score"]
+        return chosen, sharp_candidates, fallback_candidates
+
+    return None, sharp_candidates, fallback_candidates
+
+
+# =========================================================
+# AUTO-LOG ACTIVE PLAYS
+# =========================================================
+def auto_log_active_plays(df):
+    if df.empty:
+        return 0
+
+    count_added = 0
+    active_only = df[df["status"] == "Active"].copy()
+
+    for _, row in active_only.iterrows():
+        play_id = row["play_id"]
+        if play_id in st.session_state["auto_logged_ids"]:
+            continue
+
+        log_row = {
+            "play_id": play_id,
+            "game": row["game"],
+            "market": row["market"],
+            "selection": row["selection"],
+            "odds": row["odds"],
+            "edge": row["edge"],
+            "score": row["score"],
+            "units": row["units"],
+            "confidence": row["confidence"],
+            "true_confidence": row["true_confidence"],
+            "tier": row["tier"],
+            "quality_label": row["quality_label"],
+            "status": row["status"],
+            "result": "Pending",
+            "profit": 0.0,
+            "mode": TEST_MODE,
+        }
+
+        st.session_state["bet_log"].append(log_row)
+        st.session_state["auto_logged_ids"].add(play_id)
+        count_added += 1
+
+    return count_added

@@ -1,8 +1,9 @@
 import streamlit as st
 import pandas as pd
+import streamlit.components.v1 as components
 
 st.set_page_config(
-    page_title="Sports Betting AI Dashboard V31.5.1",
+    page_title="Sports Betting AI Dashboard V31.5.2",
     layout="wide"
 )
 
@@ -21,7 +22,7 @@ def is_mobile():
 
 # =========================================================
 # SAMPLE DATA
-# Replace this section later with your real engine output
+# Replace this later with your real engine output
 # =========================================================
 data = [
     {
@@ -97,32 +98,17 @@ data = [
 df = pd.DataFrame(data)
 
 # =========================================================
-# STYLES
+# PAGE STYLES
 # =========================================================
 st.markdown(
     """
 <style>
-:root {
-    --page-bg: #f6f7fb;
-    --text-dark: #202533;
-    --muted-dark: #697386;
-    --card-bg: linear-gradient(180deg, #171d2a 0%, #101624 100%);
-    --card-border: #273043;
-    --white: #ffffff;
-    --soft-white: #d7deea;
-    --label: #91a0b7;
-    --line: #2a3448;
-    --green: #4ade80;
-    --yellow: #fbbf24;
-    --blue: #60a5fa;
-}
-
 html, body, [class*="css"] {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
 .stApp {
-    background-color: var(--page-bg);
+    background-color: #f6f7fb;
 }
 
 .block-container {
@@ -133,7 +119,7 @@ html, body, [class*="css"] {
 
 h1, h2, h3 {
     letter-spacing: -0.02em;
-    color: var(--text-dark);
+    color: #202533;
 }
 
 .metric-panel {
@@ -183,131 +169,6 @@ h1, h2, h3 {
     color: #1e2430;
 }
 
-.dk-card {
-    background: linear-gradient(180deg, #171d2a 0%, #101624 100%);
-    border: 1px solid #273043;
-    border-radius: 22px;
-    padding: 16px 16px 14px 16px;
-    margin-bottom: 14px;
-    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.14);
-}
-
-.dk-toprow {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-    margin-bottom: 12px;
-}
-
-.dk-badge {
-    display: inline-block;
-    padding: 7px 12px;
-    border-radius: 999px;
-    font-size: 12px;
-    font-weight: 800;
-    line-height: 1;
-}
-
-.badge-tier-a { background: #d1fae5; color: #065f46; }
-.badge-tier-b { background: #dbeafe; color: #1d4ed8; }
-.badge-tier-c { background: #fef3c7; color: #92400e; }
-
-.badge-active { background: #f59e0b; color: #111827; }
-.badge-watch  { background: #475569; color: #f8fafc; }
-.badge-best   { background: #ead8ff; color: #6b21a8; }
-
-.dk-title {
-    color: #ffffff;
-    font-size: 2rem;
-    line-height: 1.05;
-    font-weight: 800;
-    margin: 0 0 6px 0;
-    letter-spacing: -0.03em;
-}
-
-.dk-subtitle {
-    color: #d4dbe8;
-    font-size: 1rem;
-    margin-bottom: 14px;
-}
-
-.dk-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px 16px;
-    margin-bottom: 12px;
-}
-
-.dk-metric-label {
-    color: #91a0b7;
-    font-size: 0.82rem;
-    margin-bottom: 2px;
-}
-
-.dk-metric-value {
-    color: #f8fafc;
-    font-size: 1.08rem;
-    font-weight: 700;
-    line-height: 1.15;
-}
-
-.dk-metric-value.green { color: #4ade80; }
-.dk-metric-value.yellow { color: #fbbf24; }
-.dk-metric-value.blue { color: #60a5fa; }
-
-.dk-divider {
-    height: 1px;
-    background: #2a3448;
-    margin: 10px 0 12px 0;
-}
-
-.conf-wrap {
-    margin-top: 2px;
-}
-
-.conf-track {
-    width: 100%;
-    height: 8px;
-    border-radius: 999px;
-    background: #263041;
-    overflow: hidden;
-    margin-top: 6px;
-}
-
-.conf-fill-high {
-    height: 100%;
-    width: 78%;
-    background: linear-gradient(90deg, #22c55e 0%, #84cc16 100%);
-}
-
-.conf-fill-medium {
-    height: 100%;
-    width: 56%;
-    background: linear-gradient(90deg, #f59e0b 0%, #fbbf24 100%);
-}
-
-.conf-fill-elite {
-    height: 100%;
-    width: 92%;
-    background: linear-gradient(90deg, #22c55e 0%, #10b981 100%);
-}
-
-.ai-tag-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-}
-
-.ai-tag {
-    background: #202838;
-    color: #d8e0ec;
-    border: 1px solid #2d3748;
-    border-radius: 999px;
-    padding: 6px 10px;
-    font-size: 12px;
-    line-height: 1;
-}
-
 .slip-card {
     background: linear-gradient(180deg, #171d2a 0%, #101624 100%);
     border: 1px solid #273043;
@@ -345,12 +206,6 @@ h1, h2, h3 {
     padding: 14px;
     margin-bottom: 14px;
 }
-
-@media (max-width: 768px) {
-    .dk-title {
-        font-size: 1.75rem;
-    }
-}
 </style>
 """,
     unsafe_allow_html=True,
@@ -359,99 +214,178 @@ h1, h2, h3 {
 # =========================================================
 # HELPERS
 # =========================================================
-def confidence_class(confidence: str) -> str:
+def confidence_fill_and_color(confidence: str):
     c = str(confidence).strip().lower()
     if c == "elite":
-        return "conf-fill-elite"
+        return "92%", "#10b981"
     if c == "high":
-        return "conf-fill-high"
-    return "conf-fill-medium"
+        return "78%", "#22c55e"
+    return "56%", "#f59e0b"
+
+
+def tier_colors(tier: str):
+    t = str(tier).upper()
+    if t == "A":
+        return "#d1fae5", "#065f46"
+    if t == "B":
+        return "#dbeafe", "#1d4ed8"
+    return "#fef3c7", "#92400e"
 
 
 def render_play_card(row: pd.Series, show_best_badge: bool = False):
-    tier = str(row["tier"]).upper()
-    status = str(row["status"]).strip()
+    badge_bg, badge_fg = tier_colors(row["tier"])
+    status_bg = "#f59e0b" if str(row["status"]) == "Active" else "#64748b"
+    status_fg = "#111827" if str(row["status"]) == "Active" else "#f8fafc"
+    best_width = "inline-block" if show_best_badge else "none"
 
-    tier_class = {
-        "A": "badge-tier-a",
-        "B": "badge-tier-b",
-        "C": "badge-tier-c",
-    }.get(tier, "badge-tier-c")
+    fill_width, fill_color = confidence_fill_and_color(row["confidence"])
 
-    status_class = "badge-active" if status == "Active" else "badge-watch"
-    best_badge_html = '<span class="dk-badge badge-best">🏆 Best Bet</span>' if show_best_badge else ""
-    conf_class = confidence_class(row["confidence"])
-    edge_class = "green" if float(row["edge"]) >= 2 else "yellow"
-    score_class = "blue"
+    tags_html = ""
+    for tag in row["ai_tags"]:
+        tags_html += f"""
+        <span style="
+            background:#202838;
+            color:#d8e0ec;
+            border:1px solid #2d3748;
+            border-radius:999px;
+            padding:6px 10px;
+            font-size:12px;
+            line-height:1;
+            display:inline-block;
+            margin-right:8px;
+            margin-bottom:8px;
+        ">{tag}</span>
+        """
 
-    tags = "".join([f'<span class="ai-tag">{tag}</span>' for tag in row["ai_tags"]])
+    edge_color = "#4ade80" if float(row["edge"]) >= 2 else "#fbbf24"
 
     html = f"""
-    <div class="dk-card">
-        <div class="dk-toprow">
-            <span class="dk-badge {tier_class}">Tier {tier}</span>
-            <span class="dk-badge {status_class}">{status}</span>
-            {best_badge_html}
+    <html>
+    <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    </head>
+    <body style="margin:0; background:transparent; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+        <div style="
+            background:linear-gradient(180deg, #171d2a 0%, #101624 100%);
+            border:1px solid #273043;
+            border-radius:22px;
+            padding:16px;
+            color:#ffffff;
+            box-sizing:border-box;
+        ">
+            <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px;">
+                <span style="
+                    background:{badge_bg};
+                    color:{badge_fg};
+                    padding:7px 12px;
+                    border-radius:999px;
+                    font-size:12px;
+                    font-weight:800;
+                    line-height:1;
+                    display:inline-block;
+                ">Tier {row["tier"]}</span>
+
+                <span style="
+                    background:{status_bg};
+                    color:{status_fg};
+                    padding:7px 12px;
+                    border-radius:999px;
+                    font-size:12px;
+                    font-weight:800;
+                    line-height:1;
+                    display:inline-block;
+                ">{row["status"]}</span>
+
+                <span style="
+                    background:#ead8ff;
+                    color:#6b21a8;
+                    padding:7px 12px;
+                    border-radius:999px;
+                    font-size:12px;
+                    font-weight:800;
+                    line-height:1;
+                    display:{best_width};
+                ">🏆 Best Bet</span>
+            </div>
+
+            <div style="
+                font-size:30px;
+                line-height:1.05;
+                font-weight:800;
+                margin:0 0 8px 0;
+                letter-spacing:-0.03em;
+                color:#ffffff;
+            ">{row["selection"]}</div>
+
+            <div style="
+                color:#d4dbe8;
+                font-size:16px;
+                margin-bottom:14px;
+            ">{row["game"]} • {str(row["market"]).title()}</div>
+
+            <div style="
+                display:grid;
+                grid-template-columns:1fr 1fr;
+                gap:12px 16px;
+                margin-bottom:12px;
+            ">
+                <div>
+                    <div style="color:#91a0b7; font-size:12px; margin-bottom:2px;">Odds</div>
+                    <div style="color:#f8fafc; font-size:17px; font-weight:700;">{row["odds"]}</div>
+                </div>
+                <div>
+                    <div style="color:#91a0b7; font-size:12px; margin-bottom:2px;">AI Score</div>
+                    <div style="color:#60a5fa; font-size:17px; font-weight:700;">{row["score"]}</div>
+                </div>
+
+                <div>
+                    <div style="color:#91a0b7; font-size:12px; margin-bottom:2px;">Edge</div>
+                    <div style="color:{edge_color}; font-size:17px; font-weight:700;">{row["edge"]:.2f}%</div>
+                </div>
+                <div>
+                    <div style="color:#91a0b7; font-size:12px; margin-bottom:2px;">Units</div>
+                    <div style="color:#f8fafc; font-size:17px; font-weight:700;">{row["units"]:.2f}u</div>
+                </div>
+
+                <div>
+                    <div style="color:#91a0b7; font-size:12px; margin-bottom:2px;">Consensus</div>
+                    <div style="color:#f8fafc; font-size:17px; font-weight:700;">{row["consensus"]}</div>
+                </div>
+                <div>
+                    <div style="color:#91a0b7; font-size:12px; margin-bottom:2px;">Books Seen</div>
+                    <div style="color:#f8fafc; font-size:17px; font-weight:700;">{row["books_seen"]}</div>
+                </div>
+
+                <div>
+                    <div style="color:#91a0b7; font-size:12px; margin-bottom:2px;">Best Price</div>
+                    <div style="color:#f8fafc; font-size:17px; font-weight:700;">{row["best_price"]}</div>
+                </div>
+                <div>
+                    <div style="color:#91a0b7; font-size:12px; margin-bottom:2px;">Price Edge</div>
+                    <div style="color:#f8fafc; font-size:17px; font-weight:700;">{row["price_edge"]:.2f}%</div>
+                </div>
+            </div>
+
+            <div style="height:1px; background:#2a3448; margin:10px 0 12px 0;"></div>
+
+            <div style="margin-top:2px;">
+                <div style="color:#91a0b7; font-size:12px; margin-bottom:6px;">Confidence • {row["confidence"]}</div>
+                <div style="width:100%; height:8px; background:#263041; border-radius:999px; overflow:hidden;">
+                    <div style="width:{fill_width}; height:8px; background:{fill_color}; border-radius:999px;"></div>
+                </div>
+            </div>
+
+            <div style="height:12px;"></div>
+
+            <div>
+                {tags_html}
+            </div>
         </div>
-
-        <div class="dk-title">{row["selection"]}</div>
-        <div class="dk-subtitle">{row["game"]} • {str(row["market"]).title()}</div>
-
-        <div class="dk-grid">
-            <div>
-                <div class="dk-metric-label">Odds</div>
-                <div class="dk-metric-value">{row["odds"]}</div>
-            </div>
-            <div>
-                <div class="dk-metric-label">AI Score</div>
-                <div class="dk-metric-value {score_class}">{row["score"]}</div>
-            </div>
-
-            <div>
-                <div class="dk-metric-label">Edge</div>
-                <div class="dk-metric-value {edge_class}">{row["edge"]:.2f}%</div>
-            </div>
-            <div>
-                <div class="dk-metric-label">Units</div>
-                <div class="dk-metric-value">{row["units"]:.2f}u</div>
-            </div>
-
-            <div>
-                <div class="dk-metric-label">Consensus</div>
-                <div class="dk-metric-value">{row["consensus"]}</div>
-            </div>
-            <div>
-                <div class="dk-metric-label">Books Seen</div>
-                <div class="dk-metric-value">{row["books_seen"]}</div>
-            </div>
-
-            <div>
-                <div class="dk-metric-label">Best Price</div>
-                <div class="dk-metric-value">{row["best_price"]}</div>
-            </div>
-            <div>
-                <div class="dk-metric-label">Price Edge</div>
-                <div class="dk-metric-value">{row["price_edge"]:.2f}%</div>
-            </div>
-        </div>
-
-        <div class="dk-divider"></div>
-
-        <div class="conf-wrap">
-            <div class="dk-metric-label">Confidence • {row["confidence"]}</div>
-            <div class="conf-track">
-                <div class="{conf_class}"></div>
-            </div>
-        </div>
-
-        <div style="height:10px;"></div>
-
-        <div class="ai-tag-row">
-            {tags}
-        </div>
-    </div>
+    </body>
+    </html>
     """
-    st.markdown(html, unsafe_allow_html=True)
+
+    components.html(html, height=355, scrolling=False)
 
 
 def render_table_desktop(dataframe: pd.DataFrame):
@@ -503,7 +437,7 @@ best_score = best_row["score"] if best_row is not None else "—"
 # =========================================================
 # HEADER
 # =========================================================
-st.title("🔥 Sports Betting AI Dashboard V31.5.1")
+st.title("🔥 Sports Betting AI Dashboard V31.5.2")
 st.caption("DraftKings + Action Network + AI UI")
 
 # =========================================================

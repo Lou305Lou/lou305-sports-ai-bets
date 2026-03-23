@@ -1117,7 +1117,8 @@ elif nav == "Watchlist":
 # =========================================================
 elif nav == "AI Slip":
     st.header("🧠 AI Slip")
-        if today_games:
+
+    if today_games:
         st.caption("Live Slate: " + " | ".join(today_games))
     else:
         st.warning("No live slate entered.")
@@ -1152,8 +1153,16 @@ elif nav == "AI Slip":
         render_parlay_card(best_parlay)
 
     with st.expander("Show top parlay candidates", expanded=False):
-        render_parlay_table(sharp_candidates, "display_score", "Sharp Approved Candidates")
-        render_parlay_table(fallback_candidates, "display_score", "Balanced Fallback Candidates")
+        render_parlay_table(
+            sharp_candidates,
+            "display_score",
+            "Sharp Approved Candidates"
+        )
+        render_parlay_table(
+            fallback_candidates,
+            "display_score",
+            "Balanced Fallback Candidates"
+        )
 
     st.subheader("🧠 AI Portfolio Allocation")
     if not portfolio:
@@ -1181,6 +1190,7 @@ elif nav == "AI Slip":
                     "Summary": summary,
                 }
             )
+
         st.dataframe(pd.DataFrame(portfolio_rows), use_container_width=True, hide_index=True)
 
 

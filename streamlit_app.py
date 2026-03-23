@@ -1121,6 +1121,55 @@ def render_mobile_or_table(dataframe: pd.DataFrame, best_first: bool = False):
 
 
 # =========================================================
+# V32 PORTFOLIO ENGINE
+# =========================================================
+def build_ai_portfolio(best_single, chosen_parlay, parlay_candidates):
+    portfolio = []
+
+    if best_single is not None:
+        portfolio.append({
+            "type": "Single",
+            "label": "Core Play",
+            "units": 1.0,
+            "data": best_single
+        })
+
+    if chosen_parlay is not None:
+        portfolio.append({
+            "type": "Parlay",
+            "label": chosen_parlay.get("approval_type", "Sharp"),
+            "units": 1.0,
+            "data": chosen_parlay
+        })
+
+    fallback_2 = [
+        c for c in parlay_candidates
+        if c["leg_count"] == 2 and c.get("approval_type") != "Sharp Approved"
+    ]
+    if fallback_2:
+        portfolio.append({
+            "type": "Parlay",
+            "label": "Fallback 2-Leg",
+            "units": 0.75,
+            "data": fallback_2[0]
+        })
+
+    fallback_3 = [
+        c for c in parlay_candidates
+        if c["leg_count"] == 3
+    ]
+    if fallback_3:
+        portfolio.append({
+            "type": "Parlay",
+            "label": "Fallback 3-Leg",
+            "units": 0.25,
+            "data": fallback_3[0]
+        })
+
+    return portfolio
+
+
+# =========================================================
 # DATA BUILD
 # =========================================================
 df = generate_ai_plays()

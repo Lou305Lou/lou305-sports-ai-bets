@@ -8,13 +8,13 @@ import streamlit as st
 
 st.set_page_config(page_title="Sports Betting AI Dashboard V31.2", layout="wide")
 
-APP_TITLE = "🔥 Sports Betting AI Dashboard V31.2"
+APP_TITLE = "🔥 Sports Betting AI Dashboard V31.3"
 APP_SUBTITLE = "Dynamic Consensus + Best Price Optimizer"
 BET_LOG_PATH = Path("bet_log.csv")
 LEARNING_PROFILE_PATH = Path("learning_profile.csv")
 SNAPSHOT_PATH = Path("snapshot.csv")
 
-MIN_ACTIVE_EDGE = 1.75
+MIN_ACTIVE_EDGE = 1.25
 MAX_BEST_BETS = 3
 MAX_TIER_A = 3
 MAX_ACTIVE_PLAYS = 3
@@ -29,9 +29,9 @@ STRONG_BOOK_THRESHOLD = 4
 PRICE_EDGE_STRONG_THRESHOLD = 1.25
 DISPERSION_ALERT_THRESHOLD = 3.0
 PROMOTION_MIN_BOOKS = 2
-PROMOTION_MIN_PRICE_EDGE = 1.50
-PROMOTION_MIN_EDGE = 1.50
-PROMOTION_MIN_SCORE = 78.0
+PROMOTION_MIN_PRICE_EDGE = 1.35
+PROMOTION_MIN_EDGE = 1.25
+PROMOTION_MIN_SCORE = 74.0
 
 
 
@@ -820,15 +820,27 @@ def smart_promotable(row):
     score = safe_float(row.get("score"))
     consensus_quality = str(row.get("consensus_quality", ""))
     skip_game = bool(row.get("skip_game", False))
+    thin_market = bool(row.get("low_book_warning", False))
+    best_price = bool(row.get("best_price_flag", False))
     if skip_game:
         return False
     if books < PROMOTION_MIN_BOOKS or support < 2:
         return False
     if consensus_quality not in {"Fair", "Strong"}:
         return False
-    if score < PROMOTION_MIN_SCORE:
-        return False
-    return (price_edge >= PROMOTION_MIN_PRICE_EDGE) or (edge >= PROMOTION_MIN_EDGE)
+
+    price_override = (
+        books >= 2
+        and (not thin_market)
+        and best_price
+        and score >= 72
+        and price_edge >= 1.50
+    )
+    standard_promotion = (
+        score >= PROMOTION_MIN_SCORE
+        and ((price_edge >= PROMOTION_MIN_PRICE_EDGE) or (edge >= PROMOTION_MIN_EDGE))
+    )
+    return price_override or standard_promotion
 
 
 def final_rank_score(row):
@@ -1625,5 +1637,5 @@ st.download_button("Download Learning Profile CSV", profile_buf.getvalue(), file
 st.download_button("Download Snapshot CSV", snap_buf.getvalue(), file_name="snapshot.csv", mime="text/csv")
 
 st.caption(
-    "V31.2 adds smart promotion logic so high-quality fair-depth markets can surface as top plays without overpromoting weak games."
+    "V31.3 adds threshold tuning so fair two-book markets with real price edge can surface as top plays without forcing weak action."
 )

@@ -802,10 +802,11 @@ def auto_log_active_plays(df):
 
     for _, row in active_df.iterrows():
         play_id = row["play_id"]
+
         if play_id in st.session_state["auto_logged_ids"]:
             continue
 
-                log_row = {
+        log_row = {
             "play_id": play_id,
             "game": row["game"],
             "market": row["market"],

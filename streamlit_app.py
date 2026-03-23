@@ -1015,6 +1015,8 @@ def render_parlay_card(parlay):
         ">{reason}</span>
         """
 
+    parlay_score_value = parlay.get("display_score", parlay.get("score", "—"))
+
     html = f"""
     <html>
     <head>
@@ -1055,7 +1057,7 @@ def render_parlay_card(parlay):
             ">
                 <div>
                     <div style="color:#91a0b7; font-size:10px;">Parlay Score</div>
-                    <div style="font-size:15px; font-weight:800;">{parlay["display_score"]}</div>
+                    <div style="font-size:15px; font-weight:800;">{parlay_score_value}</div>
                 </div>
                 <div>
                     <div style="color:#91a0b7; font-size:10px;">Risk</div>
@@ -1086,13 +1088,13 @@ def render_parlay_table(candidates, score_key, title):
     for p in candidates[:5]:
         rows.append(
             {
-                "legs": p["leg_count"],
-                "combined_odds": p["combined_odds"],
-                "avg_true_conf": p["avg_true_conf"],
-                "score": p[score_key],
-                "risk": p["risk_label"],
-                "penalty": p["total_penalty"],
-                "legs_summary": " | ".join([leg["selection"] for leg in p["legs"]]),
+                "legs": p.get("leg_count"),
+                "combined_odds": p.get("combined_odds"),
+                "avg_true_conf": p.get("avg_true_conf"),
+                "score": p.get(score_key, p.get("score", p.get("display_score", "—"))),
+                "risk": p.get("risk_label"),
+                "penalty": p.get("total_penalty"),
+                "legs_summary": " | ".join([leg.get("selection", "") for leg in p.get("legs", [])]),
             }
         )
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)

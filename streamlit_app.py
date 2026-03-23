@@ -1252,7 +1252,7 @@ st.markdown(
 st.markdown("</div>", unsafe_allow_html=True)
 
 # =========================================================
-# NAVIGATION
+# NAVIGATION (MOBILE SAFE)
 # =========================================================
 st.markdown('<div class="nav-wrap">', unsafe_allow_html=True)
 st.markdown('<div class="section-title">🚀 Navigation</div>', unsafe_allow_html=True)

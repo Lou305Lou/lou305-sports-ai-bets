@@ -647,6 +647,8 @@ def score_parlay_combo(combo):
         "correlation_score": round(correlation_score, 2),
         "conservative_score": round(conservative_score, 1),
         "fallback_score": round(fallback_score, 1),
+        "score": round(fallback_score, 1),
+        "display_score": round(fallback_score, 1),
         "risk_label": risk_label,
         "reasons": (reasons + penalty_reasons)[:6],
     }
@@ -681,16 +683,24 @@ def classify_parlay_candidates(candidates):
         )
 
         fallback_ok = (
-    c["total_penalty"] <= FALLBACK_PARLAY_MAX_PENALTY
-    and c["combined_odds_int"] >= (MIN_PARLAY_ODDS + 80)
-    and c["avg_edge"] >= 1.5
-)
+            c["total_penalty"] <= FALLBACK_PARLAY_MAX_PENALTY
+            and c["combined_odds_int"] >= (MIN_PARLAY_ODDS + 80)
+            and c["avg_edge"] >= 1.5
+        )
 
         if sharp_ok:
-            sharp_candidates.append(c)
+            sharp_copy = c.copy()
+            sharp_copy["approval_type"] = "Sharp Approved"
+            sharp_copy["display_score"] = sharp_copy["conservative_score"]
+            sharp_copy["score"] = sharp_copy["conservative_score"]
+            sharp_candidates.append(sharp_copy)
 
         if fallback_ok:
-            fallback_candidates.append(c)
+            fallback_copy = c.copy()
+            fallback_copy["approval_type"] = "Balanced Fallback"
+            fallback_copy["display_score"] = fallback_copy["fallback_score"]
+            fallback_copy["score"] = fallback_copy["fallback_score"]
+            fallback_candidates.append(fallback_copy)
 
     sharp_candidates.sort(
         key=lambda x: (
@@ -724,12 +734,14 @@ def choose_best_parlay(active_df):
         chosen = sharp_best.copy()
         chosen["approval_type"] = "Sharp Approved"
         chosen["display_score"] = chosen["conservative_score"]
+        chosen["score"] = chosen["conservative_score"]
         return chosen, sharp_candidates, fallback_candidates
 
     if fallback_best is not None:
         chosen = fallback_best.copy()
         chosen["approval_type"] = "Balanced Fallback"
         chosen["display_score"] = chosen["fallback_score"]
+        chosen["score"] = chosen["fallback_score"]
         return chosen, sharp_candidates, fallback_candidates
 
     return None, sharp_candidates, fallback_candidates

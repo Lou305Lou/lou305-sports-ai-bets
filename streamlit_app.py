@@ -1117,6 +1117,10 @@ elif nav == "Watchlist":
 # =========================================================
 elif nav == "AI Slip":
     st.header("🧠 AI Slip")
+        if today_games:
+        st.caption("Live Slate: " + " | ".join(today_games))
+    else:
+        st.warning("No live slate entered.")
 
     if best_row is not None:
         slip_type = "Single best bet"

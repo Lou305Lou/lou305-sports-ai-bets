@@ -6,7 +6,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 st.set_page_config(
-    page_title="Sports Betting AI Dashboard V31.6.2",
+    page_title="Sports Betting AI Dashboard V31.6.3",
     layout="wide"
 )
 
@@ -279,19 +279,20 @@ def render_horizontal_nav():
 
     selected = st.session_state.get("nav_choice", "Top Plays")
 
-    html = '<div class="nav-scroll-wrap">'
+    html_parts = ['<div class="nav-scroll-wrap">']
     for label in labels:
         active = label == selected
         klass = "nav-pill active" if active else "nav-pill"
-        html += f"""
-        <a href="#"
-           onclick="window.parent.postMessage({{type: 'streamlit:setComponentValue', value: '{label}'}}, '*'); return false;"
-           class="{klass}">
-           <span class="nav-emoji">{icons[label]}</span>
-           <span>{label}</span>
-        </a>
-        """
-    html += "</div>"
+        html_parts.append(
+            f"""
+            <button onclick="selectNav('{label}')" class="{klass}">
+                <span class="nav-emoji">{icons[label]}</span>
+                <span>{label}</span>
+            </button>
+            """
+        )
+    html_parts.append("</div>")
+    pills_html = "".join(html_parts)
 
     nav_value = components.html(
         f"""
@@ -301,8 +302,8 @@ def render_horizontal_nav():
         <style>
         body {{
             margin: 0;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: transparent;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         }}
         .nav-scroll-wrap {{
             display: flex;
@@ -319,20 +320,22 @@ def render_horizontal_nav():
             display: inline-flex;
             align-items: center;
             gap: 7px;
-            text-decoration: none;
-            padding: 10px 14px;
+            padding: 9px 14px;
             border-radius: 999px;
-            border: 1px solid #e5e7eb;
+            border: 1px solid #d7dce6;
             background: #ffffff;
             color: #111827;
             font-size: 14px;
-            font-weight: 700;
+            font-weight: 750;
             box-sizing: border-box;
+            box-shadow: 0 1px 0 rgba(17, 24, 39, 0.03);
+            cursor: pointer;
         }}
         .nav-pill.active {{
-            background: #111827;
+            background: #0f172a;
             color: #ffffff;
-            border-color: #111827;
+            border-color: #0f172a;
+            box-shadow: 0 4px 14px rgba(15, 23, 42, 0.18);
         }}
         .nav-emoji {{
             font-size: 14px;
@@ -341,25 +344,21 @@ def render_horizontal_nav():
         </style>
         </head>
         <body>
-            {html}
+            {pills_html}
             <script>
-            const streamlitDoc = window.parent;
-            window.addEventListener("message", (event) => {{
-              if (event.data && event.data.type === "streamlit:setComponentValue") {{
-                const value = event.data.value;
-                const out = {{
-                  isStreamlitMessage: true,
-                  type: "streamlit:setComponentValue",
-                  value: value
-                }};
-                window.parent.postMessage(out, "*");
-              }}
-            }});
+                function selectNav(value) {{
+                    const message = {{
+                        isStreamlitMessage: true,
+                        type: "streamlit:setComponentValue",
+                        value: value
+                    }};
+                    window.parent.postMessage(message, "*");
+                }}
             </script>
         </body>
         </html>
         """,
-        height=54,
+        height=56,
     )
 
     if nav_value in labels:
@@ -369,7 +368,7 @@ def render_horizontal_nav():
 
 
 # =========================================================
-# MOBILE COMPACT CARD RENDERING
+# ELITE MOBILE CARD RENDERING
 # =========================================================
 def render_play_card(row: pd.Series, show_best_badge: bool = False):
     badge_bg, badge_fg = tier_colors(row["tier"])
@@ -385,26 +384,26 @@ def render_play_card(row: pd.Series, show_best_badge: bool = False):
     for tag in visible_tags:
         tags_html += f"""
         <span style="
-            background:#202838;
+            background:#1e2638;
             color:#d8e0ec;
-            border:1px solid #2d3748;
+            border:1px solid #2a3448;
             border-radius:999px;
-            padding:4px 8px;
+            padding:3px 7px;
             font-size:10px;
             line-height:1;
             display:inline-block;
-            margin-right:6px;
-            margin-bottom:5px;
+            margin-right:5px;
+            margin-bottom:4px;
             white-space:nowrap;
         ">{tag}</span>
         """
 
-    title_size = "22px" if is_mobile() else "27px"
+    title_size = "21px" if is_mobile() else "26px"
     subtitle_size = "12px" if is_mobile() else "14px"
     metric_label_size = "10px" if is_mobile() else "11px"
     metric_value_size = "14px" if is_mobile() else "16px"
-    card_padding = "13px" if is_mobile() else "15px"
-    card_height = 285 if is_mobile() else 330
+    card_padding = "12px" if is_mobile() else "15px"
+    card_height = 265 if is_mobile() else 320
 
     html = f"""
     <html>
@@ -413,18 +412,18 @@ def render_play_card(row: pd.Series, show_best_badge: bool = False):
     </head>
     <body style="margin:0; background:transparent; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
         <div style="
-            background:linear-gradient(180deg, #171d2a 0%, #101624 100%);
-            border:1px solid #273043;
+            background:linear-gradient(180deg, #151b29 0%, #0e1422 100%);
+            border:1px solid #243047;
             border-radius:22px;
             padding:{card_padding};
             color:#ffffff;
             box-sizing:border-box;
         ">
-            <div style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px;">
+            <div style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:7px;">
                 <span style="
                     background:{badge_bg};
                     color:{badge_fg};
-                    padding:5px 10px;
+                    padding:5px 9px;
                     border-radius:999px;
                     font-size:10px;
                     font-weight:800;
@@ -435,7 +434,7 @@ def render_play_card(row: pd.Series, show_best_badge: bool = False):
                 <span style="
                     background:{status_bg};
                     color:{status_fg};
-                    padding:5px 10px;
+                    padding:5px 9px;
                     border-radius:999px;
                     font-size:10px;
                     font-weight:800;
@@ -444,11 +443,11 @@ def render_play_card(row: pd.Series, show_best_badge: bool = False):
                 ">{row["status"]}</span>
 
                 <span style="
-                    background:#ead8ff;
+                    background:#efe2ff;
                     color:#6b21a8;
-                    padding:5px 10px;
+                    padding:4px 8px;
                     border-radius:999px;
-                    font-size:10px;
+                    font-size:9px;
                     font-weight:800;
                     line-height:1;
                     display:{best_display};
@@ -460,7 +459,7 @@ def render_play_card(row: pd.Series, show_best_badge: bool = False):
                 font-size:{title_size};
                 line-height:1.0;
                 font-weight:800;
-                margin:0 0 6px 0;
+                margin:0 0 5px 0;
                 letter-spacing:-0.03em;
                 color:#ffffff;
             ">{row["selection"]}</div>
@@ -468,14 +467,14 @@ def render_play_card(row: pd.Series, show_best_badge: bool = False):
             <div style="
                 color:#d4dbe8;
                 font-size:{subtitle_size};
-                margin-bottom:9px;
+                margin-bottom:8px;
             ">{row["game"]} • {str(row["market"]).title()}</div>
 
             <div style="
                 display:grid;
                 grid-template-columns:1fr 1fr;
-                gap:8px 12px;
-                margin-bottom:8px;
+                gap:6px 12px;
+                margin-bottom:6px;
             ">
                 <div>
                     <div style="color:#91a0b7; font-size:{metric_label_size}; margin-bottom:1px;">Odds</div>
@@ -514,18 +513,18 @@ def render_play_card(row: pd.Series, show_best_badge: bool = False):
                 </div>
             </div>
 
-            <div style="height:1px; background:#2a3448; margin:7px 0 8px 0;"></div>
+            <div style="height:1px; background:#283550; margin:6px 0 7px 0;"></div>
 
-            <div style="margin-top:0;">
+            <div>
                 <div style="color:#91a0b7; font-size:{metric_label_size}; margin-bottom:4px;">Confidence • {row["confidence"]}</div>
-                <div style="width:100%; height:5px; background:#263041; border-radius:999px; overflow:hidden;">
+                <div style="width:100%; height:5px; background:#24324b; border-radius:999px; overflow:hidden;">
                     <div style="width:{fill_width}; height:5px; background:{fill_color}; border-radius:999px;"></div>
                 </div>
             </div>
 
-            <div style="height:8px;"></div>
+            <div style="height:7px;"></div>
 
-            <div style="overflow:hidden; max-height:26px;">
+            <div style="overflow:hidden; max-height:22px;">
                 {tags_html}
             </div>
         </div>
@@ -590,8 +589,8 @@ html, body, [class*="css"] {
 }
 .block-container {
     max-width: 880px;
-    padding-top: 0.9rem;
-    padding-bottom: 2rem;
+    padding-top: 0.85rem;
+    padding-bottom: 1.8rem;
 }
 h1, h2, h3 {
     letter-spacing: -0.02em;
@@ -601,26 +600,26 @@ h1, h2, h3 {
     background: #ffffff;
     border: 1px solid #e7ebf2;
     border-radius: 18px;
-    padding: 11px 13px;
+    padding: 10px 12px;
     margin-bottom: 10px;
 }
 .metric-panel-title {
     color: #1f2937;
     font-weight: 800;
-    font-size: 0.96rem;
-    margin-bottom: 7px;
+    font-size: 0.94rem;
+    margin-bottom: 6px;
 }
 .metric-mini-grid {
     display: grid;
     grid-template-columns: repeat(2, 1fr);
-    gap: 9px 12px;
+    gap: 8px 12px;
 }
 .metric-mini-label {
-    font-size: 0.76rem;
+    font-size: 0.75rem;
     color: #6b7280;
 }
 .metric-mini-value {
-    font-size: 1rem;
+    font-size: 0.98rem;
     font-weight: 800;
     color: #111827;
 }
@@ -628,40 +627,40 @@ h1, h2, h3 {
     background: #ffffff;
     border: 1px solid #e6eaf2;
     border-radius: 18px;
-    padding: 11px 13px 8px 13px;
+    padding: 10px 12px 7px 12px;
     margin-bottom: 12px;
 }
 .section-title {
-    font-size: 1rem;
+    font-size: 0.98rem;
     font-weight: 800;
-    margin-bottom: 0.3rem;
+    margin-bottom: 0.25rem;
     color: #1e2430;
 }
 .slip-card {
-    background: linear-gradient(180deg, #171d2a 0%, #101624 100%);
-    border: 1px solid #273043;
+    background: linear-gradient(180deg, #151b29 0%, #0e1422 100%);
+    border: 1px solid #243047;
     border-radius: 22px;
-    padding: 14px;
+    padding: 13px;
     margin-bottom: 10px;
     box-shadow: 0 10px 24px rgba(0, 0, 0, 0.14);
 }
 .slip-kicker {
     color: #fbbf24;
-    font-size: 0.84rem;
+    font-size: 0.82rem;
     font-weight: 800;
-    margin-bottom: 6px;
+    margin-bottom: 5px;
 }
 .slip-title {
     color: #ffffff;
-    font-size: 1.45rem;
+    font-size: 1.35rem;
     font-weight: 800;
     margin-bottom: 5px;
     letter-spacing: -0.03em;
 }
 .slip-meta {
     color: #d6deea;
-    font-size: 0.88rem;
-    margin-bottom: 4px;
+    font-size: 0.86rem;
+    margin-bottom: 3px;
 }
 .bet-form-wrap {
     background: #ffffff;
@@ -691,8 +690,8 @@ h1, h2, h3 {
 # =========================================================
 # HEADER
 # =========================================================
-st.title("🔥 Sports Betting AI Dashboard V31.6.2")
-st.caption("Ultra Compact + Horizontal Nav • Dynamic Play Generation • Auto Bet Log")
+st.title("🔥 Sports Betting AI Dashboard V31.6.3")
+st.caption("Elite Mobile Finish • Dynamic Play Generation • Auto Bet Log")
 
 if auto_logged_count > 0:
     st.markdown(

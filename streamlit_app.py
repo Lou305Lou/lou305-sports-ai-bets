@@ -683,9 +683,9 @@ def classify_parlay_candidates(candidates):
         )
 
         fallback_ok = (
-            c["total_penalty"] <= FALLBACK_PARLAY_MAX_PENALTY
-            and c["combined_odds_int"] >= (MIN_PARLAY_ODDS + 80)
-            and c["avg_edge"] >= 1.5
+            c["total_penalty"] <= (FALLBACK_PARLAY_MAX_PENALTY + 0.08)
+            and c["combined_odds_int"] >= (MIN_PARLAY_ODDS + 40)
+            and c["avg_true_conf"] >= 55
         )
 
         if sharp_ok:

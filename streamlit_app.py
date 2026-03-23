@@ -447,7 +447,48 @@ def generate_ai_plays():
         ).reset_index(drop=True)
 
     return combined
+def calculate_correlation_score(legs):
+    """
+    Positive score = helpful correlation / diversification
+    Negative score = conflicting or lower-quality structure
+    """
 
+    score = 0.0
+
+    for i in range(len(legs)):
+        for j in range(i + 1, len(legs)):
+            a = legs[i]
+            b = legs[j]
+
+            same_game = a.get("game") == b.get("game")
+
+            market_a = market_family(a.get("market"))
+            market_b = market_family(b.get("market"))
+
+            sel_a = str(a.get("selection", "")).lower()
+            sel_b = str(b.get("selection", "")).lower()
+
+            if same_game:
+                # spread + total can be good or bad depending on direction
+                if {market_a, market_b} == {"spread", "total"}:
+                    if ("under" in sel_a) or ("under" in sel_b):
+                        score += 1.5
+                    elif ("over" in sel_a) or ("over" in sel_b):
+                        score -= 2.0
+
+                # moneyline + total is weaker but can still be acceptable
+                elif {market_a, market_b} == {"moneyline", "total"}:
+                    score += 0.25
+
+                # duplicate market exposure is worse
+                elif market_a == market_b:
+                    score -= 1.0
+
+            else:
+                # cross-game diversification bonus
+                score += 0.5
+
+    return score
 
 # =========================================================
 # PARLAY INTELLIGENCE

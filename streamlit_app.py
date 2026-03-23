@@ -689,6 +689,7 @@ def classify_parlay_candidates(candidates):
             sharp_candidates.append(c)
 
         if fallback_ok:
+            and c["avg_edge"] >= 1.5
             fallback_candidates.append(c)
 
     sharp_candidates.sort(

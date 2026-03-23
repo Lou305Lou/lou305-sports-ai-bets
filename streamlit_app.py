@@ -369,14 +369,7 @@ def generate_ai_plays():
         row["quality_score"] = quality_score
         row["decision_reasons"] = reasons
 
-        base_units = round(min(max(edge / 4.0, 0.05), 1.00), 2)
-        if consensus == "Thin":
-            base_units = round(max(base_units - 0.10, 0.05), 2)
-        if books_seen == 1:
-            base_units = round(max(base_units - 0.10, 0.05), 2)
-        if true_confidence < 58:
-            base_units = round(max(base_units - 0.10, 0.05), 2)
-        row["units"] = base_units
+        row["units"] = scale_single_units(row)
 
         tags = ["AI generated", "smart decision"]
         for reason in reasons:
@@ -812,7 +805,7 @@ def auto_log_active_plays(df):
         if play_id in st.session_state["auto_logged_ids"]:
             continue
 
-        log_row = {
+                log_row = {
             "play_id": play_id,
             "game": row["game"],
             "market": row["market"],
@@ -826,6 +819,10 @@ def auto_log_active_plays(df):
             "tier": row["tier"],
             "quality_label": row["quality_label"],
             "status": row["status"],
+            "test_mode": TEST_MODE,
+            "bet_type": "Single",
+            "result": "Pending",
+            "pnl": 0.0,
         }
 
         st.session_state["bet_log"].append(log_row)
@@ -1196,48 +1193,77 @@ def render_mobile_or_table(dataframe: pd.DataFrame, best_first: bool = False):
 # =========================================================
 def build_ai_portfolio(best_single, chosen_parlay, parlay_candidates):
     portfolio = []
+    used_ids = set()
+    total_units = 0.0
 
     if best_single is not None:
-        portfolio.append({
-            "type": "Single",
-            "label": "Core Play",
-            "units": 1.0,
-            "data": best_single
-        })
+        single_units = scale_single_units(best_single)
+        if total_units + single_units <= TEST_DAILY_UNIT_CAP:
+            portfolio.append({
+                "type": "Single",
+                "label": "Core Play",
+                "units": single_units,
+                "data": best_single
+            })
+            used_ids.add(best_single.get("play_id"))
+            total_units += single_units
 
     if chosen_parlay is not None:
-        portfolio.append({
-            "type": "Parlay",
-            "label": chosen_parlay.get("approval_type", "Sharp"),
-            "units": 1.0,
-            "data": chosen_parlay
-        })
+        parlay_units = scale_parlay_units(chosen_parlay)
+        chosen_key = tuple(sorted([leg.get("selection", "") for leg in chosen_parlay.get("legs", [])]))
+        if total_units + parlay_units <= TEST_DAILY_UNIT_CAP:
+            portfolio.append({
+                "type": "Parlay",
+                "label": chosen_parlay.get("approval_type", "Sharp"),
+                "units": parlay_units,
+                "data": chosen_parlay
+            })
+            used_ids.add(chosen_key)
+            total_units += parlay_units
 
     fallback_2 = [
         c for c in parlay_candidates
         if c["leg_count"] == 2 and c.get("approval_type") != "Sharp Approved"
     ]
 
-    if fallback_2:
-        portfolio.append({
-            "type": "Parlay",
-            "label": "Fallback 2-Leg",
-            "units": 0.75,
-            "data": fallback_2[0]
-        })
+    for c in fallback_2:
+        candidate_key = tuple(sorted([leg.get("selection", "") for leg in c.get("legs", [])]))
+        if candidate_key in used_ids:
+            continue
+
+        candidate_units = scale_parlay_units(c)
+        if total_units + candidate_units <= TEST_DAILY_UNIT_CAP:
+            portfolio.append({
+                "type": "Parlay",
+                "label": "Fallback 2-Leg",
+                "units": candidate_units,
+                "data": c
+            })
+            used_ids.add(candidate_key)
+            total_units += candidate_units
+            break
 
     fallback_3 = [
         c for c in parlay_candidates
         if c["leg_count"] == 3
     ]
 
-    if fallback_3:
-        portfolio.append({
-            "type": "Parlay",
-            "label": "Fallback 3-Leg",
-            "units": 0.25,
-            "data": fallback_3[0]
-        })
+    for c in fallback_3:
+        candidate_key = tuple(sorted([leg.get("selection", "") for leg in c.get("legs", [])]))
+        if candidate_key in used_ids:
+            continue
+
+        candidate_units = scale_parlay_units(c)
+        if total_units + candidate_units <= TEST_DAILY_UNIT_CAP:
+            portfolio.append({
+                "type": "Parlay",
+                "label": "Fallback 3-Leg",
+                "units": candidate_units,
+                "data": c
+            })
+            used_ids.add(candidate_key)
+            total_units += candidate_units
+            break
 
     return portfolio
 # =========================================================

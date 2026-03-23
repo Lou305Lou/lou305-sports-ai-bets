@@ -840,3 +840,117 @@ def auto_log_active_plays(df):
         count_added += 1
 
     return count_added
+
+# =========================================================
+# PLAY CARD RENDER
+# =========================================================
+def render_play_card(row: pd.Series, show_best_badge: bool = False):
+    badge_bg, badge_fg = tier_colors(row["tier"])
+    status_bg = "#f59e0b" if str(row["status"]) == "Active" else "#64748b"
+    status_fg = "#111827" if str(row["status"]) == "Active" else "#f8fafc"
+    best_display = "inline-flex" if show_best_badge else "none"
+    fill_width, fill_color = confidence_fill_and_color(row["confidence"])
+    edge_color = "#4ade80" if float(row["edge"]) >= 2 else "#fbbf24"
+
+    visible_tags = list(row["ai_tags"])[:3]
+    tags_html = ""
+    for tag in visible_tags:
+        tags_html += f"""
+        <span style="background:#1e2638;color:#d8e0ec;border:1px solid #2a3448;border-radius:999px;
+        padding:3px 7px;font-size:10px;line-height:1;display:inline-block;margin-right:5px;margin-bottom:4px;white-space:nowrap;">{tag}</span>
+        """
+
+    true_conf = row.get("true_confidence", None)
+    quality_label = row.get("quality_label", "")
+
+    tc_html = (
+        f'<div><div style="color:#91a0b7;font-size:10px;margin-bottom:1px;">True Conf</div>'
+        f'<div style="color:#f8fafc;font-size:14px;font-weight:700;">{true_conf:.1f}</div></div>'
+        if true_conf is not None else ""
+    )
+
+    ql_html = (
+        f'<div><div style="color:#91a0b7;font-size:10px;margin-bottom:1px;">Quality</div>'
+        f'<div style="color:#f8fafc;font-size:14px;font-weight:700;">{quality_label}</div></div>'
+        if quality_label else ""
+    )
+
+    html = f"""
+    <html><head><meta name="viewport" content="width=device-width, initial-scale=1" /></head>
+    <body style="margin:0;background:transparent;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+    <div style="background:linear-gradient(180deg, #151b29 0%, #0e1422 100%);
+    border:1px solid #243047;border-radius:22px;padding:12px;color:#ffffff;box-sizing:border-box;">
+
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:7px;">
+            <span style="background:{badge_bg};color:{badge_fg};padding:5px 9px;border-radius:999px;font-size:10px;font-weight:800;">Tier {row['tier']}</span>
+            <span style="background:{status_bg};color:{status_fg};padding:5px 9px;border-radius:999px;font-size:10px;font-weight:800;">{row['status']}</span>
+            <span style="background:#efe2ff;color:#6b21a8;padding:4px 8px;border-radius:999px;font-size:9px;font-weight:800;display:{best_display};">🏆 Best Bet</span>
+        </div>
+
+        <div style="font-size:21px;font-weight:800;margin-bottom:5px;">{row['selection']}</div>
+        <div style="color:#d4dbe8;font-size:12px;margin-bottom:8px;">{row['game']} • {str(row['market']).title()}</div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 12px;margin-bottom:6px;">
+            <div><div style="color:#91a0b7;font-size:10px;">Odds</div><div style="font-weight:700;">{row['odds']}</div></div>
+            <div><div style="color:#91a0b7;font-size:10px;">AI Score</div><div style="color:#60a5fa;font-weight:700;">{row['score']}</div></div>
+            <div><div style="color:#91a0b7;font-size:10px;">Edge</div><div style="color:{edge_color};font-weight:700;">{row['edge']:.2f}%</div></div>
+            <div><div style="color:#91a0b7;font-size:10px;">Units</div><div style="font-weight:700;">{row['units']:.2f}u</div></div>
+            <div><div style="color:#91a0b7;font-size:10px;">Consensus</div><div style="font-weight:700;">{row['consensus']}</div></div>
+            <div><div style="color:#91a0b7;font-size:10px;">Books</div><div style="font-weight:700;">{row['books_seen']}</div></div>
+            {tc_html}
+            {ql_html}
+        </div>
+
+        <div style="height:1px;background:#283550;margin:6px 0;"></div>
+
+        <div style="color:#91a0b7;font-size:10px;">Confidence • {row['confidence']}</div>
+        <div style="width:100%;height:5px;background:#24324b;border-radius:999px;">
+            <div style="width:{fill_width};height:5px;background:{fill_color};border-radius:999px;"></div>
+        </div>
+
+        <div style="margin-top:6px;">{tags_html}</div>
+
+    </div></body></html>
+    """
+
+    components.html(html, height=285 if is_mobile() else 340, scrolling=False)
+
+
+# =========================================================
+# PARLAY CARD RENDER
+# =========================================================
+def render_parlay_card(parlay):
+    if not parlay:
+        st.info("No qualifying parlay available.")
+        return
+
+    risk_color = {
+        "Low": "#10b981",
+        "Moderate": "#f59e0b",
+        "Elevated": "#ef4444",
+    }.get(parlay["risk_label"], "#94a3b8")
+
+    approval_bg = "#dcfce7" if parlay["approval_type"] == "Sharp Approved" else "#fef3c7"
+    approval_fg = "#166534" if parlay["approval_type"] == "Sharp Approved" else "#92400e"
+
+    legs_html = ""
+    for i, leg in enumerate(parlay["legs"], start=1):
+        legs_html += f"""
+        <div style="padding:6px 0;border-bottom:1px solid #243047;">
+            <div style="font-weight:800;">{i}. {leg['selection']}</div>
+            <div style="font-size:12px;color:#cbd5e1;">{leg['game']} • {leg['odds']}</div>
+        </div>
+        """
+
+    html = f"""
+    <div style="background:#0e1422;border-radius:20px;padding:12px;border:1px solid #243047;">
+        <div style="font-weight:800;">🔥 AI PARLAY</div>
+        <div style="margin-bottom:8px;">{parlay['approval_type']}</div>
+        <div>Odds: {parlay['combined_odds']} | Conf: {parlay['avg_true_conf']}</div>
+        <div style="color:{risk_color};font-weight:800;">Risk: {parlay['risk_label']}</div>
+        {legs_html}
+    </div>
+    """
+    st.markdown(html, unsafe_allow_html=True)
+
+

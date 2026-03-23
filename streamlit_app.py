@@ -6,9 +6,9 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Sports Betting AI Dashboard V31", layout="wide")
+st.set_page_config(page_title="Sports Betting AI Dashboard V31.1", layout="wide")
 
-APP_TITLE = "🔥 Sports Betting AI Dashboard V31"
+APP_TITLE = "🔥 Sports Betting AI Dashboard V31.1"
 APP_SUBTITLE = "Dynamic Consensus + Best Price Optimizer"
 BET_LOG_PATH = Path("bet_log.csv")
 LEARNING_PROFILE_PATH = Path("learning_profile.csv")
@@ -41,6 +41,16 @@ def safe_float(x, default=0.0):
         return float(x)
     except Exception:
         return default
+
+
+def display_num(x, digits=2, suffix=""):
+    try:
+        val = float(x)
+        if pd.isna(val):
+            return "—"
+        return f"{val:.{digits}f}{suffix}"
+    except Exception:
+        return "—"
 
 
 def american_to_prob(odds):
@@ -545,6 +555,7 @@ def selection_market_key(row):
     return f"{row.get('game')}|{row.get('market')}|{line}"
 
 
+
 def enrich_market_context(df):
     df = df.copy()
     if df.empty:
@@ -572,6 +583,14 @@ def enrich_market_context(df):
     df["best_market_odds"] = df["selection_market_key"].map(best_odds_map)
     df["price_dispersion"] = df["selection_market_key"].map(dispersion_map)
     df["best_book"] = df["selection_market_key"].map(best_book_map)
+
+    # Preserve API-reported signal count, but score and display consensus using real unique books.
+    df["signal_count"] = pd.to_numeric(df.get("consensus_count"), errors="coerce").fillna(0).astype(int)
+    df["consensus_count"] = np.minimum(
+        df["signal_count"],
+        df["available_books_count"].where(df["available_books_count"] > 0, df["signal_count"]),
+    ).astype(int)
+
     df["price_edge_pct"] = df.apply(
         lambda r: price_edge_from_market(r.get("odds"), r.get("consensus_price", r.get("market_avg_odds"))),
         axis=1,
@@ -582,27 +601,41 @@ def enrich_market_context(df):
         (df["best_book"].astype(str) == df["book"].astype(str))
         | (pd.to_numeric(df["best_market_odds"], errors="coerce") == pd.to_numeric(df["odds"], errors="coerce"))
     )
-    df["consensus_strength"] = (
-        np.minimum(df["consensus_count"].fillna(0), df["available_books_count"].replace(0, np.nan).fillna(df["consensus_count"].fillna(0)))
-        / np.maximum(df["available_books_count"].replace(0, np.nan).fillna(df["consensus_count"].fillna(0)), 1)
-    ) * 100.0
-    df["consensus_strength"] = df["consensus_strength"].fillna(0).round(1)
+
+    real_books = df["available_books_count"].replace(0, np.nan)
+    df["consensus_strength"] = (df["consensus_count"] / real_books) * 100.0
+    df.loc[df["available_books_count"] < 2, "consensus_strength"] = np.nan
+    df["consensus_strength"] = df["consensus_strength"].round(1)
+
     df["low_book_warning"] = (
-        (df["available_books_count"].fillna(0) < LOW_BOOK_THRESHOLD)
-        | (df["consensus_count"].fillna(0) < LOW_BOOK_THRESHOLD)
+        (df["available_books_count"].fillna(0) < 2)
+        | (df["consensus_count"].fillna(0) < 2)
     )
     df["consensus_quality"] = np.where(
-        df["available_books_count"].fillna(0) >= STRONG_BOOK_THRESHOLD,
-        "Strong",
-        np.where(df["available_books_count"].fillna(0) >= LOW_BOOK_THRESHOLD, "Fair", "Thin"),
+        df["available_books_count"].fillna(0) < 2,
+        "Thin",
+        np.where(
+            (df["available_books_count"].fillna(0) >= 4) & (df["consensus_count"].fillna(0) >= 3),
+            "Strong",
+            "Fair",
+        ),
     )
+
+    # Dispersion only means something when multiple books are actually available.
+    df.loc[df["available_books_count"] < 2, "price_dispersion"] = np.nan
+
     df["market_depth_score"] = (
         np.clip(df["available_books_count"].fillna(0), 0, 5) * 4.0
-        + np.clip(df["consensus_strength"].fillna(0) / 20.0, 0, 5) * 2.0
+        + np.clip(df["consensus_count"].fillna(0), 0, 5) * 1.6
     )
     df["price_edge_score"] = np.clip(df["price_edge_pct"].fillna(0), -2.5, 3.5) * 8.0
     df["best_price_boost"] = np.where(df["best_price_flag"], 5.0, 0.0)
     df["dispersion_penalty"] = np.clip(df["price_dispersion"].fillna(0) - DISPERSION_ALERT_THRESHOLD, 0, 8) * 0.9
+    df["thin_market_penalty"] = np.where(
+        df["available_books_count"].fillna(0) < 2,
+        14.0,
+        np.where(df["available_books_count"].fillna(0) < 3, 6.0, 0.0),
+    )
     df["disagreement_signal"] = (
         df["book_disagreement"].fillna(0) * 4.0
         + np.clip(df["price_dispersion"].fillna(0), 0, 8) * 0.8
@@ -629,12 +662,12 @@ def prepare_rows(df, adaptive_context=None):
     df["consensus_bucket"] = df["consensus_count"].apply(consensus_bucket)
     df["market_priority"] = df["market"].map({"moneyline": 3, "spread": 2, "total": 1}).fillna(0)
     df["consensus_boost"] = np.where(
-        df["consensus_count"].fillna(0) >= 5, 12,
-        np.where(df["consensus_count"].fillna(0) >= 4, 8, np.where(df["consensus_count"].fillna(0) >= 3, 3, -3))
+        df["consensus_count"].fillna(0) >= 4, 10,
+        np.where(df["consensus_count"].fillna(0) >= 3, 6, np.where(df["consensus_count"].fillna(0) >= 2, 2, -4))
     )
     df["depth_boost"] = np.where(
         df["available_books_count"].fillna(0) >= 5, 10,
-        np.where(df["available_books_count"].fillna(0) >= 4, 7, np.where(df["available_books_count"].fillna(0) >= 3, 3, -4))
+        np.where(df["available_books_count"].fillna(0) >= 4, 7, np.where(df["available_books_count"].fillna(0) >= 3, 3, np.where(df["available_books_count"].fillna(0) >= 2, 0, -8)))
     )
     df["clv_boost"] = np.clip(df["clv_projection"].fillna(0), -5, 20) * 0.18
     df["disagreement_boost"] = df["disagreement_signal"].fillna(0)
@@ -653,6 +686,7 @@ def prepare_rows(df, adaptive_context=None):
         + df["clv_boost"]
         + df["disagreement_boost"]
         - df["dispersion_penalty"].fillna(0)
+        - df["thin_market_penalty"].fillna(0)
     )
     df["market_adaptive_adj"] = df["market"].astype(str).map(adaptive_context.get("market_map", {})).fillna(0.0)
     df["bucket_key"] = list(zip(df["market"].astype(str), df["odds_bucket"].astype(str), df["consensus_bucket"].astype(str)))
@@ -692,12 +726,11 @@ def assign_tier(row):
     score = safe_float(row.get("score"))
     consensus = safe_float(row.get("consensus_count"))
     books = safe_float(row.get("available_books_count"))
-    price_edge = safe_float(row.get("price_edge_pct"))
-    if edge >= 3.0 and score >= 86 and consensus >= 4 and books >= 3:
+    if edge >= 3.0 and score >= 86 and consensus >= 3 and books >= 3:
         return "A"
-    if edge >= 1.8 and score >= 74 and books >= 3:
+    if edge >= 1.8 and score >= 74 and consensus >= 2 and books >= 2:
         return "B"
-    if edge >= 1.0 and score >= 62 and not bool(row.get("low_book_warning", False)):
+    if edge >= 1.0 and score >= 62:
         return "C"
     return "Watch"
 
@@ -723,33 +756,40 @@ def correlation_tag(row):
 
 def confidence_label(row):
     score = safe_float(row.get("score"))
+    books = safe_float(row.get("available_books_count"))
+    label = "Low"
     if score >= 90:
-        return "Elite"
-    if score >= 75:
-        return "High"
-    if score >= 60:
+        label = "Elite"
+    elif score >= 75:
+        label = "High"
+    elif score >= 60:
+        label = "Medium"
+
+    if books < 2 and label in {"Elite", "High"}:
         return "Medium"
-    return "Low"
+    if books < 3 and label == "Elite":
+        return "High"
+    return label
 
 def explainability(row):
     reasons = []
+    books = safe_float(row.get("available_books_count"))
+    support = safe_float(row.get("consensus_count"))
     if safe_float(row.get("edge_pct")) >= 2.0:
         reasons.append("model edge")
     if safe_float(row.get("price_edge_pct")) >= PRICE_EDGE_STRONG_THRESHOLD:
         reasons.append("best price edge")
     if bool(row.get("best_price_flag")):
         reasons.append("best available price")
-    if safe_float(row.get("consensus_count")) >= 4:
-        reasons.append(f"{int(safe_float(row.get('consensus_count')))}-book support")
-    elif safe_float(row.get("consensus_count")) >= 3:
-        reasons.append("usable consensus")
-    if safe_float(row.get("available_books_count")) >= STRONG_BOOK_THRESHOLD:
+    if books >= 4 and support >= 3:
         reasons.append("solid market depth")
+    elif books >= 2 and support >= 2:
+        reasons.append("usable consensus")
     if safe_float(row.get("sharp_score")) >= 55:
         reasons.append("sharp support")
     if safe_float(row.get("book_disagreement")) >= 1 or safe_float(row.get("price_dispersion")) >= DISPERSION_ALERT_THRESHOLD:
         reasons.append("market disagreement")
-    if bool(row.get("low_book_warning", False)):
+    if books < 2:
         reasons.append("thin book pool")
     if not reasons:
         reasons.append("watch only")
@@ -1333,9 +1373,9 @@ def render_play_cards(df, title):
                     <div>Books Seen: <b>{int(safe_float(row['available_books_count']))}</b></div>
                     <div>Support: <b>{int(safe_float(row['consensus_count']))} books</b></div>
                     <div>Best Book: <b>{row['best_book'] if str(row.get('best_book', '')) else row['book']}</b></div>
-                    <div>Price Edge: <b>{safe_float(row['price_edge_pct']):.2f}%</b></div>
-                    <div>Consensus: <b>{safe_float(row['consensus_strength']):.0f}%</b></div>
-                    <div>Dispersion: <b>{safe_float(row['price_dispersion']):.2f}%</b></div>
+                    <div>Price Edge: <b>{display_num(row.get('price_edge_pct'), 2, '%')}</b></div>
+                    <div>Consensus: <b>{row.get('consensus_quality', 'Thin')}</b></div>
+                    <div>Dispersion: <b>{display_num(row.get('price_dispersion'), 2, '%')}</b></div>
                     <div>Confidence: <b>{row['confidence']}</b></div>
                     <div>Correlation: <b>{row['correlation']}</b></div>
                     <div>Best Price: <b>{'Yes' if bool(row.get('best_price_flag', False)) else 'No'}</b></div>
@@ -1358,7 +1398,7 @@ st.title(APP_TITLE)
 st.caption(APP_SUBTITLE)
 
 with st.sidebar:
-    st.header("V31 Controls")
+    st.header("V31.1 Controls")
     aggressive = st.toggle("Aggressive mode", value=True)
     auto_log = st.toggle("Auto-log active plays", value=True)
     elite_only = st.toggle("Elite plays only", value=False)

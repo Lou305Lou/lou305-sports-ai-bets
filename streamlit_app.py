@@ -802,28 +802,27 @@ def auto_log_active_plays(df):
 
     for _, row in active_df.iterrows():
         play_id = row["play_id"]
-
         if play_id in st.session_state["auto_logged_ids"]:
             continue
 
         log_row = {
             "play_id": play_id,
+            "added_time": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M"),
+            "test_mode": TEST_MODE,
+            "bet_type": "AI Auto",
+            "label": f'{row["status"]} {row["tier"]}',
             "game": row["game"],
             "market": row["market"],
             "selection": row["selection"],
             "odds": row["odds"],
-            "edge": row["edge"],
-            "score": row["score"],
             "units": row["units"],
             "confidence": row["confidence"],
             "true_confidence": row["true_confidence"],
-            "tier": row["tier"],
-            "quality_label": row["quality_label"],
-            "status": row["status"],
-            "test_mode": TEST_MODE,
-            "bet_type": "Single",
+            "edge": row["edge"],
+            "score": row["score"],
             "result": "Pending",
             "pnl": 0.0,
+            "status": row["status"],
         }
 
         st.session_state["bet_log"].append(log_row)

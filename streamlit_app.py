@@ -934,7 +934,169 @@ def build_ai_portfolio(best_single, chosen_parlay, parlay_candidates):
 
     return portfolio
 
+# =========================================================
+# DATA GENERATION (LIVE SLATE FIX)
+# =========================================================
+def generate_ai_plays():
+    if not today_games:
+        return pd.DataFrame(columns=[
+            "game",
+            "market",
+            "selection",
+            "odds",
+            "edge",
+            "score",
+            "units",
+            "tier",
+            "quality_label",
+            "status",
+            "confidence",
+            "books_seen",
+            "best_price",
+            "consensus",
+            "price_edge",
+            "ai_tags",
+            "true_confidence",
+            "quality_score",
+            "decision_reasons",
+            "rank_score",
+            "play_id",
+        ])
 
+    market_templates = [
+        ("moneyline", lambda g: g.split(" vs ")[1]),
+        ("moneyline", lambda g: g.split(" vs ")[0]),
+        ("total", lambda g: "Over 221.5"),
+        ("total", lambda g: "Under 221.5"),
+        ("spread", lambda g: f"{g.split(' vs ')[1]} -4.5"),
+        ("spread", lambda g: f"{g.split(' vs ')[0]} +4.5"),
+    ]
+
+    odds_pool = ["-132", "-118", "-110", "-105", "-102", "+100", "+110", "+120", "+135"]
+    consensus_pool = ["Strong", "Fair", "Thin"]
+    confidence_pool = ["Medium", "High", "Elite"]
+
+    rows = []
+    random.seed(31)
+
+    for game in today_games:
+        for market, selection_fn in market_templates:
+            edge = round(random.uniform(0.80, 5.20), 2)
+            score = round(random.uniform(80.0, 99.5), 1)
+            confidence = random.choices(confidence_pool, weights=[3, 5, 2], k=1)[0]
+            books_seen = random.randint(1, 4)
+            odds = random.choice(odds_pool)
+            consensus = random.choices(consensus_pool, weights=[3, 5, 2], k=1)[0]
+            price_edge = round(random.uniform(0.40, 2.60), 2)
+
+            if edge < MIN_ACTIVE_EDGE:
+                continue
+            if not in_allowed_odds_range(odds, *DEFAULT_ODDS_RANGE):
+                continue
+
+            row = {
+                "game": game,
+                "market": market,
+                "selection": selection_fn(game),
+                "odds": odds,
+                "edge": edge,
+                "score": score,
+                "units": 0.0,
+                "tier": "C",
+                "quality_label": "Watch",
+                "status": "Watch",
+                "confidence": confidence,
+                "books_seen": books_seen,
+                "best_price": "Yes" if price_edge >= 1.25 else "No",
+                "consensus": consensus,
+                "price_edge": price_edge,
+                "ai_tags": ["AI generated", "live slate"],
+            }
+
+            tc, qs, reasons = compute_true_confidence(row)
+            row["true_confidence"] = tc
+            row["quality_score"] = qs
+            row["decision_reasons"] = reasons
+            row["units"] = scale_single_units(row)
+
+            tags = ["AI generated", "live slate"]
+            for reason in reasons:
+                if reason not in tags:
+                    tags.append(reason)
+            row["ai_tags"] = tags[:6]
+
+            rows.append(row)
+
+    df = pd.DataFrame(rows)
+
+    if df.empty:
+        return pd.DataFrame(columns=[
+            "game",
+            "market",
+            "selection",
+            "odds",
+            "edge",
+            "score",
+            "units",
+            "tier",
+            "quality_label",
+            "status",
+            "confidence",
+            "books_seen",
+            "best_price",
+            "consensus",
+            "price_edge",
+            "ai_tags",
+            "true_confidence",
+            "quality_score",
+            "decision_reasons",
+            "rank_score",
+            "play_id",
+        ])
+
+    df["rank_score"] = (
+        df["quality_score"] * 100 * 0.55
+        + df["score"] * 0.15
+        + df["edge"] * 6
+        + df["price_edge"] * 4
+        + df["books_seen"] * 1.5
+    )
+
+    def decide_status(row):
+        q = float(row["quality_score"])
+        e = float(row["edge"])
+        b = int(row["books_seen"])
+        c = str(row["consensus"])
+
+        if q >= QUALITY_ACTIVE_PRIMARY and e >= ACTIVE_EDGE_PROMOTION:
+            return "Active"
+        if q >= QUALITY_ACTIVE_SECONDARY and e >= MIN_ACTIVE_EDGE:
+            return "Active"
+        if q >= 0.61 and e >= 1.40 and b >= 3 and c in ["Strong", "Fair"]:
+            return "Active"
+        return "Watch"
+
+    df["status"] = df.apply(decide_status, axis=1)
+
+    df["tier"] = df.apply(
+        lambda r: "A" if r["true_confidence"] >= 78 else ("B" if r["true_confidence"] >= 60 else "C"),
+        axis=1,
+    )
+    df["quality_label"] = df["tier"].apply(quality_label_from_tier)
+
+    df["play_id"] = df.apply(
+        lambda r: build_play_id(
+            {
+                "game": r["game"],
+                "market": r["market"],
+                "selection": r["selection"],
+                "odds": r["odds"],
+            }
+        ),
+        axis=1,
+    )
+
+    return df.sort_values(["status", "rank_score"], ascending=[True, False]).reset_index(drop=True)
 # =========================================================
 # DATA BUILD
 # =========================================================

@@ -1,12 +1,13 @@
 import hashlib
 import random
+from itertools import combinations
 
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
 st.set_page_config(
-    page_title="Sports Betting AI Dashboard V31.7.2",
+    page_title="Sports Betting AI Dashboard V31.8",
     layout="wide"
 )
 
@@ -45,6 +46,10 @@ QUALITY_ACTIVE_PRIMARY = 0.58
 QUALITY_ACTIVE_SECONDARY = 0.64
 QUALITY_FLOOR_FALLBACK = 0.54
 
+MIN_PARLAY_LEGS = 2
+MAX_PARLAY_LEGS = 3
+MIN_PARLAY_ODDS = 200
+
 
 # =========================================================
 # HELPERS
@@ -54,6 +59,31 @@ def american_to_int(odds_str):
         return int(str(odds_str).replace("+", "").strip())
     except Exception:
         return None
+
+
+def american_to_decimal(odds_str):
+    odds_val = american_to_int(odds_str)
+    if odds_val is None:
+        return None
+    if odds_val > 0:
+        return 1 + (odds_val / 100.0)
+    return 1 + (100.0 / abs(odds_val))
+
+
+def decimal_to_american(decimal_odds):
+    if decimal_odds is None or decimal_odds <= 1:
+        return None
+    if decimal_odds >= 2:
+        return int(round((decimal_odds - 1) * 100))
+    return int(round(-100 / (decimal_odds - 1)))
+
+
+def format_american(odds_val):
+    if odds_val is None:
+        return "N/A"
+    if odds_val > 0:
+        return f"+{int(odds_val)}"
+    return str(int(odds_val))
 
 
 def in_allowed_odds_range(odds_str, min_odds=-200, max_odds=150):
@@ -223,7 +253,7 @@ def compute_true_confidence(row):
 
 
 # =========================================================
-# DYNAMIC ENGINE + SMART DECISION
+# ENGINE
 # =========================================================
 def generate_ai_plays():
     base_rows = [
@@ -285,7 +315,6 @@ def generate_ai_plays():
         row["quality_score"] = quality_score
         row["decision_reasons"] = reasons
 
-        # unit sizing
         base_units = round(min(max(edge / 4.0, 0.05), 1.00), 2)
         if consensus == "Thin":
             base_units = round(max(base_units - 0.10, 0.05), 2)
@@ -324,18 +353,14 @@ def generate_ai_plays():
 
         if q >= QUALITY_ACTIVE_PRIMARY and e >= ACTIVE_EDGE_PROMOTION:
             return "Active"
-
         if q >= QUALITY_ACTIVE_SECONDARY and e >= MIN_ACTIVE_EDGE:
             return "Active"
-
         if q >= 0.61 and e >= 1.40 and b >= 3 and c in ["Strong", "Fair"]:
             return "Active"
-
         return "Watch"
 
     df["status"] = df.apply(decide_status, axis=1)
 
-    # fallback safeguard
     active_df = df[df["status"] == "Active"].copy().sort_values("rank_score", ascending=False)
     watch_df = df[df["status"] == "Watch"].copy().sort_values("rank_score", ascending=False)
 
@@ -350,7 +375,6 @@ def generate_ai_plays():
             promote_ids = fallback_pool.head(promote_n).index.tolist()
             df.loc[promote_ids, "status"] = "Active"
 
-    # normalized tiering
     def normalized_tier(row):
         tc = float(row["true_confidence"])
         status = str(row["status"])
@@ -362,7 +386,6 @@ def generate_ai_plays():
         else:
             tier = "C"
 
-        # safeguard: active plays cannot display below Tier B
         if status == "Active" and tier == "C":
             tier = "B"
 
@@ -370,7 +393,6 @@ def generate_ai_plays():
 
     df["tier"] = df.apply(normalized_tier, axis=1)
     df["quality_label"] = df["tier"].apply(quality_label_from_tier)
-
     df = df.sort_values(["status", "rank_score"], ascending=[True, False]).reset_index(drop=True)
 
     active_df = df[df["status"] == "Active"].copy().sort_values("rank_score", ascending=False)
@@ -412,11 +434,183 @@ def generate_ai_plays():
     )
 
     if "rank_score" in combined.columns:
-        combined = combined.sort_values(
-            ["status", "rank_score"], ascending=[True, False]
-        ).reset_index(drop=True)
+        combined = combined.sort_values(["status", "rank_score"], ascending=[True, False]).reset_index(drop=True)
 
     return combined
+
+
+# =========================================================
+# PARLAY INTELLIGENCE
+# =========================================================
+def market_family(market):
+    m = str(market).lower()
+    if "moneyline" in m:
+        return "moneyline"
+    if "spread" in m:
+        return "spread"
+    if "total" in m:
+        return "total"
+    return "other"
+
+
+def selections_conflict(row_a, row_b):
+    if row_a["game"] != row_b["game"]:
+        return False
+
+    fam_a = market_family(row_a["market"])
+    fam_b = market_family(row_b["market"])
+    sel_a = str(row_a["selection"]).lower()
+    sel_b = str(row_b["selection"]).lower()
+
+    if fam_a == fam_b and row_a["selection"] != row_b["selection"]:
+        return True
+
+    teams = []
+    try:
+        teams = [t.strip().lower() for t in str(row_a["game"]).split("vs")]
+    except Exception:
+        teams = []
+
+    if len(teams) == 2:
+        t1, t2 = teams[0], teams[1]
+        if (t1 in sel_a and t2 in sel_b) or (t2 in sel_a and t1 in sel_b):
+            return True
+
+    return False
+
+
+def pair_correlation_penalty(row_a, row_b):
+    penalty = 0.0
+    reasons = []
+
+    if selections_conflict(row_a, row_b):
+        return 1.0, ["conflicting legs"]
+
+    if row_a["game"] == row_b["game"]:
+        penalty += 0.18
+        reasons.append("same-game correlation")
+
+        fam_a = market_family(row_a["market"])
+        fam_b = market_family(row_b["market"])
+
+        if fam_a == fam_b:
+            penalty += 0.12
+            reasons.append("same-market overlap")
+
+        if {fam_a, fam_b} == {"moneyline", "spread"}:
+            penalty += 0.08
+            reasons.append("side correlation")
+
+    return clamp(penalty, 0.0, 1.0), reasons
+
+
+def build_parlay_candidates(active_df):
+    if active_df.empty or len(active_df) < 2:
+        return []
+
+    candidates = []
+    rows = active_df.to_dict("records")
+
+    for leg_count in range(MIN_PARLAY_LEGS, min(MAX_PARLAY_LEGS, len(rows)) + 1):
+        for combo in combinations(rows, leg_count):
+            combo = list(combo)
+
+            total_penalty = 0.0
+            penalty_reasons = []
+            valid = True
+
+            for a, b in combinations(combo, 2):
+                penalty, reasons = pair_correlation_penalty(a, b)
+                if penalty >= 1.0:
+                    valid = False
+                    break
+                total_penalty += penalty
+                penalty_reasons.extend(reasons)
+
+            if not valid:
+                continue
+
+            decimal_odds = 1.0
+            for leg in combo:
+                dec = american_to_decimal(leg["odds"])
+                if dec is None:
+                    valid = False
+                    break
+                decimal_odds *= dec
+
+            if not valid:
+                continue
+
+            combined_american = decimal_to_american(decimal_odds)
+            if combined_american is None or combined_american < MIN_PARLAY_ODDS:
+                continue
+
+            avg_true_conf = sum(float(leg["true_confidence"]) for leg in combo) / len(combo)
+            avg_edge = sum(float(leg["edge"]) for leg in combo) / len(combo)
+            avg_books = sum(float(leg["books_seen"]) for leg in combo) / len(combo)
+            avg_price_edge = sum(float(leg["price_edge"]) for leg in combo) / len(combo)
+
+            distinct_games = len(set(leg["game"] for leg in combo))
+            game_diversity_bonus = 0.12 if distinct_games == len(combo) else 0.02
+
+            raw_score = (
+                avg_true_conf * 0.55
+                + avg_edge * 6.0
+                + avg_price_edge * 4.0
+                + avg_books * 1.2
+                + (game_diversity_bonus * 100)
+            )
+
+            adjusted_score = raw_score - (total_penalty * 30)
+
+            if total_penalty <= 0.08 and avg_true_conf >= 64:
+                risk_label = "Low"
+            elif total_penalty <= 0.22 and avg_true_conf >= 58:
+                risk_label = "Moderate"
+            else:
+                risk_label = "Elevated"
+
+            reasons = []
+            if distinct_games == len(combo):
+                reasons.append("cross-game diversification")
+            else:
+                reasons.append("same-game correlation adjusted")
+
+            if avg_true_conf >= 62:
+                reasons.append("high true confidence")
+            elif avg_true_conf >= 57:
+                reasons.append("solid true confidence")
+
+            if avg_books >= 3:
+                reasons.append("broad book support")
+
+            if avg_price_edge >= 1.2:
+                reasons.append("price support")
+
+            candidates.append(
+                {
+                    "legs": combo,
+                    "leg_count": len(combo),
+                    "combined_odds": format_american(combined_american),
+                    "combined_odds_int": combined_american,
+                    "avg_true_conf": round(avg_true_conf, 1),
+                    "avg_edge": round(avg_edge, 2),
+                    "parlay_score": round(adjusted_score, 1),
+                    "risk_label": risk_label,
+                    "reasons": (reasons + penalty_reasons)[:6],
+                }
+            )
+
+    candidates.sort(
+        key=lambda x: (x["parlay_score"], x["avg_true_conf"], x["combined_odds_int"]),
+        reverse=True,
+    )
+    return candidates
+
+
+def choose_best_parlay(active_df):
+    candidates = build_parlay_candidates(active_df)
+    return candidates[0] if candidates else None
 
 
 # =========================================================
@@ -560,7 +754,7 @@ def render_horizontal_nav():
 
 
 # =========================================================
-# ELITE MOBILE CARD RENDERING
+# CARD RENDER
 # =========================================================
 def render_play_card(row: pd.Series, show_best_badge: bool = False):
     badge_bg, badge_fg = tier_colors(row["tier"])
@@ -747,8 +941,116 @@ def render_play_card(row: pd.Series, show_best_badge: bool = False):
     </body>
     </html>
     """
-
     components.html(html, height=card_height, scrolling=False)
+
+
+def render_parlay_card(parlay):
+    if not parlay:
+        st.info("No qualifying parlay available.")
+        return
+
+    risk_color = {
+        "Low": "#10b981",
+        "Moderate": "#f59e0b",
+        "Elevated": "#ef4444",
+    }.get(parlay["risk_label"], "#94a3b8")
+
+    legs_html = ""
+    for i, leg in enumerate(parlay["legs"], start=1):
+        legs_html += f"""
+        <div style="padding:8px 0; border-bottom:1px solid #243047;">
+            <div style="color:#ffffff; font-size:15px; font-weight:800;">{i}. {leg["selection"]}</div>
+            <div style="color:#cbd5e1; font-size:12px;">{leg["game"]} • {str(leg["market"]).title()} • {leg["odds"]}</div>
+            <div style="color:#93c5fd; font-size:12px; margin-top:2px;">True Conf {leg["true_confidence"]:.1f} • {leg["quality_label"]}</div>
+        </div>
+        """
+
+    reasons_html = ""
+    for reason in parlay["reasons"][:4]:
+        reasons_html += f"""
+        <span style="
+            background:#1e2638;
+            color:#d8e0ec;
+            border:1px solid #2a3448;
+            border-radius:999px;
+            padding:4px 8px;
+            font-size:10px;
+            line-height:1;
+            display:inline-block;
+            margin-right:5px;
+            margin-bottom:5px;
+            white-space:nowrap;
+        ">{reason}</span>
+        """
+
+    html = f"""
+    <html>
+    <head>
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+    </head>
+    <body style="margin:0; background:transparent; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+        <div style="
+            background:linear-gradient(180deg, #151b29 0%, #0e1422 100%);
+            border:1px solid #243047;
+            border-radius:22px;
+            padding:14px;
+            color:#ffffff;
+            box-sizing:border-box;
+        ">
+            <div style="color:#fbbf24; font-size:12px; font-weight:800; margin-bottom:6px;">🔥 AI PARLAY INTELLIGENCE</div>
+            <div style="font-size:22px; font-weight:800; margin-bottom:5px;">Recommended {parlay["leg_count"]}-Leg Slip</div>
+            <div style="color:#d4dbe8; font-size:13px; margin-bottom:10px;">
+                Combined Odds: <span style="color:#ffffff; font-weight:800;">{parlay["combined_odds"]}</span>
+                • Avg True Conf: <span style="color:#ffffff; font-weight:800;">{parlay["avg_true_conf"]:.1f}</span>
+            </div>
+
+            <div style="
+                display:grid;
+                grid-template-columns:1fr 1fr;
+                gap:8px 12px;
+                margin-bottom:10px;
+            ">
+                <div>
+                    <div style="color:#91a0b7; font-size:10px;">Parlay Score</div>
+                    <div style="font-size:15px; font-weight:800;">{parlay["parlay_score"]}</div>
+                </div>
+                <div>
+                    <div style="color:#91a0b7; font-size:10px;">Risk</div>
+                    <div style="font-size:15px; font-weight:800; color:{risk_color};">{parlay["risk_label"]}</div>
+                </div>
+            </div>
+
+            <div style="margin-bottom:10px;">
+                {legs_html}
+            </div>
+
+            <div style="height:6px;"></div>
+            <div>{reasons_html}</div>
+        </div>
+    </body>
+    </html>
+    """
+    components.html(html, height=360 if is_mobile() else 390, scrolling=False)
+
+
+def render_parlay_table(candidates):
+    if not candidates:
+        st.info("No qualifying parlays available.")
+        return
+
+    rows = []
+    for p in candidates[:5]:
+        rows.append(
+            {
+                "legs": p["leg_count"],
+                "combined_odds": p["combined_odds"],
+                "avg_true_conf": p["avg_true_conf"],
+                "parlay_score": p["parlay_score"],
+                "risk": p["risk_label"],
+                "legs_summary": " | ".join([leg["selection"] for leg in p["legs"]]),
+            }
+        )
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
 
 def render_table_desktop(dataframe: pd.DataFrame):
@@ -785,6 +1087,9 @@ watch_df = df[df["status"] == "Watch"].copy().reset_index(drop=True)
 best_row = None
 if not active_df.empty:
     best_row = active_df.sort_values(["rank_score", "true_confidence"], ascending=False).iloc[0]
+
+parlay_candidates = build_parlay_candidates(active_df)
+best_parlay = choose_best_parlay(active_df)
 
 avg_active_edge = active_df["edge"].mean() if not active_df.empty else 0.0
 best_score = best_row["score"] if best_row is not None else "—"
@@ -907,8 +1212,8 @@ h1, h2, h3 {
 # =========================================================
 # HEADER
 # =========================================================
-st.title("🔥 Sports Betting AI Dashboard V31.7.2")
-st.caption("Tier Normalization + Quality Labels • Smart Decision Layer • Auto Bet Log")
+st.title("🔥 Sports Betting AI Dashboard V31.8")
+st.caption("AI Parlay Intelligence • Smart Decision Layer • Auto Bet Log")
 
 if auto_logged_count > 0:
     st.markdown(
@@ -993,7 +1298,7 @@ elif nav == "Watchlist":
     render_mobile_or_table(wl_df, best_first=False)
 
 # =========================================================
-# AI SLIP
+# AI SLIP + PARLAY
 # =========================================================
 elif nav == "AI Slip":
     st.header("🧠 AI Slip")
@@ -1005,7 +1310,7 @@ elif nav == "AI Slip":
         st.markdown(
             f"""
             <div class="slip-card">
-                <div class="slip-kicker">🔥 AI Recommended Slip</div>
+                <div class="slip-kicker">🔥 AI Recommended Single</div>
                 <div class="slip-title">{best_row["selection"]}</div>
                 <div class="slip-meta">{best_row["game"]} • {str(best_row["market"]).title()}</div>
                 <div class="slip-meta"><strong>Confidence:</strong> {best_row["confidence"]}</div>
@@ -1020,7 +1325,15 @@ elif nav == "AI Slip":
         )
         render_play_card(best_row, show_best_badge=True)
     else:
-        st.info("No active AI slip available.")
+        st.info("No active AI single available.")
+
+    st.subheader("🎯 AI Parlay Intelligence")
+    if best_parlay is None:
+        st.info("Not enough qualifying active legs for a recommended parlay.")
+    else:
+        render_parlay_card(best_parlay)
+        with st.expander("Show top parlay candidates", expanded=False):
+            render_parlay_table(parlay_candidates)
 
 # =========================================================
 # BET LOG
@@ -1086,8 +1399,6 @@ elif nav == "Bet Log":
             st.session_state["bet_log"].append(manual_row)
             st.success("Manual bet saved.")
 
-    st.markdown("</div>", unsafe_allow_html=True)
-
 # =========================================================
 # ADAPTIVE SETTINGS
 # =========================================================
@@ -1104,4 +1415,5 @@ with st.expander("⚙️ Adaptive Settings", expanded=False):
         st.write(f"**Active Promotion Edge:** {ACTIVE_EDGE_PROMOTION:.2f}%")
         st.write(f"**Max Active Plays:** {MAX_ACTIVE_PLAYS}")
         st.write(f"**Max Total Units:** {MAX_TOTAL_UNITS:.1f}u")
+        st.write(f"**Min Parlay Odds:** +{MIN_PARLAY_ODDS}")
         st.write("**CLV Priority:** Delayed until more free books/APIs are added")

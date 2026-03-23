@@ -258,4 +258,283 @@ st.sidebar.text_area(
 
 today_games = parse_today_games(st.session_state.get("today_games_text", ""))
 
+# =========================================================
+# SMART DECISION LAYER
+# =========================================================
+def books_score(books_seen):
+    if books_seen >= 4:
+        return 1.00
+    if books_seen == 3:
+        return 0.82
+    if books_seen == 2:
+        return 0.60
+    return 0.35
 
+
+def consensus_score(consensus):
+    consensus = str(consensus).strip().lower()
+    if consensus == "strong":
+        return 1.00
+    if consensus == "fair":
+        return 0.68
+    return 0.38
+
+
+def confidence_score(confidence):
+    confidence = str(confidence).strip().lower()
+    if confidence == "elite":
+        return 1.00
+    if confidence == "high":
+        return 0.76
+    return 0.52
+
+
+def edge_score(edge):
+    return clamp(edge / 5.0, 0.0, 1.0)
+
+
+def price_edge_score(price_edge):
+    return clamp(price_edge / 2.6, 0.0, 1.0)
+
+
+def model_score(score):
+    return clamp((score - 80.0) / 20.0, 0.0, 1.0)
+
+
+def detect_traps(row):
+    penalties = 0.0
+    trap_flags = []
+
+    edge = float(row["edge"])
+    books_seen = int(row["books_seen"])
+    consensus = str(row["consensus"])
+    confidence = str(row["confidence"])
+    price_edge = float(row["price_edge"])
+
+    if consensus == "Thin" and edge >= 3.0:
+        penalties += 0.14
+        trap_flags.append("thin consensus trap")
+    if books_seen <= 1 and edge >= 2.0:
+        penalties += 0.14
+        trap_flags.append("low book count trap")
+    if books_seen <= 2 and consensus == "Thin":
+        penalties += 0.11
+        trap_flags.append("weak market structure")
+    if confidence == "Medium" and edge >= 3.5:
+        penalties += 0.06
+        trap_flags.append("edge-confidence mismatch")
+    if price_edge < 0.80 and edge >= 3.0:
+        penalties += 0.05
+        trap_flags.append("weak price support")
+
+    return clamp(penalties, 0.0, 0.35), trap_flags
+
+
+def compute_true_confidence(row):
+    ms = model_score(float(row["score"]))
+    es = edge_score(float(row["edge"]))
+    ps = price_edge_score(float(row["price_edge"]))
+    bs = books_score(int(row["books_seen"]))
+    cs = consensus_score(row["consensus"])
+    cfs = confidence_score(row["confidence"])
+
+    penalty, trap_flags = detect_traps(row)
+
+    raw_quality = (
+        ms * 0.25
+        + es * 0.22
+        + ps * 0.14
+        + bs * 0.16
+        + cs * 0.13
+        + cfs * 0.10
+    )
+    adjusted_quality = clamp(raw_quality - penalty, 0.0, 1.0)
+    true_confidence = round(adjusted_quality * 100.0, 1)
+
+    reasons = []
+    if bs >= 0.82:
+        reasons.append("multi-book support")
+    if cs >= 1.0:
+        reasons.append("strong consensus")
+    elif cs >= 0.68:
+        reasons.append("usable consensus")
+    if ps >= 0.58:
+        reasons.append("price support")
+    if ms >= 0.65:
+        reasons.append("strong model score")
+    if cfs >= 0.76:
+        reasons.append("high confidence")
+    reasons.extend(trap_flags)
+
+    return true_confidence, adjusted_quality, reasons
+
+
+# =========================================================
+# DATA GENERATION (LIVE SLATE FIX)
+# =========================================================
+def generate_ai_plays():
+    empty_cols = [
+        "game",
+        "market",
+        "selection",
+        "odds",
+        "edge",
+        "score",
+        "units",
+        "tier",
+        "quality_label",
+        "status",
+        "confidence",
+        "books_seen",
+        "best_price",
+        "consensus",
+        "price_edge",
+        "ai_tags",
+        "true_confidence",
+        "quality_score",
+        "decision_reasons",
+        "rank_score",
+        "play_id",
+    ]
+
+    if not today_games:
+        return pd.DataFrame(columns=empty_cols)
+
+    market_templates = [
+        ("moneyline", lambda g: g.split(" vs ")[1]),
+        ("moneyline", lambda g: g.split(" vs ")[0]),
+        ("total", lambda g: "Over 221.5"),
+        ("total", lambda g: "Under 221.5"),
+        ("spread", lambda g: f"{g.split(' vs ')[1]} -4.5"),
+        ("spread", lambda g: f"{g.split(' vs ')[0]} +4.5"),
+    ]
+
+    odds_pool = ["-132", "-118", "-110", "-105", "-102", "+100", "+110", "+120", "+135"]
+    consensus_pool = ["Strong", "Fair", "Thin"]
+    confidence_pool = ["Medium", "High", "Elite"]
+
+    rows = []
+    random.seed(31)
+
+    for game in today_games:
+        for market, selection_fn in market_templates:
+            edge = round(random.uniform(0.80, 5.20), 2)
+            score = round(random.uniform(80.0, 99.5), 1)
+            confidence = random.choices(confidence_pool, weights=[3, 5, 2], k=1)[0]
+            books_seen = random.randint(1, 4)
+            odds = random.choice(odds_pool)
+            consensus = random.choices(consensus_pool, weights=[3, 5, 2], k=1)[0]
+            price_edge = round(random.uniform(0.40, 2.60), 2)
+
+            if edge < MIN_ACTIVE_EDGE:
+                continue
+            if not in_allowed_odds_range(odds, *DEFAULT_ODDS_RANGE):
+                continue
+
+            row = {
+                "game": game,
+                "market": market,
+                "selection": selection_fn(game),
+                "odds": odds,
+                "edge": edge,
+                "score": score,
+                "units": 0.0,
+                "tier": "C",
+                "quality_label": "Watch",
+                "status": "Watch",
+                "confidence": confidence,
+                "books_seen": books_seen,
+                "best_price": "Yes" if price_edge >= 1.25 else "No",
+                "consensus": consensus,
+                "price_edge": price_edge,
+                "ai_tags": ["AI generated", "live slate"],
+            }
+
+            tc, qs, reasons = compute_true_confidence(row)
+            row["true_confidence"] = tc
+            row["quality_score"] = qs
+            row["decision_reasons"] = reasons
+            row["units"] = scale_single_units(row)
+
+            tags = ["AI generated", "live slate"]
+            for reason in reasons:
+                if reason not in tags:
+                    tags.append(reason)
+            row["ai_tags"] = tags[:6]
+
+            rows.append(row)
+
+    df = pd.DataFrame(rows)
+
+    if df.empty:
+        return pd.DataFrame(columns=empty_cols)
+
+    df["rank_score"] = (
+        df["quality_score"] * 100.0 * 0.55
+        + df["score"] * 0.15
+        + df["edge"] * 6.0
+        + df["price_edge"] * 4.0
+        + df["books_seen"] * 1.5
+    )
+
+    def decide_status(row):
+        q = float(row["quality_score"])
+        e = float(row["edge"])
+        b = int(row["books_seen"])
+        c = str(row["consensus"])
+
+        if q >= QUALITY_ACTIVE_PRIMARY and e >= ACTIVE_EDGE_PROMOTION:
+            return "Active"
+        if q >= QUALITY_ACTIVE_SECONDARY and e >= MIN_ACTIVE_EDGE:
+            return "Active"
+        if q >= 0.61 and e >= 1.40 and b >= 3 and c in ["Strong", "Fair"]:
+            return "Active"
+        return "Watch"
+
+    df["status"] = df.apply(decide_status, axis=1)
+
+    def tier_from_true_conf(tc):
+        if tc >= 78:
+            return "A"
+        if tc >= 60:
+            return "B"
+        return "C"
+
+    df["tier"] = df["true_confidence"].apply(tier_from_true_conf)
+    df["quality_label"] = df["tier"].apply(quality_label_from_tier)
+
+    df["play_id"] = df.apply(
+        lambda r: build_play_id(
+            {
+                "game": r["game"],
+                "market": r["market"],
+                "selection": r["selection"],
+                "odds": r["odds"],
+            }
+        ),
+        axis=1,
+    )
+
+    active_df_local = df[df["status"] == "Active"].copy().sort_values("rank_score", ascending=False)
+    watch_df_local = df[df["status"] == "Watch"].copy().sort_values("rank_score", ascending=False)
+
+    active_rows = []
+    running_units = 0.0
+
+    for _, row in active_df_local.iterrows():
+        proposed_units = float(row["units"])
+        if len(active_rows) >= MAX_ACTIVE_PLAYS or running_units + proposed_units > MAX_TOTAL_UNITS:
+            row2 = row.copy()
+            row2["status"] = "Watch"
+            watch_df_local = pd.concat([watch_df_local, pd.DataFrame([row2])], ignore_index=True)
+            continue
+        active_rows.append(row)
+        running_units += proposed_units
+
+    active_final = pd.DataFrame(active_rows) if active_rows else pd.DataFrame(columns=df.columns)
+    combined = pd.concat([active_final, watch_df_local], ignore_index=True)
+
+    if combined.empty:
+        return pd.DataFrame(columns=empty_cols)
+
+    return combined.sort_values(["status", "rank_score"], ascending=[True, False]).reset_index(drop=True)

@@ -1144,7 +1144,7 @@ def render_mobile_or_table(dataframe: pd.DataFrame, best_first: bool = False):
 # =========================================================
 # V32 PORTFOLIO ENGINE
 # =========================================================
-    def build_ai_portfolio(best_single, chosen_parlay, parlay_candidates):
+def build_ai_portfolio(best_single, chosen_parlay, parlay_candidates):
     portfolio = []
 
     if best_single is not None:
@@ -1167,6 +1167,7 @@ def render_mobile_or_table(dataframe: pd.DataFrame, best_first: bool = False):
         c for c in parlay_candidates
         if c["leg_count"] == 2 and c.get("approval_type") != "Sharp Approved"
     ]
+
     if fallback_2:
         portfolio.append({
             "type": "Parlay",
@@ -1179,6 +1180,7 @@ def render_mobile_or_table(dataframe: pd.DataFrame, best_first: bool = False):
         c for c in parlay_candidates
         if c["leg_count"] == 3
     ]
+
     if fallback_3:
         portfolio.append({
             "type": "Parlay",
@@ -1188,8 +1190,6 @@ def render_mobile_or_table(dataframe: pd.DataFrame, best_first: bool = False):
         })
 
     return portfolio
-
-
 # =========================================================
 # DATA BUILD
 # =========================================================

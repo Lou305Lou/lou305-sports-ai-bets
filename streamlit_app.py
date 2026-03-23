@@ -1116,4 +1116,142 @@ def build_ai_portfolio(best_single, chosen_parlay, parlay_candidates):
 
     return portfolio
 
+# =========================================================
+# DATA BUILD
+# =========================================================
+df = generate_ai_plays()
+auto_logged_count = auto_log_active_plays(df)
+
+active_df = df[df["status"] == "Active"].copy().reset_index(drop=True)
+watch_df = df[df["status"] == "Watch"].copy().reset_index(drop=True)
+
+best_row = None
+if not active_df.empty:
+    best_row = active_df.sort_values(
+        ["rank_score", "true_confidence"],
+        ascending=False
+    ).iloc[0]
+
+best_parlay, sharp_candidates, fallback_candidates = choose_best_parlay(active_df)
+all_portfolio_candidates = [*sharp_candidates, *fallback_candidates]
+portfolio = build_ai_portfolio(best_row, best_parlay, all_portfolio_candidates)
+
+avg_active_edge = active_df["edge"].mean() if not active_df.empty else 0.0
+best_score = best_row["score"] if best_row is not None else "—"
+avg_true_conf = active_df["true_confidence"].mean() if not active_df.empty else 0.0
+total_units = active_df["units"].sum() if not active_df.empty else 0.0
+
+
+# =========================================================
+# PAGE STYLES
+# =========================================================
+st.markdown(
+    """
+<style>
+html, body, [class*="css"] {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+.stApp {
+    background-color: #f6f7fb;
+}
+.block-container {
+    max-width: 880px;
+    padding-top: 0.85rem;
+    padding-bottom: 1.8rem;
+}
+h1, h2, h3 {
+    letter-spacing: -0.02em;
+    color: #202533;
+}
+.metric-panel {
+    background: #ffffff;
+    border: 1px solid #e7ebf2;
+    border-radius: 18px;
+    padding: 10px 12px;
+    margin-bottom: 10px;
+}
+.metric-panel-title {
+    color: #1f2937;
+    font-weight: 800;
+    font-size: 0.94rem;
+    margin-bottom: 6px;
+}
+.metric-mini-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px 12px;
+}
+.metric-mini-label {
+    font-size: 0.75rem;
+    color: #6b7280;
+}
+.metric-mini-value {
+    font-size: 0.98rem;
+    font-weight: 800;
+    color: #111827;
+}
+.nav-wrap {
+    background: #ffffff;
+    border: 1px solid #e6eaf2;
+    border-radius: 18px;
+    padding: 10px 12px 7px 12px;
+    margin-bottom: 12px;
+}
+.section-title {
+    font-size: 0.98rem;
+    font-weight: 800;
+    margin-bottom: 0.25rem;
+    color: #1e2430;
+}
+.slip-card {
+    background: linear-gradient(180deg, #151b29 0%, #0e1422 100%);
+    border: 1px solid #243047;
+    border-radius: 22px;
+    padding: 13px;
+    margin-bottom: 10px;
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.14);
+}
+.slip-kicker {
+    color: #fbbf24;
+    font-size: 0.82rem;
+    font-weight: 800;
+    margin-bottom: 5px;
+}
+.slip-title {
+    color: #ffffff;
+    font-size: 1.35rem;
+    font-weight: 800;
+    margin-bottom: 5px;
+    letter-spacing: -0.03em;
+}
+.slip-meta {
+    color: #d6deea;
+    font-size: 0.86rem;
+    margin-bottom: 3px;
+}
+.bet-form-wrap {
+    background: #ffffff;
+    border: 1px solid #e7ebf2;
+    border-radius: 20px;
+    padding: 14px;
+    margin-bottom: 14px;
+}
+.notice-box {
+    background: #ecfdf5;
+    border: 1px solid #a7f3d0;
+    color: #065f46;
+    border-radius: 16px;
+    padding: 10px 12px;
+    margin-bottom: 10px;
+    font-weight: 700;
+}
+.small-muted {
+    color: #6b7280;
+    font-size: 0.84rem;
+}
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
 

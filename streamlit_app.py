@@ -1133,13 +1133,18 @@ best_row = None
 if not active_df.empty:
     best_row = active_df.sort_values(["rank_score", "true_confidence"], ascending=False).iloc[0]
 
-best_parlay, sharp_candidates, fallback_candidates = choose_best_parlay(active_df)
+best_parlay, parlay_candidates, parlay_mode = choose_best_parlay(active_df)
+
+portfolio = build_ai_portfolio(
+    best_row,
+    best_parlay,
+    parlay_candidates
+)
 
 avg_active_edge = active_df["edge"].mean() if not active_df.empty else 0.0
 best_score = best_row["score"] if best_row is not None else "—"
 avg_true_conf = active_df["true_confidence"].mean() if not active_df.empty else 0.0
 total_units = active_df["units"].sum() if not active_df.empty else 0.0
-
 
 # =========================================================
 # PAGE STYLES
@@ -1340,7 +1345,7 @@ elif nav == "Watchlist":
     render_mobile_or_table(wl_df, best_first=False)
 
 # =========================================================
-# AI SLIP + PARLAY
+# AI SLIP + PARLAY INTELLIGENCE
 # =========================================================
 elif nav == "AI Slip":
     st.header("🧠 AI Slip")
@@ -1371,13 +1376,40 @@ elif nav == "AI Slip":
 
     st.subheader("🎯 AI Parlay Intelligence")
     if best_parlay is None:
-        st.info("No qualifying parlay or fallback slip available.")
+        st.info("Not enough qualifying active legs for a recommended parlay.")
     else:
         render_parlay_card(best_parlay)
+        with st.expander("Show top parlay candidates", expanded=False):
+            render_parlay_table(parlay_candidates)
 
-        with st.expander("Show parlay candidate detail", expanded=False):
-            render_parlay_table(sharp_candidates, "conservative_score", "Sharp Approved Candidates")
-            render_parlay_table(fallback_candidates, "fallback_score", "Balanced Fallback Candidates")
+    st.subheader("🧠 AI Portfolio Allocation")
+    if not portfolio:
+        st.info("No AI portfolio available.")
+    else:
+        portfolio_rows = []
+        for item in portfolio:
+            data = item["data"]
+            if item["type"] == "Single":
+                summary = f'{data["selection"]} ({data["game"]})'
+                odds = data["odds"]
+                conf = data["true_confidence"]
+            else:
+                summary = " | ".join([leg["selection"] for leg in data["legs"]])
+                odds = data["combined_odds"]
+                conf = data["avg_true_conf"]
+
+            portfolio_rows.append(
+                {
+                    "Label": item["label"],
+                    "Type": item["type"],
+                    "Units": item["units"],
+                    "Odds": odds,
+                    "Confidence": conf,
+                    "Summary": summary,
+                }
+            )
+
+        st.dataframe(pd.DataFrame(portfolio_rows), use_container_width=True, hide_index=True)
 
 # =========================================================
 # BET LOG

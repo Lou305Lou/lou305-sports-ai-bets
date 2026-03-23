@@ -558,8 +558,10 @@ def score_parlay_combo(combo):
         + (game_diversity_bonus * 100)
     )
 
-    conservative_score = raw_score - (total_penalty * 30)
-    fallback_score = raw_score * (1 - total_penalty)
+    correlation_score = calculate_correlation_score(list(combo))
+
+    conservative_score = raw_score - (total_penalty * 30) + (correlation_score * 5)
+    fallback_score = (raw_score * (1 - total_penalty)) + (correlation_score * 5)
 
     if total_penalty <= 0.08 and avg_true_conf >= 64:
         risk_label = "Low"
@@ -573,6 +575,11 @@ def score_parlay_combo(combo):
         reasons.append("cross-game diversification")
     else:
         reasons.append("same-game correlation adjusted")
+
+    if correlation_score > 1:
+        reasons.append("positive correlation")
+    elif correlation_score < -1:
+        reasons.append("conflict risk")
 
     if avg_true_conf >= 62:
         reasons.append("high true confidence")
@@ -596,6 +603,7 @@ def score_parlay_combo(combo):
         "avg_price_edge": round(avg_price_edge, 2),
         "total_penalty": round(total_penalty, 3),
         "cross_game": cross_game,
+        "correlation_score": round(correlation_score, 2),
         "conservative_score": round(conservative_score, 1),
         "fallback_score": round(fallback_score, 1),
         "risk_label": risk_label,
@@ -628,6 +636,7 @@ def classify_parlay_candidates(candidates):
             c["avg_true_conf"] >= SHARP_PARLAY_MIN_TRUE_CONF
             and c["total_penalty"] <= SHARP_PARLAY_MAX_PENALTY
             and c["cross_game"]
+            and c["correlation_score"] >= 0
         )
 
         fallback_ok = (

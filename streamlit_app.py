@@ -1353,17 +1353,15 @@ st.markdown("</div>", unsafe_allow_html=True)
 st.markdown('<div class="nav-wrap">', unsafe_allow_html=True)
 st.markdown('<div class="section-title">🚀 Navigation</div>', unsafe_allow_html=True)
 
-if is_mobile():
-    nav = render_horizontal_nav()
-else:
-    nav = st.radio(
-        "Navigation",
-        ["Top Plays", "Watchlist", "AI Slip", "Bet Log"],
-        horizontal=True,
-        label_visibility="collapsed",
-        key="nav_choice_desktop",
-    )
-    st.session_state["nav_choice"] = nav
+nav = st.radio(
+    "Navigation",
+    ["Top Plays", "Watchlist", "AI Slip", "Bet Log"],
+    horizontal=True,
+    label_visibility="collapsed",
+    key="nav_choice_native",
+)
+
+st.session_state["nav_choice"] = nav
 
 st.markdown("</div>", unsafe_allow_html=True)
 

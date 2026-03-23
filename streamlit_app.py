@@ -1254,4 +1254,37 @@ h1, h2, h3 {
     unsafe_allow_html=True,
 )
 
+# =========================================================
+# HEADER
+# =========================================================
+st.title("🔥 Sports Betting AI Dashboard V31.9.1")
+st.caption("Live Slate Fix • Smart Unit Scaling + Test Tracking Layer • Auto Bet Log")
+
+if auto_logged_count > 0:
+    st.markdown(
+        f'<div class="notice-box">Auto-logged {auto_logged_count} new active play(s).</div>',
+        unsafe_allow_html=True,
+    )
+
+
+# =========================================================
+# SNAPSHOT
+# =========================================================
+st.markdown('<div class="metric-panel">', unsafe_allow_html=True)
+st.markdown('<div class="metric-panel-title">Market Snapshot</div>', unsafe_allow_html=True)
+st.markdown(
+    f"""
+    <div class="metric-mini-grid">
+        <div><div class="metric-mini-label">Active Plays</div><div class="metric-mini-value">{len(active_df)}</div></div>
+        <div><div class="metric-mini-label">Watchlist</div><div class="metric-mini-value">{len(watch_df)}</div></div>
+        <div><div class="metric-mini-label">Best Score</div><div class="metric-mini-value">{best_score}</div></div>
+        <div><div class="metric-mini-label">Avg Active Edge</div><div class="metric-mini-value">{avg_active_edge:.2f}%</div></div>
+        <div><div class="metric-mini-label">Avg True Conf</div><div class="metric-mini-value">{avg_true_conf:.1f}</div></div>
+        <div><div class="metric-mini-label">Total Active Units</div><div class="metric-mini-value">{total_units:.2f}u</div></div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+st.markdown("</div>", unsafe_allow_html=True)
+
 

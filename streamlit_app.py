@@ -953,4 +953,167 @@ def render_parlay_card(parlay):
     """
     st.markdown(html, unsafe_allow_html=True)
 
+# =========================================================
+# TABLE RENDER HELPERS
+# =========================================================
+def render_parlay_table(candidates, score_key, title):
+    st.markdown(f"**{title}**")
+
+    if not candidates:
+        st.info("No candidates.")
+        return
+
+    rows = []
+    for p in candidates[:5]:
+        score_value = p.get(score_key) or p.get("display_score") or p.get("score")
+
+        rows.append(
+            {
+                "Legs": p.get("leg_count"),
+                "Odds": p.get("combined_odds"),
+                "Avg Conf": round(p.get("avg_true_conf", 0), 1),
+                "Score": round(score_value, 1) if isinstance(score_value, (int, float)) else "—",
+                "Risk": p.get("risk_label"),
+            }
+        )
+
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+
+def render_table_desktop(df: pd.DataFrame):
+    cols = [
+        "tier",
+        "quality_label",
+        "status",
+        "game",
+        "market",
+        "selection",
+        "odds",
+        "edge",
+        "score",
+        "units",
+        "confidence",
+        "true_confidence",
+        "books_seen",
+        "best_price",
+        "consensus",
+        "price_edge",
+    ]
+
+    existing_cols = [c for c in cols if c in df.columns]
+    st.dataframe(df[existing_cols], use_container_width=True, hide_index=True)
+
+
+def render_mobile_or_table(df: pd.DataFrame, best_first: bool = False):
+    if df.empty:
+        st.info("No plays available.")
+        return
+
+    if is_mobile():
+        for idx, (_, row) in enumerate(df.iterrows()):
+            render_play_card(row, show_best_badge=(best_first and idx == 0))
+    else:
+        render_table_desktop(df)
+
+
+# =========================================================
+# V31.9 SMART UNIT SCALING + TEST TRACKING LAYER
+# =========================================================
+def build_ai_portfolio(best_single, chosen_parlay, parlay_candidates):
+    portfolio = []
+    used_keys = set()
+    running_units = 0.0
+
+    # -----------------------
+    # Core Single
+    # -----------------------
+    if best_single is not None:
+        units = scale_single_units(best_single)
+        key = f"single::{best_single.get('play_id', best_single.get('selection', ''))}"
+
+        if running_units + units <= TEST_DAILY_UNIT_CAP:
+            portfolio.append(
+                {
+                    "type": "Single",
+                    "label": "Core Play",
+                    "units": units,
+                    "data": best_single,
+                }
+            )
+            used_keys.add(key)
+            running_units += units
+
+    # -----------------------
+    # Main Parlay
+    # -----------------------
+    if chosen_parlay is not None:
+        units = scale_parlay_units(chosen_parlay)
+        key = "parlay::" + "|".join(
+            [leg.get("selection", "") for leg in chosen_parlay.get("legs", [])]
+        )
+
+        if key not in used_keys and running_units + units <= TEST_DAILY_UNIT_CAP:
+            portfolio.append(
+                {
+                    "type": "Parlay",
+                    "label": chosen_parlay.get("approval_type", "Primary"),
+                    "units": units,
+                    "data": chosen_parlay,
+                }
+            )
+            used_keys.add(key)
+            running_units += units
+
+    # -----------------------
+    # Fallback 2-Leg
+    # -----------------------
+    fallback_2 = [
+        c for c in parlay_candidates
+        if c.get("leg_count") == 2 and c.get("approval_type") == "Balanced Fallback"
+    ]
+
+    if fallback_2:
+        p = fallback_2[0]
+        units = scale_parlay_units(p)
+        key = "parlay::" + "|".join([leg.get("selection", "") for leg in p.get("legs", [])])
+
+        if key not in used_keys and running_units + units <= TEST_DAILY_UNIT_CAP:
+            portfolio.append(
+                {
+                    "type": "Parlay",
+                    "label": "Fallback 2-Leg",
+                    "units": units,
+                    "data": p,
+                }
+            )
+            used_keys.add(key)
+            running_units += units
+
+    # -----------------------
+    # Fallback 3-Leg
+    # -----------------------
+    fallback_3 = [
+        c for c in parlay_candidates
+        if c.get("leg_count") == 3 and c.get("approval_type") == "Balanced Fallback"
+    ]
+
+    if fallback_3:
+        p = fallback_3[0]
+        units = scale_parlay_units(p)
+        key = "parlay::" + "|".join([leg.get("selection", "") for leg in p.get("legs", [])])
+
+        if key not in used_keys and running_units + units <= TEST_DAILY_UNIT_CAP:
+            portfolio.append(
+                {
+                    "type": "Parlay",
+                    "label": "Fallback 3-Leg",
+                    "units": units,
+                    "data": p,
+                }
+            )
+            used_keys.add(key)
+            running_units += units
+
+    return portfolio
+
 

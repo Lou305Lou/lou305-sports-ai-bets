@@ -1287,4 +1287,244 @@ st.markdown(
 )
 st.markdown("</div>", unsafe_allow_html=True)
 
+# =========================================================
+# NAVIGATION
+# =========================================================
+st.markdown('<div class="nav-wrap">', unsafe_allow_html=True)
+st.markdown('<div class="section-title">🚀 Navigation</div>', unsafe_allow_html=True)
+
+nav = st.radio(
+    "Navigation",
+    ["Top Plays", "Watchlist", "AI Slip", "Bet Log"],
+    horizontal=True,
+    label_visibility="collapsed",
+    key="nav_choice_native",
+)
+
+st.session_state["nav_choice"] = nav
+st.markdown("</div>", unsafe_allow_html=True)
+
+
+# =========================================================
+# TOP PLAYS
+# =========================================================
+if nav == "Top Plays":
+    st.header("🎯 Top Plays")
+    st.caption("Live slate driven plays.")
+
+    if not today_games:
+        st.warning("Enter today's real games in the sidebar to generate plays.")
+    else:
+        top_df = active_df.sort_values(
+            ["rank_score", "true_confidence"],
+            ascending=False
+        ).reset_index(drop=True)
+
+        render_mobile_or_table(top_df, best_first=True)
+
+
+# =========================================================
+# WATCHLIST
+# =========================================================
+elif nav == "Watchlist":
+    st.header("👀 Watchlist")
+    st.caption("Downgraded or near-qualified plays.")
+
+    if not today_games:
+        st.warning("Enter today's real games in the sidebar to generate plays.")
+    else:
+        wl_df = watch_df.sort_values(
+            ["rank_score", "true_confidence"],
+            ascending=False
+        ).reset_index(drop=True)
+
+        render_mobile_or_table(wl_df)
+
+# =========================================================
+# AI SLIP + PARLAY INTELLIGENCE
+# =========================================================
+elif nav == "AI Slip":
+    st.header("🧠 AI Slip")
+
+    if today_games:
+        st.caption("Live Slate: " + " | ".join(today_games))
+    else:
+        st.warning("No live slate entered.")
+
+    # -----------------------
+    # SINGLE
+    # -----------------------
+    if best_row is not None:
+        slip_type = "Single best bet"
+        risk_level = "Low" if float(best_row["units"]) <= 0.50 else "Moderate"
+
+        st.markdown(
+            f"""
+            <div class="slip-card">
+                <div class="slip-kicker">🔥 AI Recommended Single</div>
+                <div class="slip-title">{best_row['selection']}</div>
+                <div class="slip-meta">{best_row['game']} • {str(best_row['market']).title()}</div>
+                <div class="slip-meta"><strong>Confidence:</strong> {best_row['confidence']}</div>
+                <div class="slip-meta"><strong>True Confidence:</strong> {best_row['true_confidence']:.1f}</div>
+                <div class="slip-meta"><strong>Quality Label:</strong> {best_row['quality_label']}</div>
+                <div class="slip-meta"><strong>Odds:</strong> {best_row['odds']}</div>
+                <div class="slip-meta"><strong>Type:</strong> {slip_type}</div>
+                <div class="slip-meta"><strong>Risk Level:</strong> {risk_level}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        render_play_card(best_row, show_best_badge=True)
+    else:
+        st.info("No active AI single available.")
+
+    # -----------------------
+    # PARLAY
+    # -----------------------
+    st.subheader("🎯 AI Parlay Intelligence")
+
+    if best_parlay is None:
+        st.info("Not enough qualifying legs.")
+    else:
+        render_parlay_card(best_parlay)
+
+    with st.expander("Show top parlay candidates", expanded=False):
+        render_parlay_table(sharp_candidates, "display_score", "Sharp Approved")
+        render_parlay_table(fallback_candidates, "display_score", "Fallback")
+
+    # -----------------------
+    # PORTFOLIO
+    # -----------------------
+    st.subheader("🧠 AI Portfolio Allocation")
+
+    if not portfolio:
+        st.info("No portfolio available.")
+    else:
+        rows = []
+
+        for item in portfolio:
+            data = item["data"]
+
+            if item["type"] == "Single":
+                summary = f"{data['selection']} ({data['game']})"
+                odds = data["odds"]
+                conf = data["true_confidence"]
+            else:
+                summary = " | ".join([leg["selection"] for leg in data["legs"]])
+                odds = data["combined_odds"]
+                conf = data["avg_true_conf"]
+
+            rows.append(
+                {
+                    "Label": item["label"],
+                    "Type": item["type"],
+                    "Units": item["units"],
+                    "Odds": odds,
+                    "Confidence": conf,
+                    "Summary": summary,
+                }
+            )
+
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+
+# =========================================================
+# BET LOG
+# =========================================================
+elif nav == "Bet Log":
+    st.header("🧾 Bet Log")
+
+    if len(st.session_state["bet_log"]) == 0:
+        st.info("No bets logged yet.")
+    else:
+        log_df = pd.DataFrame(st.session_state["bet_log"]).copy()
+
+        # Apply saved results
+        for idx in log_df.index:
+            pid = log_df.loc[idx, "play_id"]
+            if pid in st.session_state["manual_results"]:
+                result = st.session_state["manual_results"][pid]
+                log_df.loc[idx, "result"] = result
+                log_df.loc[idx, "profit"] = settle_result_pnl(
+                    log_df.loc[idx, "odds"],
+                    log_df.loc[idx, "units"],
+                    result,
+                )
+
+        st.dataframe(log_df, use_container_width=True, hide_index=True)
+
+        # -------- Result Input --------
+        st.subheader("Update Results")
+
+        options = [
+            f"{r['selection']} | {r['game']} | {r['play_id']}"
+            for _, r in log_df.iterrows()
+        ]
+
+        selected = st.selectbox("Select Bet", options)
+        selected_id = selected.split(" | ")[-1]
+
+        result_choice = st.selectbox("Result", ["Pending", "Win", "Loss", "Push"])
+
+        if st.button("Save Result"):
+            st.session_state["manual_results"][selected_id] = result_choice
+            st.success("Updated.")
+            st.rerun()
+
+    # -------- Manual Entry --------
+    st.markdown('<div class="bet-form-wrap">', unsafe_allow_html=True)
+
+    with st.form("manual_bet", clear_on_submit=True):
+        c1, c2 = st.columns(2)
+
+        with c1:
+            game = st.text_input("Game")
+            market = st.selectbox("Market", ["moneyline", "spread", "total"])
+            units = st.number_input("Units", 0.0, 10.0, 0.5)
+
+        with c2:
+            selection = st.text_input("Selection")
+            odds = st.text_input("Odds")
+            confidence = st.selectbox("Confidence", ["Medium", "High", "Elite"])
+
+        submit = st.form_submit_button("Add Bet")
+
+        if submit:
+            new = {
+                "play_id": build_play_id({"game": game, "market": market, "selection": selection, "odds": odds}),
+                "game": game,
+                "market": market,
+                "selection": selection,
+                "odds": odds,
+                "units": units,
+                "confidence": confidence,
+                "result": "Pending",
+                "profit": 0.0,
+                "mode": TEST_MODE,
+            }
+
+            st.session_state["bet_log"].append(new)
+            st.success("Bet added.")
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+# =========================================================
+# ADAPTIVE SETTINGS
+# =========================================================
+with st.expander("⚙️ Adaptive Settings", expanded=False):
+    c1, c2 = st.columns(2)
+
+    with c1:
+        st.write(f"Min Edge: {MIN_ACTIVE_EDGE}")
+        st.write(f"Primary Quality: {QUALITY_ACTIVE_PRIMARY}")
+        st.write(f"Secondary Quality: {QUALITY_ACTIVE_SECONDARY}")
+        st.write(f"Sharp Parlay Conf: {SHARP_PARLAY_MIN_TRUE_CONF}")
+
+    with c2:
+        st.write(f"Max Plays: {MAX_ACTIVE_PLAYS}")
+        st.write(f"Max Units: {MAX_TOTAL_UNITS}")
+        st.write(f"Min Parlay Odds: +{MIN_PARLAY_ODDS}")
+
 

@@ -7,7 +7,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 st.set_page_config(
-    page_title="Sports Betting AI Dashboard V31.8",
+    page_title="Sports Betting AI Dashboard V31.8.1",
     layout="wide"
 )
 
@@ -50,6 +50,10 @@ MIN_PARLAY_LEGS = 2
 MAX_PARLAY_LEGS = 3
 MIN_PARLAY_ODDS = 200
 
+SHARP_PARLAY_MIN_TRUE_CONF = 60.0
+SHARP_PARLAY_MAX_PENALTY = 0.18
+FALLBACK_PARLAY_MAX_PENALTY = 0.36
+
 
 # =========================================================
 # HELPERS
@@ -59,6 +63,13 @@ def american_to_int(odds_str):
         return int(str(odds_str).replace("+", "").strip())
     except Exception:
         return None
+
+
+def in_allowed_odds_range(odds_str, min_odds=-200, max_odds=150):
+    odds_val = american_to_int(odds_str)
+    if odds_val is None:
+        return False
+    return min_odds <= odds_val <= max_odds
 
 
 def american_to_decimal(odds_str):
@@ -84,13 +95,6 @@ def format_american(odds_val):
     if odds_val > 0:
         return f"+{int(odds_val)}"
     return str(int(odds_val))
-
-
-def in_allowed_odds_range(odds_str, min_odds=-200, max_odds=150):
-    odds_val = american_to_int(odds_str)
-    if odds_val is None:
-        return False
-    return min_odds <= odds_val <= max_odds
 
 
 def confidence_fill_and_color(confidence: str):
@@ -253,7 +257,7 @@ def compute_true_confidence(row):
 
 
 # =========================================================
-# ENGINE
+# DYNAMIC ENGINE + SMART DECISION
 # =========================================================
 def generate_ai_plays():
     base_rows = [
@@ -353,10 +357,13 @@ def generate_ai_plays():
 
         if q >= QUALITY_ACTIVE_PRIMARY and e >= ACTIVE_EDGE_PROMOTION:
             return "Active"
+
         if q >= QUALITY_ACTIVE_SECONDARY and e >= MIN_ACTIVE_EDGE:
             return "Active"
+
         if q >= 0.61 and e >= 1.40 and b >= 3 and c in ["Strong", "Fair"]:
             return "Active"
+
         return "Watch"
 
     df["status"] = df.apply(decide_status, axis=1)
@@ -393,6 +400,7 @@ def generate_ai_plays():
 
     df["tier"] = df.apply(normalized_tier, axis=1)
     df["quality_label"] = df["tier"].apply(quality_label_from_tier)
+
     df = df.sort_values(["status", "rank_score"], ascending=[True, False]).reset_index(drop=True)
 
     active_df = df[df["status"] == "Active"].copy().sort_values("rank_score", ascending=False)
@@ -434,7 +442,9 @@ def generate_ai_plays():
     )
 
     if "rank_score" in combined.columns:
-        combined = combined.sort_values(["status", "rank_score"], ascending=[True, False]).reset_index(drop=True)
+        combined = combined.sort_values(
+            ["status", "rank_score"], ascending=[True, False]
+        ).reset_index(drop=True)
 
     return combined
 
@@ -465,12 +475,12 @@ def selections_conflict(row_a, row_b):
     if fam_a == fam_b and row_a["selection"] != row_b["selection"]:
         return True
 
-    teams = []
-    try:
-        teams = [t.strip().lower() for t in str(row_a["game"]).split("vs")]
-    except Exception:
-        teams = []
+    if "over" in sel_a and "under" in sel_b:
+        return True
+    if "under" in sel_a and "over" in sel_b:
+        return True
 
+    teams = [t.strip().lower() for t in str(row_a["game"]).split("vs")]
     if len(teams) == 2:
         t1, t2 = teams[0], teams[1]
         if (t1 in sel_a and t2 in sel_b) or (t2 in sel_a and t1 in sel_b):
@@ -504,113 +514,173 @@ def pair_correlation_penalty(row_a, row_b):
     return clamp(penalty, 0.0, 1.0), reasons
 
 
-def build_parlay_candidates(active_df):
+def score_parlay_combo(combo):
+    total_penalty = 0.0
+    penalty_reasons = []
+    valid = True
+
+    for a, b in combinations(combo, 2):
+        penalty, reasons = pair_correlation_penalty(a, b)
+        if penalty >= 1.0:
+            valid = False
+            break
+        total_penalty += penalty
+        penalty_reasons.extend(reasons)
+
+    if not valid:
+        return None
+
+    decimal_odds = 1.0
+    for leg in combo:
+        dec = american_to_decimal(leg["odds"])
+        if dec is None:
+            return None
+        decimal_odds *= dec
+
+    combined_american = decimal_to_american(decimal_odds)
+    if combined_american is None or combined_american < MIN_PARLAY_ODDS:
+        return None
+
+    avg_true_conf = sum(float(leg["true_confidence"]) for leg in combo) / len(combo)
+    avg_edge = sum(float(leg["edge"]) for leg in combo) / len(combo)
+    avg_books = sum(float(leg["books_seen"]) for leg in combo) / len(combo)
+    avg_price_edge = sum(float(leg["price_edge"]) for leg in combo) / len(combo)
+
+    distinct_games = len(set(leg["game"] for leg in combo))
+    cross_game = distinct_games == len(combo)
+    game_diversity_bonus = 0.12 if cross_game else 0.02
+
+    raw_score = (
+        avg_true_conf * 0.55
+        + avg_edge * 6.0
+        + avg_price_edge * 4.0
+        + avg_books * 1.2
+        + (game_diversity_bonus * 100)
+    )
+
+    conservative_score = raw_score - (total_penalty * 30)
+    fallback_score = raw_score * (1 - total_penalty)
+
+    if total_penalty <= 0.08 and avg_true_conf >= 64:
+        risk_label = "Low"
+    elif total_penalty <= 0.22 and avg_true_conf >= 58:
+        risk_label = "Moderate"
+    else:
+        risk_label = "Elevated"
+
+    reasons = []
+    if cross_game:
+        reasons.append("cross-game diversification")
+    else:
+        reasons.append("same-game correlation adjusted")
+
+    if avg_true_conf >= 62:
+        reasons.append("high true confidence")
+    elif avg_true_conf >= 57:
+        reasons.append("solid true confidence")
+
+    if avg_books >= 3:
+        reasons.append("broad book support")
+
+    if avg_price_edge >= 1.2:
+        reasons.append("price support")
+
+    return {
+        "legs": list(combo),
+        "leg_count": len(combo),
+        "combined_odds": format_american(combined_american),
+        "combined_odds_int": combined_american,
+        "avg_true_conf": round(avg_true_conf, 1),
+        "avg_edge": round(avg_edge, 2),
+        "avg_books": round(avg_books, 2),
+        "avg_price_edge": round(avg_price_edge, 2),
+        "total_penalty": round(total_penalty, 3),
+        "cross_game": cross_game,
+        "conservative_score": round(conservative_score, 1),
+        "fallback_score": round(fallback_score, 1),
+        "risk_label": risk_label,
+        "reasons": (reasons + penalty_reasons)[:6],
+    }
+
+
+def build_all_parlay_candidates(active_df):
     if active_df.empty or len(active_df) < 2:
         return []
 
-    candidates = []
     rows = active_df.to_dict("records")
+    candidates = []
 
     for leg_count in range(MIN_PARLAY_LEGS, min(MAX_PARLAY_LEGS, len(rows)) + 1):
         for combo in combinations(rows, leg_count):
-            combo = list(combo)
+            scored = score_parlay_combo(combo)
+            if scored is not None:
+                candidates.append(scored)
 
-            total_penalty = 0.0
-            penalty_reasons = []
-            valid = True
-
-            for a, b in combinations(combo, 2):
-                penalty, reasons = pair_correlation_penalty(a, b)
-                if penalty >= 1.0:
-                    valid = False
-                    break
-                total_penalty += penalty
-                penalty_reasons.extend(reasons)
-
-            if not valid:
-                continue
-
-            decimal_odds = 1.0
-            for leg in combo:
-                dec = american_to_decimal(leg["odds"])
-                if dec is None:
-                    valid = False
-                    break
-                decimal_odds *= dec
-
-            if not valid:
-                continue
-
-            combined_american = decimal_to_american(decimal_odds)
-            if combined_american is None or combined_american < MIN_PARLAY_ODDS:
-                continue
-
-            avg_true_conf = sum(float(leg["true_confidence"]) for leg in combo) / len(combo)
-            avg_edge = sum(float(leg["edge"]) for leg in combo) / len(combo)
-            avg_books = sum(float(leg["books_seen"]) for leg in combo) / len(combo)
-            avg_price_edge = sum(float(leg["price_edge"]) for leg in combo) / len(combo)
-
-            distinct_games = len(set(leg["game"] for leg in combo))
-            game_diversity_bonus = 0.12 if distinct_games == len(combo) else 0.02
-
-            raw_score = (
-                avg_true_conf * 0.55
-                + avg_edge * 6.0
-                + avg_price_edge * 4.0
-                + avg_books * 1.2
-                + (game_diversity_bonus * 100)
-            )
-
-            adjusted_score = raw_score - (total_penalty * 30)
-
-            if total_penalty <= 0.08 and avg_true_conf >= 64:
-                risk_label = "Low"
-            elif total_penalty <= 0.22 and avg_true_conf >= 58:
-                risk_label = "Moderate"
-            else:
-                risk_label = "Elevated"
-
-            reasons = []
-            if distinct_games == len(combo):
-                reasons.append("cross-game diversification")
-            else:
-                reasons.append("same-game correlation adjusted")
-
-            if avg_true_conf >= 62:
-                reasons.append("high true confidence")
-            elif avg_true_conf >= 57:
-                reasons.append("solid true confidence")
-
-            if avg_books >= 3:
-                reasons.append("broad book support")
-
-            if avg_price_edge >= 1.2:
-                reasons.append("price support")
-
-            candidates.append(
-                {
-                    "legs": combo,
-                    "leg_count": len(combo),
-                    "combined_odds": format_american(combined_american),
-                    "combined_odds_int": combined_american,
-                    "avg_true_conf": round(avg_true_conf, 1),
-                    "avg_edge": round(avg_edge, 2),
-                    "parlay_score": round(adjusted_score, 1),
-                    "risk_label": risk_label,
-                    "reasons": (reasons + penalty_reasons)[:6],
-                }
-            )
-
-    candidates.sort(
-        key=lambda x: (x["parlay_score"], x["avg_true_conf"], x["combined_odds_int"]),
-        reverse=True,
-    )
     return candidates
 
 
+def classify_parlay_candidates(candidates):
+    sharp_candidates = []
+    fallback_candidates = []
+
+    for c in candidates:
+        sharp_ok = (
+            c["avg_true_conf"] >= SHARP_PARLAY_MIN_TRUE_CONF
+            and c["total_penalty"] <= SHARP_PARLAY_MAX_PENALTY
+            and c["cross_game"]
+        )
+
+        fallback_ok = (
+            c["total_penalty"] <= FALLBACK_PARLAY_MAX_PENALTY
+        )
+
+        if sharp_ok:
+            sharp_candidates.append(c)
+
+        if fallback_ok:
+            fallback_candidates.append(c)
+
+    sharp_candidates.sort(
+        key=lambda x: (
+            x["conservative_score"],
+            x["avg_true_conf"],
+            x["combined_odds_int"]
+        ),
+        reverse=True,
+    )
+
+    fallback_candidates.sort(
+        key=lambda x: (
+            x["fallback_score"],
+            x["avg_true_conf"],
+            x["combined_odds_int"]
+        ),
+        reverse=True,
+    )
+
+    return sharp_candidates, fallback_candidates
+
+
 def choose_best_parlay(active_df):
-    candidates = build_parlay_candidates(active_df)
-    return candidates[0] if candidates else None
+    all_candidates = build_all_parlay_candidates(active_df)
+    sharp_candidates, fallback_candidates = classify_parlay_candidates(all_candidates)
+
+    sharp_best = sharp_candidates[0] if sharp_candidates else None
+    fallback_best = fallback_candidates[0] if fallback_candidates else None
+
+    if sharp_best is not None:
+        chosen = sharp_best.copy()
+        chosen["approval_type"] = "Sharp Approved"
+        chosen["display_score"] = chosen["conservative_score"]
+        return chosen, sharp_candidates, fallback_candidates
+
+    if fallback_best is not None:
+        chosen = fallback_best.copy()
+        chosen["approval_type"] = "Balanced Fallback"
+        chosen["display_score"] = chosen["fallback_score"]
+        return chosen, sharp_candidates, fallback_candidates
+
+    return None, sharp_candidates, fallback_candidates
 
 
 # =========================================================
@@ -754,7 +824,7 @@ def render_horizontal_nav():
 
 
 # =========================================================
-# CARD RENDER
+# PLAY CARD RENDER
 # =========================================================
 def render_play_card(row: pd.Series, show_best_badge: bool = False):
     badge_bg, badge_fg = tier_colors(row["tier"])
@@ -944,6 +1014,9 @@ def render_play_card(row: pd.Series, show_best_badge: bool = False):
     components.html(html, height=card_height, scrolling=False)
 
 
+# =========================================================
+# PARLAY CARD RENDER
+# =========================================================
 def render_parlay_card(parlay):
     if not parlay:
         st.info("No qualifying parlay available.")
@@ -954,6 +1027,9 @@ def render_parlay_card(parlay):
         "Moderate": "#f59e0b",
         "Elevated": "#ef4444",
     }.get(parlay["risk_label"], "#94a3b8")
+
+    approval_bg = "#dcfce7" if parlay["approval_type"] == "Sharp Approved" else "#fef3c7"
+    approval_fg = "#166534" if parlay["approval_type"] == "Sharp Approved" else "#92400e"
 
     legs_html = ""
     for i, leg in enumerate(parlay["legs"], start=1):
@@ -997,7 +1073,18 @@ def render_parlay_card(parlay):
             color:#ffffff;
             box-sizing:border-box;
         ">
-            <div style="color:#fbbf24; font-size:12px; font-weight:800; margin-bottom:6px;">🔥 AI PARLAY INTELLIGENCE</div>
+            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:6px;">
+                <div style="color:#fbbf24; font-size:12px; font-weight:800;">🔥 AI PARLAY ENGINE</div>
+                <span style="
+                    background:{approval_bg};
+                    color:{approval_fg};
+                    border-radius:999px;
+                    padding:4px 8px;
+                    font-size:10px;
+                    font-weight:800;
+                ">{parlay["approval_type"]}</span>
+            </div>
+
             <div style="font-size:22px; font-weight:800; margin-bottom:5px;">Recommended {parlay["leg_count"]}-Leg Slip</div>
             <div style="color:#d4dbe8; font-size:13px; margin-bottom:10px;">
                 Combined Odds: <span style="color:#ffffff; font-weight:800;">{parlay["combined_odds"]}</span>
@@ -1012,7 +1099,7 @@ def render_parlay_card(parlay):
             ">
                 <div>
                     <div style="color:#91a0b7; font-size:10px;">Parlay Score</div>
-                    <div style="font-size:15px; font-weight:800;">{parlay["parlay_score"]}</div>
+                    <div style="font-size:15px; font-weight:800;">{parlay["display_score"]}</div>
                 </div>
                 <div>
                     <div style="color:#91a0b7; font-size:10px;">Risk</div>
@@ -1030,12 +1117,13 @@ def render_parlay_card(parlay):
     </body>
     </html>
     """
-    components.html(html, height=360 if is_mobile() else 390, scrolling=False)
+    components.html(html, height=395 if is_mobile() else 420, scrolling=False)
 
 
-def render_parlay_table(candidates):
+def render_parlay_table(candidates, score_key, title):
+    st.markdown(f"**{title}**")
     if not candidates:
-        st.info("No qualifying parlays available.")
+        st.info("No candidates.")
         return
 
     rows = []
@@ -1045,8 +1133,9 @@ def render_parlay_table(candidates):
                 "legs": p["leg_count"],
                 "combined_odds": p["combined_odds"],
                 "avg_true_conf": p["avg_true_conf"],
-                "parlay_score": p["parlay_score"],
+                "score": p[score_key],
                 "risk": p["risk_label"],
+                "penalty": p["total_penalty"],
                 "legs_summary": " | ".join([leg["selection"] for leg in p["legs"]]),
             }
         )
@@ -1088,8 +1177,7 @@ best_row = None
 if not active_df.empty:
     best_row = active_df.sort_values(["rank_score", "true_confidence"], ascending=False).iloc[0]
 
-parlay_candidates = build_parlay_candidates(active_df)
-best_parlay = choose_best_parlay(active_df)
+best_parlay, sharp_candidates, fallback_candidates = choose_best_parlay(active_df)
 
 avg_active_edge = active_df["edge"].mean() if not active_df.empty else 0.0
 best_score = best_row["score"] if best_row is not None else "—"
@@ -1212,8 +1300,8 @@ h1, h2, h3 {
 # =========================================================
 # HEADER
 # =========================================================
-st.title("🔥 Sports Betting AI Dashboard V31.8")
-st.caption("AI Parlay Intelligence • Smart Decision Layer • Auto Bet Log")
+st.title("🔥 Sports Betting AI Dashboard V31.8.1")
+st.caption("Conservative Core + Balanced Fallback • AI Parlay Intelligence • Auto Bet Log")
 
 if auto_logged_count > 0:
     st.markdown(
@@ -1329,11 +1417,13 @@ elif nav == "AI Slip":
 
     st.subheader("🎯 AI Parlay Intelligence")
     if best_parlay is None:
-        st.info("Not enough qualifying active legs for a recommended parlay.")
+        st.info("No qualifying parlay or fallback slip available.")
     else:
         render_parlay_card(best_parlay)
-        with st.expander("Show top parlay candidates", expanded=False):
-            render_parlay_table(parlay_candidates)
+
+        with st.expander("Show parlay candidate detail", expanded=False):
+            render_parlay_table(sharp_candidates, "conservative_score", "Sharp Approved Candidates")
+            render_parlay_table(fallback_candidates, "fallback_score", "Balanced Fallback Candidates")
 
 # =========================================================
 # BET LOG
@@ -1410,6 +1500,7 @@ with st.expander("⚙️ Adaptive Settings", expanded=False):
         st.write(f"**Primary Quality Threshold:** {QUALITY_ACTIVE_PRIMARY:.2f}")
         st.write(f"**Secondary Quality Threshold:** {QUALITY_ACTIVE_SECONDARY:.2f}")
         st.write(f"**Fallback Quality Floor:** {QUALITY_FLOOR_FALLBACK:.2f}")
+        st.write(f"**Sharp Parlay Min True Conf:** {SHARP_PARLAY_MIN_TRUE_CONF:.1f}")
 
     with c2:
         st.write(f"**Active Promotion Edge:** {ACTIVE_EDGE_PROMOTION:.2f}%")

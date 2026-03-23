@@ -364,105 +364,53 @@ def compute_true_confidence(row):
 
 
 # =========================================================
-# DATA GENERATION (LIVE SLATE FIX)
+# DATA BUILD
 # =========================================================
-def generate_ai_plays():
-    if not today_games:
-        return pd.DataFrame()
+df = generate_ai_plays()
 
-    market_templates = [
-        ("moneyline", lambda g: g.split(" vs ")[1]),
-        ("moneyline", lambda g: g.split(" vs ")[0]),
-        ("total", lambda g: "Over 221.5"),
-        ("total", lambda g: "Under 221.5"),
-        ("spread", lambda g: f"{g.split(' vs ')[1]} -4.5"),
-        ("spread", lambda g: f"{g.split(' vs ')[0]} +4.5"),
-    ]
+if df is None or df.empty:
+    df = pd.DataFrame(columns=[
+        "game",
+        "market",
+        "selection",
+        "odds",
+        "edge",
+        "score",
+        "units",
+        "tier",
+        "quality_label",
+        "status",
+        "confidence",
+        "books_seen",
+        "best_price",
+        "price_edge",
+        "true_confidence",
+        "quality_score",
+        "rank_score",
+        "play_id",
+        "ai_tags",
+    ])
 
-    odds_pool = ["-132", "-118", "-110", "-105", "-102", "+100", "+110", "+120", "+135"]
-    consensus_pool = ["Strong", "Fair", "Thin"]
-    confidence_pool = ["Medium", "High", "Elite"]
+auto_logged_count = auto_log_active_plays(df)
 
-    rows = []
-    random.seed(31)
+active_df = df[df["status"] == "Active"].copy().reset_index(drop=True)
+watch_df = df[df["status"] == "Watch"].copy().reset_index(drop=True)
 
-    for game in today_games:
-        for market, selection_fn in market_templates:
-            edge = round(random.uniform(0.80, 5.20), 2)
-            score = round(random.uniform(80.0, 99.5), 1)
-            confidence = random.choices(confidence_pool, weights=[3, 5, 2])[0]
-            books_seen = random.randint(1, 4)
-            odds = random.choice(odds_pool)
-            consensus = random.choices(consensus_pool, weights=[3, 5, 2])[0]
-            price_edge = round(random.uniform(0.40, 2.60), 2)
+best_row = None
+if not active_df.empty:
+    best_row = active_df.sort_values(
+        ["rank_score", "true_confidence"],
+        ascending=False
+    ).iloc[0]
 
-            if edge < MIN_ACTIVE_EDGE:
-                continue
-            if not in_allowed_odds_range(odds, *DEFAULT_ODDS_RANGE):
-                continue
+best_parlay, sharp_candidates, fallback_candidates = choose_best_parlay(active_df)
+all_portfolio_candidates = [*sharp_candidates, *fallback_candidates]
+portfolio = build_ai_portfolio(best_row, best_parlay, all_portfolio_candidates)
 
-            row = {
-                "game": game,
-                "market": market,
-                "selection": selection_fn(game),
-                "odds": odds,
-                "edge": edge,
-                "score": score,
-                "units": 0.0,
-                "tier": "C",
-                "quality_label": "Watch",
-                "status": "Watch",
-                "confidence": confidence,
-                "books_seen": books_seen,
-                "best_price": "Yes" if price_edge >= 1.25 else "No",
-                "consensus": consensus,
-                "price_edge": price_edge,
-                "ai_tags": ["AI generated", "live slate"],
-            }
-
-            tc, qs, reasons = compute_true_confidence(row)
-            row["true_confidence"] = tc
-            row["quality_score"] = qs
-            row["decision_reasons"] = reasons
-            row["units"] = scale_single_units(row)
-
-            rows.append(row)
-
-    df = pd.DataFrame(rows)
-    if df.empty:
-        return df
-
-    df["rank_score"] = (
-        df["quality_score"] * 100 * 0.55
-        + df["score"] * 0.15
-        + df["edge"] * 6
-        + df["price_edge"] * 4
-        + df["books_seen"] * 1.5
-    )
-
-    df["status"] = df.apply(
-        lambda r: "Active"
-        if (r["quality_score"] >= QUALITY_ACTIVE_PRIMARY and r["edge"] >= ACTIVE_EDGE_PROMOTION)
-        else "Watch",
-        axis=1,
-    )
-
-    df["tier"] = df["true_confidence"].apply(lambda x: "A" if x >= 78 else ("B" if x >= 60 else "C"))
-    df["quality_label"] = df["tier"].apply(quality_label_from_tier)
-
-    df["play_id"] = df.apply(
-        lambda r: build_play_id(
-            {
-                "game": r["game"],
-                "market": r["market"],
-                "selection": r["selection"],
-                "odds": r["odds"],
-            }
-        ),
-        axis=1,
-    )
-
-    return df.sort_values(["status", "rank_score"], ascending=[True, False]).reset_index(drop=True)
+avg_active_edge = active_df["edge"].mean() if not active_df.empty else 0.0
+best_score = best_row["score"] if best_row is not None else "—"
+avg_true_conf = active_df["true_confidence"].mean() if not active_df.empty else 0.0
+total_units = active_df["units"].sum() if not active_df.empty else 0.0
 
 # =========================================================
 # PARLAY INTELLIGENCE

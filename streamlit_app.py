@@ -1432,23 +1432,18 @@ elif nav == "AI Slip":
         st.info("Not enough qualifying active legs for a recommended parlay.")
     else:
         render_parlay_card(best_parlay)
-        render_parlay_card(best_parlay)
 
-# =========================
-# V32 PORTFOLIO DISPLAY
-# =========================
-st.markdown("### 🧠 AI Portfolio Allocation")
-
-if portfolio:
-    for p in portfolio:
-        if p["type"] == "Single":
-            st.markdown(f"**{p['label']}** — {p['units']}u")
-        else:
-            st.markdown(f"**{p['label']} ({p['data']['combined_odds']})** — {p['units']}u")
-else:
-    st.info("No portfolio generated.")
-        with st.expander("Show top parlay candidates", expanded=False):
-            render_parlay_table(parlay_candidates)
+    with st.expander("Show top parlay candidates", expanded=False):
+        render_parlay_table(
+            [p for p in parlay_candidates if p.get("approval_type") == "Sharp Approved"],
+            "display_score",
+            "Sharp Approved Candidates"
+        )
+        render_parlay_table(
+            [p for p in parlay_candidates if p.get("approval_type") != "Sharp Approved"],
+            "display_score",
+            "Balanced Fallback Candidates"
+        )
 
     st.subheader("🧠 AI Portfolio Allocation")
     if not portfolio:
@@ -1457,6 +1452,7 @@ else:
         portfolio_rows = []
         for item in portfolio:
             data = item["data"]
+
             if item["type"] == "Single":
                 summary = f'{data["selection"]} ({data["game"]})'
                 odds = data["odds"]
@@ -1478,10 +1474,6 @@ else:
             )
 
         st.dataframe(pd.DataFrame(portfolio_rows), use_container_width=True, hide_index=True)
-
-# =========================================================
-# BET LOG
-# =========================================================
 elif nav == "Bet Log":
     st.header("🧾 Bet Log")
     st.caption("Auto-logged active plays plus future manual entries.")

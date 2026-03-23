@@ -1086,18 +1086,25 @@ def render_parlay_table(candidates, score_key, title):
 
     rows = []
     for p in candidates[:5]:
+        score_value = p.get(score_key) or p.get("display_score") or p.get("score")
+
         rows.append(
             {
                 "legs": p.get("leg_count"),
                 "combined_odds": p.get("combined_odds"),
-                "avg_true_conf": p.get("avg_true_conf"),
-                "score": p.get(score_key, p.get("score", p.get("display_score", "—"))),
+                "avg_true_conf": round(p.get("avg_true_conf", 0), 1),
+                "score": round(score_value, 1) if isinstance(score_value, (int, float)) else "—",
                 "risk": p.get("risk_label"),
-                "penalty": p.get("total_penalty"),
-                "legs_summary": " | ".join([leg.get("selection", "") for leg in p.get("legs", [])]),
+                "legs_summary": " | ".join(
+                    [leg.get("selection", "") for leg in p.get("legs", [])]
+                ),
             }
         )
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+    df = pd.DataFrame(rows)
+    df = df[["legs", "combined_odds", "avg_true_conf", "score", "risk"]]
+
+    st.dataframe(df, use_container_width=True, hide_index=True)
 
 
 def render_table_desktop(dataframe: pd.DataFrame):
@@ -1125,7 +1132,7 @@ def render_mobile_or_table(dataframe: pd.DataFrame, best_first: bool = False):
 # =========================================================
 # V32 PORTFOLIO ENGINE
 # =========================================================
-def build_ai_portfolio(best_single, chosen_parlay, parlay_candidates):
+    def build_ai_portfolio(best_single, chosen_parlay, parlay_candidates):
     portfolio = []
 
     if best_single is not None:

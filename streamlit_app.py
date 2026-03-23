@@ -1569,12 +1569,77 @@ elif nav == "AI Slip":
                     "Odds": odds,
                     "Confidence": conf,
                     "Summary": summary,
+                    "Mode": TEST_MODE,
                 }
             )
 
         st.dataframe(pd.DataFrame(portfolio_rows), use_container_width=True, hide_index=True)
 
 elif nav == "Bet Log":
+    st.header("🧾 Bet Log")
+    st.caption("Auto-logged active plays plus future manual entries.")
+
+    if len(st.session_state["bet_log"]) == 0:
+        st.info("No bets logged yet.")
+    else:
+        log_df = pd.DataFrame(st.session_state["bet_log"]).copy()
+        log_cols = [
+            "game", "market", "selection", "odds", "edge",
+            "score", "units", "confidence", "true_confidence",
+            "tier", "quality_label", "status", "bet_type",
+            "test_mode", "result", "pnl"
+        ]
+        for col in log_cols:
+            if col not in log_df.columns:
+                log_df[col] = None
+        log_df = log_df[log_cols]
+        st.dataframe(log_df, use_container_width=True, hide_index=True)
+
+    st.markdown('<div class="bet-form-wrap">', unsafe_allow_html=True)
+    st.markdown('<div class="small-muted">Manual bet entry</div>', unsafe_allow_html=True)
+
+    with st.form("bet_log_form", clear_on_submit=True):
+        col1, col2 = st.columns(2)
+
+        with col1:
+            game = st.text_input("Game")
+            market = st.selectbox("Market", ["moneyline", "spread", "total", "prop"])
+            units = st.number_input("Units", min_value=0.0, max_value=10.0, value=0.50, step=0.05)
+
+        with col2:
+            selection = st.text_input("Selection")
+            odds = st.text_input("Odds", value="")
+            confidence = st.selectbox("Confidence", ["Medium", "High", "Elite"])
+
+        submitted = st.form_submit_button("Save Bet")
+
+        if submitted:
+            manual_row = {
+                "play_id": build_play_id({
+                    "game": game,
+                    "market": market,
+                    "selection": selection,
+                    "odds": odds,
+                }),
+                "game": game or "N/A",
+                "market": market,
+                "selection": selection or "N/A",
+                "odds": odds or "N/A",
+                "edge": None,
+                "score": None,
+                "units": units,
+                "confidence": confidence,
+                "true_confidence": None,
+                "tier": "Manual",
+                "quality_label": "Manual",
+                "status": "Manual",
+                "bet_type": "Manual",
+                "test_mode": TEST_MODE,
+                "result": "Pending",
+                "pnl": 0.0,
+            }
+            st.session_state["bet_log"].append(manual_row)
+            st.success("Manual bet saved.")
 
 # =========================================================
 # ADAPTIVE SETTINGS
@@ -1588,10 +1653,12 @@ with st.expander("⚙️ Adaptive Settings", expanded=False):
         st.write(f"**Secondary Quality Threshold:** {QUALITY_ACTIVE_SECONDARY:.2f}")
         st.write(f"**Fallback Quality Floor:** {QUALITY_FLOOR_FALLBACK:.2f}")
         st.write(f"**Sharp Parlay Min True Conf:** {SHARP_PARLAY_MIN_TRUE_CONF:.1f}")
+        st.write(f"**Test Mode:** {TEST_MODE}")
 
     with c2:
         st.write(f"**Active Promotion Edge:** {ACTIVE_EDGE_PROMOTION:.2f}%")
         st.write(f"**Max Active Plays:** {MAX_ACTIVE_PLAYS}")
         st.write(f"**Max Total Units:** {MAX_TOTAL_UNITS:.1f}u")
         st.write(f"**Min Parlay Odds:** +{MIN_PARLAY_ODDS}")
+        st.write(f"**Test Daily Unit Cap:** {TEST_DAILY_UNIT_CAP:.2f}u")
         st.write("**CLV Priority:** Delayed until more free books/APIs are added")

@@ -6,7 +6,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 st.set_page_config(
-    page_title="Sports Betting AI Dashboard V31.6.1",
+    page_title="Sports Betting AI Dashboard V31.6.2",
     layout="wide"
 )
 
@@ -21,6 +21,9 @@ if "bet_log" not in st.session_state:
 
 if "auto_logged_ids" not in st.session_state:
     st.session_state["auto_logged_ids"] = set()
+
+if "nav_choice" not in st.session_state:
+    st.session_state["nav_choice"] = "Top Plays"
 
 st.sidebar.toggle("📱 Mobile Mode", key="is_mobile")
 
@@ -263,6 +266,109 @@ def auto_log_active_plays(df):
 
 
 # =========================================================
+# MOBILE NAV
+# =========================================================
+def render_horizontal_nav():
+    labels = ["Top Plays", "Watchlist", "AI Slip", "Bet Log"]
+    icons = {
+        "Top Plays": "🎯",
+        "Watchlist": "👀",
+        "AI Slip": "🧠",
+        "Bet Log": "🧾",
+    }
+
+    selected = st.session_state.get("nav_choice", "Top Plays")
+
+    html = '<div class="nav-scroll-wrap">'
+    for label in labels:
+        active = label == selected
+        klass = "nav-pill active" if active else "nav-pill"
+        html += f"""
+        <a href="#"
+           onclick="window.parent.postMessage({{type: 'streamlit:setComponentValue', value: '{label}'}}, '*'); return false;"
+           class="{klass}">
+           <span class="nav-emoji">{icons[label]}</span>
+           <span>{label}</span>
+        </a>
+        """
+    html += "</div>"
+
+    nav_value = components.html(
+        f"""
+        <html>
+        <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <style>
+        body {{
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: transparent;
+        }}
+        .nav-scroll-wrap {{
+            display: flex;
+            gap: 10px;
+            overflow-x: auto;
+            white-space: nowrap;
+            padding: 2px 0 6px 0;
+            scrollbar-width: none;
+        }}
+        .nav-scroll-wrap::-webkit-scrollbar {{
+            display: none;
+        }}
+        .nav-pill {{
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            text-decoration: none;
+            padding: 10px 14px;
+            border-radius: 999px;
+            border: 1px solid #e5e7eb;
+            background: #ffffff;
+            color: #111827;
+            font-size: 14px;
+            font-weight: 700;
+            box-sizing: border-box;
+        }}
+        .nav-pill.active {{
+            background: #111827;
+            color: #ffffff;
+            border-color: #111827;
+        }}
+        .nav-emoji {{
+            font-size: 14px;
+            line-height: 1;
+        }}
+        </style>
+        </head>
+        <body>
+            {html}
+            <script>
+            const streamlitDoc = window.parent;
+            window.addEventListener("message", (event) => {{
+              if (event.data && event.data.type === "streamlit:setComponentValue") {{
+                const value = event.data.value;
+                const out = {{
+                  isStreamlitMessage: true,
+                  type: "streamlit:setComponentValue",
+                  value: value
+                }};
+                window.parent.postMessage(out, "*");
+              }}
+            }});
+            </script>
+        </body>
+        </html>
+        """,
+        height=54,
+    )
+
+    if nav_value in labels:
+        st.session_state["nav_choice"] = nav_value
+
+    return st.session_state["nav_choice"]
+
+
+# =========================================================
 # MOBILE COMPACT CARD RENDERING
 # =========================================================
 def render_play_card(row: pd.Series, show_best_badge: bool = False):
@@ -283,22 +389,22 @@ def render_play_card(row: pd.Series, show_best_badge: bool = False):
             color:#d8e0ec;
             border:1px solid #2d3748;
             border-radius:999px;
-            padding:4px 9px;
-            font-size:11px;
+            padding:4px 8px;
+            font-size:10px;
             line-height:1;
             display:inline-block;
             margin-right:6px;
-            margin-bottom:6px;
+            margin-bottom:5px;
             white-space:nowrap;
         ">{tag}</span>
         """
 
-    title_size = "24px" if is_mobile() else "28px"
-    subtitle_size = "13px" if is_mobile() else "15px"
-    metric_label_size = "11px" if is_mobile() else "12px"
-    metric_value_size = "15px" if is_mobile() else "17px"
-    card_padding = "14px" if is_mobile() else "16px"
-    card_height = 325 if is_mobile() else 360
+    title_size = "22px" if is_mobile() else "27px"
+    subtitle_size = "12px" if is_mobile() else "14px"
+    metric_label_size = "10px" if is_mobile() else "11px"
+    metric_value_size = "14px" if is_mobile() else "16px"
+    card_padding = "13px" if is_mobile() else "15px"
+    card_height = 285 if is_mobile() else 330
 
     html = f"""
     <html>
@@ -314,13 +420,13 @@ def render_play_card(row: pd.Series, show_best_badge: bool = False):
             color:#ffffff;
             box-sizing:border-box;
         ">
-            <div style="display:flex; flex-wrap:wrap; gap:7px; margin-bottom:10px;">
+            <div style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px;">
                 <span style="
                     background:{badge_bg};
                     color:{badge_fg};
-                    padding:6px 11px;
+                    padding:5px 10px;
                     border-radius:999px;
-                    font-size:11px;
+                    font-size:10px;
                     font-weight:800;
                     line-height:1;
                     display:inline-block;
@@ -329,9 +435,9 @@ def render_play_card(row: pd.Series, show_best_badge: bool = False):
                 <span style="
                     background:{status_bg};
                     color:{status_fg};
-                    padding:6px 11px;
+                    padding:5px 10px;
                     border-radius:999px;
-                    font-size:11px;
+                    font-size:10px;
                     font-weight:800;
                     line-height:1;
                     display:inline-block;
@@ -340,9 +446,9 @@ def render_play_card(row: pd.Series, show_best_badge: bool = False):
                 <span style="
                     background:#ead8ff;
                     color:#6b21a8;
-                    padding:6px 11px;
+                    padding:5px 10px;
                     border-radius:999px;
-                    font-size:11px;
+                    font-size:10px;
                     font-weight:800;
                     line-height:1;
                     display:{best_display};
@@ -352,9 +458,9 @@ def render_play_card(row: pd.Series, show_best_badge: bool = False):
 
             <div style="
                 font-size:{title_size};
-                line-height:1.02;
+                line-height:1.0;
                 font-weight:800;
-                margin:0 0 8px 0;
+                margin:0 0 6px 0;
                 letter-spacing:-0.03em;
                 color:#ffffff;
             ">{row["selection"]}</div>
@@ -362,14 +468,14 @@ def render_play_card(row: pd.Series, show_best_badge: bool = False):
             <div style="
                 color:#d4dbe8;
                 font-size:{subtitle_size};
-                margin-bottom:12px;
+                margin-bottom:9px;
             ">{row["game"]} • {str(row["market"]).title()}</div>
 
             <div style="
                 display:grid;
                 grid-template-columns:1fr 1fr;
-                gap:10px 14px;
-                margin-bottom:10px;
+                gap:8px 12px;
+                margin-bottom:8px;
             ">
                 <div>
                     <div style="color:#91a0b7; font-size:{metric_label_size}; margin-bottom:1px;">Odds</div>
@@ -408,18 +514,18 @@ def render_play_card(row: pd.Series, show_best_badge: bool = False):
                 </div>
             </div>
 
-            <div style="height:1px; background:#2a3448; margin:8px 0 10px 0;"></div>
+            <div style="height:1px; background:#2a3448; margin:7px 0 8px 0;"></div>
 
             <div style="margin-top:0;">
-                <div style="color:#91a0b7; font-size:{metric_label_size}; margin-bottom:5px;">Confidence • {row["confidence"]}</div>
-                <div style="width:100%; height:6px; background:#263041; border-radius:999px; overflow:hidden;">
-                    <div style="width:{fill_width}; height:6px; background:{fill_color}; border-radius:999px;"></div>
+                <div style="color:#91a0b7; font-size:{metric_label_size}; margin-bottom:4px;">Confidence • {row["confidence"]}</div>
+                <div style="width:100%; height:5px; background:#263041; border-radius:999px; overflow:hidden;">
+                    <div style="width:{fill_width}; height:5px; background:{fill_color}; border-radius:999px;"></div>
                 </div>
             </div>
 
-            <div style="height:10px;"></div>
+            <div style="height:8px;"></div>
 
-            <div style="overflow:hidden;">
+            <div style="overflow:hidden; max-height:26px;">
                 {tags_html}
             </div>
         </div>
@@ -484,8 +590,8 @@ html, body, [class*="css"] {
 }
 .block-container {
     max-width: 880px;
-    padding-top: 1rem;
-    padding-bottom: 2.2rem;
+    padding-top: 0.9rem;
+    padding-bottom: 2rem;
 }
 h1, h2, h3 {
     letter-spacing: -0.02em;
@@ -495,26 +601,26 @@ h1, h2, h3 {
     background: #ffffff;
     border: 1px solid #e7ebf2;
     border-radius: 18px;
-    padding: 12px 14px;
-    margin-bottom: 12px;
+    padding: 11px 13px;
+    margin-bottom: 10px;
 }
 .metric-panel-title {
     color: #1f2937;
     font-weight: 800;
-    font-size: 0.98rem;
-    margin-bottom: 8px;
+    font-size: 0.96rem;
+    margin-bottom: 7px;
 }
 .metric-mini-grid {
     display: grid;
     grid-template-columns: repeat(2, 1fr);
-    gap: 10px 14px;
+    gap: 9px 12px;
 }
 .metric-mini-label {
-    font-size: 0.78rem;
+    font-size: 0.76rem;
     color: #6b7280;
 }
 .metric-mini-value {
-    font-size: 1.05rem;
+    font-size: 1rem;
     font-weight: 800;
     color: #111827;
 }
@@ -522,39 +628,39 @@ h1, h2, h3 {
     background: #ffffff;
     border: 1px solid #e6eaf2;
     border-radius: 18px;
-    padding: 12px 14px 7px 14px;
-    margin-bottom: 14px;
+    padding: 11px 13px 8px 13px;
+    margin-bottom: 12px;
 }
 .section-title {
-    font-size: 1.05rem;
+    font-size: 1rem;
     font-weight: 800;
-    margin-bottom: 0.35rem;
+    margin-bottom: 0.3rem;
     color: #1e2430;
 }
 .slip-card {
     background: linear-gradient(180deg, #171d2a 0%, #101624 100%);
     border: 1px solid #273043;
     border-radius: 22px;
-    padding: 15px;
-    margin-bottom: 12px;
+    padding: 14px;
+    margin-bottom: 10px;
     box-shadow: 0 10px 24px rgba(0, 0, 0, 0.14);
 }
 .slip-kicker {
     color: #fbbf24;
-    font-size: 0.88rem;
+    font-size: 0.84rem;
     font-weight: 800;
     margin-bottom: 6px;
 }
 .slip-title {
     color: #ffffff;
-    font-size: 1.55rem;
+    font-size: 1.45rem;
     font-weight: 800;
-    margin-bottom: 6px;
+    margin-bottom: 5px;
     letter-spacing: -0.03em;
 }
 .slip-meta {
     color: #d6deea;
-    font-size: 0.92rem;
+    font-size: 0.88rem;
     margin-bottom: 4px;
 }
 .bet-form-wrap {
@@ -569,19 +675,13 @@ h1, h2, h3 {
     border: 1px solid #a7f3d0;
     color: #065f46;
     border-radius: 16px;
-    padding: 11px 13px;
-    margin-bottom: 12px;
+    padding: 10px 12px;
+    margin-bottom: 10px;
     font-weight: 700;
 }
 .small-muted {
     color: #6b7280;
-    font-size: 0.86rem;
-}
-div[data-testid="stRadio"] > div {
-    gap: 0.5rem;
-}
-div[data-testid="stRadio"] label {
-    padding-right: 0.25rem;
+    font-size: 0.84rem;
 }
 </style>
 """,
@@ -591,8 +691,8 @@ div[data-testid="stRadio"] label {
 # =========================================================
 # HEADER
 # =========================================================
-st.title("🔥 Sports Betting AI Dashboard V31.6.1")
-st.caption("Mobile Compact Pro • Dynamic Play Generation • Auto Bet Log")
+st.title("🔥 Sports Betting AI Dashboard V31.6.2")
+st.caption("Ultra Compact + Horizontal Nav • Dynamic Play Generation • Auto Bet Log")
 
 if auto_logged_count > 0:
     st.markdown(
@@ -644,12 +744,17 @@ st.markdown("</div>", unsafe_allow_html=True)
 st.markdown('<div class="nav-wrap">', unsafe_allow_html=True)
 st.markdown('<div class="section-title">🚀 Navigation</div>', unsafe_allow_html=True)
 
-nav = st.radio(
-    "Navigation",
-    ["Top Plays", "Watchlist", "AI Slip", "Bet Log"],
-    horizontal=True,
-    label_visibility="collapsed",
-)
+if is_mobile():
+    nav = render_horizontal_nav()
+else:
+    nav = st.radio(
+        "Navigation",
+        ["Top Plays", "Watchlist", "AI Slip", "Bet Log"],
+        horizontal=True,
+        label_visibility="collapsed",
+        key="nav_choice_desktop",
+    )
+    st.session_state["nav_choice"] = nav
 
 st.markdown("</div>", unsafe_allow_html=True)
 
@@ -675,7 +780,7 @@ elif nav == "Watchlist":
 # AI SLIP
 # =========================================================
 elif nav == "AI Slip":
-    st.header("🎯 AI Bet Slip")
+    st.header("🧠 AI Slip")
 
     if best_row is not None:
         slip_type = "Single best bet"
@@ -695,7 +800,6 @@ elif nav == "AI Slip":
             """,
             unsafe_allow_html=True,
         )
-
         render_play_card(best_row, show_best_badge=True)
     else:
         st.info("No active AI slip available.")

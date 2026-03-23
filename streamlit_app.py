@@ -6,7 +6,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 st.set_page_config(
-    page_title="Sports Betting AI Dashboard V31.6.3",
+    page_title="Sports Betting AI Dashboard V31.7",
     layout="wide"
 )
 
@@ -89,8 +89,128 @@ def build_play_id(row_dict):
     return hashlib.md5(raw.encode()).hexdigest()
 
 
+def clamp(value, low, high):
+    return max(low, min(high, value))
+
+
 # =========================================================
-# DYNAMIC ENGINE
+# SMART DECISION LAYER
+# =========================================================
+def books_score(books_seen):
+    if books_seen >= 4:
+        return 1.00
+    if books_seen == 3:
+        return 0.82
+    if books_seen == 2:
+        return 0.60
+    return 0.35
+
+
+def consensus_score(consensus):
+    consensus = str(consensus).strip().lower()
+    if consensus == "strong":
+        return 1.00
+    if consensus == "fair":
+        return 0.68
+    return 0.38
+
+
+def confidence_score(confidence):
+    confidence = str(confidence).strip().lower()
+    if confidence == "elite":
+        return 1.00
+    if confidence == "high":
+        return 0.76
+    return 0.52
+
+
+def edge_score(edge):
+    return clamp(edge / 5.0, 0.0, 1.0)
+
+
+def price_edge_score(price_edge):
+    return clamp(price_edge / 2.6, 0.0, 1.0)
+
+
+def model_score(score):
+    return clamp((score - 80.0) / 20.0, 0.0, 1.0)
+
+
+def detect_traps(row):
+    penalties = 0.0
+    trap_flags = []
+
+    edge = float(row["edge"])
+    books_seen = int(row["books_seen"])
+    consensus = str(row["consensus"])
+    confidence = str(row["confidence"])
+    price_edge = float(row["price_edge"])
+
+    if consensus == "Thin" and edge >= 3.0:
+        penalties += 0.18
+        trap_flags.append("thin consensus trap")
+
+    if books_seen <= 1 and edge >= 2.0:
+        penalties += 0.18
+        trap_flags.append("low book count trap")
+
+    if books_seen <= 2 and consensus == "Thin":
+        penalties += 0.14
+        trap_flags.append("weak market structure")
+
+    if confidence == "Medium" and edge >= 3.5:
+        penalties += 0.08
+        trap_flags.append("edge-confidence mismatch")
+
+    if price_edge < 0.80 and edge >= 3.0:
+        penalties += 0.07
+        trap_flags.append("weak price support")
+
+    return clamp(penalties, 0.0, 0.45), trap_flags
+
+
+def compute_true_confidence(row):
+    ms = model_score(float(row["score"]))
+    es = edge_score(float(row["edge"]))
+    ps = price_edge_score(float(row["price_edge"]))
+    bs = books_score(int(row["books_seen"]))
+    cs = consensus_score(row["consensus"])
+    cfs = confidence_score(row["confidence"])
+
+    penalty, trap_flags = detect_traps(row)
+
+    raw_quality = (
+        ms * 0.25
+        + es * 0.22
+        + ps * 0.14
+        + bs * 0.16
+        + cs * 0.13
+        + cfs * 0.10
+    )
+
+    adjusted_quality = clamp(raw_quality - penalty, 0.0, 1.0)
+    true_confidence = round(adjusted_quality * 100.0, 1)
+
+    reasons = []
+    if bs >= 0.82:
+        reasons.append("multi-book support")
+    if cs >= 1.0:
+        reasons.append("strong consensus")
+    elif cs >= 0.68:
+        reasons.append("usable consensus")
+    if ps >= 0.58:
+        reasons.append("price support")
+    if ms >= 0.65:
+        reasons.append("strong model score")
+    if cfs >= 0.76:
+        reasons.append("high confidence")
+    reasons.extend(trap_flags)
+
+    return true_confidence, adjusted_quality, reasons
+
+
+# =========================================================
+# DYNAMIC ENGINE + SMART DECISION
 # =========================================================
 def generate_ai_plays():
     base_rows = [
@@ -135,30 +255,11 @@ def generate_ai_plays():
         else:
             tier = "C"
 
-        status = "Active" if edge >= ACTIVE_EDGE_PROMOTION else "Watch"
-
-        if confidence == "Elite" and status != "Active":
-            confidence = "High"
-
         base_units = round(min(max(edge / 4.0, 0.05), 1.00), 2)
         if consensus == "Thin":
             base_units = round(max(base_units - 0.10, 0.05), 2)
         if books_seen == 1:
             base_units = round(max(base_units - 0.10, 0.05), 2)
-
-        ai_tags = ["AI generated", "model consensus", "value detected"]
-        if consensus == "Strong":
-            ai_tags.append("strong market agreement")
-        elif consensus == "Thin":
-            ai_tags.append("thin market")
-        else:
-            ai_tags.append("usable consensus")
-
-        if price_edge >= 1.5:
-            ai_tags.append("best price edge")
-
-        if books_seen <= 1:
-            ai_tags.append("watch for confirmation")
 
         row = {
             "game": item["game"],
@@ -169,15 +270,26 @@ def generate_ai_plays():
             "score": score,
             "units": base_units,
             "tier": tier,
-            "status": status,
+            "status": "Watch",
             "confidence": confidence,
             "books_seen": books_seen,
             "best_price": "Yes" if price_edge >= 1.25 else "No",
             "consensus": consensus,
             "price_edge": price_edge,
-            "ai_tags": ai_tags,
+            "ai_tags": ["AI generated", "model consensus", "value detected"],
         }
-        row["play_id"] = build_play_id(row)
+
+        true_confidence, quality_score, reasons = compute_true_confidence(row)
+        row["true_confidence"] = true_confidence
+        row["quality_score"] = quality_score
+        row["decision_reasons"] = reasons
+
+        tags = ["AI generated", "smart decision"]
+        for reason in reasons:
+            if reason not in tags:
+                tags.append(reason)
+        row["ai_tags"] = tags[:6]
+
         rows.append(row)
 
     df = pd.DataFrame(rows)
@@ -185,13 +297,35 @@ def generate_ai_plays():
     if df.empty:
         return df
 
+    # smarter ranking: quality first, then price/edge/model
     df["rank_score"] = (
-        df["score"] * 0.45
-        + df["edge"] * 8.5
-        + df["price_edge"] * 5.0
+        df["quality_score"] * 100.0 * 0.55
+        + df["score"] * 0.15
+        + df["edge"] * 6.0
+        + df["price_edge"] * 4.0
         + df["books_seen"] * 1.5
-        + df["confidence"].map({"Medium": 1.0, "High": 2.0, "Elite": 3.0}).fillna(1.0)
     )
+
+    # active/watch decision based on quality, not raw edge alone
+    def decide_status(row):
+        if row["quality_score"] >= 0.67 and row["edge"] >= ACTIVE_EDGE_PROMOTION:
+            return "Active"
+        if row["quality_score"] >= 0.74 and row["edge"] >= 1.30:
+            return "Active"
+        return "Watch"
+
+    df["status"] = df.apply(decide_status, axis=1)
+
+    # tier refinement with quality
+    def refine_tier(row):
+        tc = row["true_confidence"]
+        if tc >= 84:
+            return "A"
+        if tc >= 67:
+            return "B"
+        return "C"
+
+    df["tier"] = df.apply(refine_tier, axis=1)
 
     df = df.sort_values(["status", "rank_score"], ascending=[True, False]).reset_index(drop=True)
 
@@ -220,6 +354,18 @@ def generate_ai_plays():
 
     active_final = pd.DataFrame(active_rows) if active_rows else pd.DataFrame(columns=df.columns)
     combined = pd.concat([active_final, watch_df], ignore_index=True)
+
+    combined["play_id"] = combined.apply(
+        lambda r: build_play_id(
+            {
+                "game": r["game"],
+                "market": r["market"],
+                "selection": r["selection"],
+                "odds": r["odds"],
+            }
+        ),
+        axis=1,
+    )
 
     if "rank_score" in combined.columns:
         combined = combined.sort_values(
@@ -254,6 +400,7 @@ def auto_log_active_plays(df):
             "score": row["score"],
             "units": row["units"],
             "confidence": row["confidence"],
+            "true_confidence": row["true_confidence"],
             "tier": row["tier"],
             "status": row["status"],
         }
@@ -405,6 +552,16 @@ def render_play_card(row: pd.Series, show_best_badge: bool = False):
     card_padding = "12px" if is_mobile() else "15px"
     card_height = 265 if is_mobile() else 320
 
+    true_conf = row.get("true_confidence", None)
+    tc_html = ""
+    if true_conf is not None:
+        tc_html = f"""
+        <div>
+            <div style="color:#91a0b7; font-size:{metric_label_size}; margin-bottom:1px;">True Conf</div>
+            <div style="color:#f8fafc; font-size:{metric_value_size}; font-weight:700;">{true_conf:.1f}</div>
+        </div>
+        """
+
     html = f"""
     <html>
     <head>
@@ -511,6 +668,8 @@ def render_play_card(row: pd.Series, show_best_badge: bool = False):
                     <div style="color:#91a0b7; font-size:{metric_label_size}; margin-bottom:1px;">Price Edge</div>
                     <div style="color:#f8fafc; font-size:{metric_value_size}; font-weight:700;">{row["price_edge"]:.2f}%</div>
                 </div>
+
+                {tc_html}
             </div>
 
             <div style="height:1px; background:#283550; margin:6px 0 7px 0;"></div>
@@ -538,8 +697,8 @@ def render_play_card(row: pd.Series, show_best_badge: bool = False):
 def render_table_desktop(dataframe: pd.DataFrame):
     cols = [
         "tier", "status", "game", "market", "selection", "odds", "edge",
-        "score", "units", "confidence", "books_seen", "best_price",
-        "consensus", "price_edge"
+        "score", "units", "confidence", "true_confidence", "books_seen",
+        "best_price", "consensus", "price_edge"
     ]
     out = dataframe[cols].copy()
     st.dataframe(out, use_container_width=True, hide_index=True)
@@ -568,10 +727,11 @@ watch_df = df[df["status"] == "Watch"].copy().reset_index(drop=True)
 
 best_row = None
 if not active_df.empty:
-    best_row = active_df.sort_values(["score", "edge"], ascending=False).iloc[0]
+    best_row = active_df.sort_values(["rank_score", "true_confidence"], ascending=False).iloc[0]
 
 avg_active_edge = active_df["edge"].mean() if not active_df.empty else 0.0
 best_score = best_row["score"] if best_row is not None else "—"
+avg_true_conf = active_df["true_confidence"].mean() if not active_df.empty else 0.0
 total_units = active_df["units"].sum() if not active_df.empty else 0.0
 
 
@@ -690,8 +850,8 @@ h1, h2, h3 {
 # =========================================================
 # HEADER
 # =========================================================
-st.title("🔥 Sports Betting AI Dashboard V31.6.3")
-st.caption("Elite Mobile Finish • Dynamic Play Generation • Auto Bet Log")
+st.title("🔥 Sports Betting AI Dashboard V31.7")
+st.caption("Smart Decision Layer • Quality-Based Ranking • Auto Bet Log")
 
 if auto_logged_count > 0:
     st.markdown(
@@ -724,12 +884,12 @@ st.markdown(
             <div class="metric-mini-value">{avg_active_edge:.2f}%</div>
         </div>
         <div>
-            <div class="metric-mini-label">Total Active Units</div>
-            <div class="metric-mini-value">{total_units:.2f}u</div>
+            <div class="metric-mini-label">Avg True Conf</div>
+            <div class="metric-mini-value">{avg_true_conf:.1f}</div>
         </div>
         <div>
-            <div class="metric-mini-label">Odds Filter</div>
-            <div class="metric-mini-value">{DEFAULT_ODDS_RANGE[0]} to +{DEFAULT_ODDS_RANGE[1]}</div>
+            <div class="metric-mini-label">Total Active Units</div>
+            <div class="metric-mini-value">{total_units:.2f}u</div>
         </div>
     </div>
     """,
@@ -762,8 +922,8 @@ st.markdown("</div>", unsafe_allow_html=True)
 # =========================================================
 if nav == "Top Plays":
     st.header("🎯 Top Plays")
-    st.caption("Qualified by dynamic engine thresholds and active-play risk caps.")
-    top_df = active_df.sort_values(["score", "edge"], ascending=False).reset_index(drop=True)
+    st.caption("Ranked by quality, support, and smart-decision filtering.")
+    top_df = active_df.sort_values(["rank_score", "true_confidence"], ascending=False).reset_index(drop=True)
     render_mobile_or_table(top_df, best_first=True)
 
 # =========================================================
@@ -771,8 +931,8 @@ if nav == "Top Plays":
 # =========================================================
 elif nav == "Watchlist":
     st.header("👀 Watchlist")
-    st.caption("Near-qualified or lower-priority plays still worth monitoring.")
-    wl_df = watch_df.sort_values(["score", "edge"], ascending=False).reset_index(drop=True)
+    st.caption("Downgraded, near-qualified, or structurally weaker plays to monitor.")
+    wl_df = watch_df.sort_values(["rank_score", "true_confidence"], ascending=False).reset_index(drop=True)
     render_mobile_or_table(wl_df, best_first=False)
 
 # =========================================================
@@ -793,6 +953,7 @@ elif nav == "AI Slip":
                 <div class="slip-meta">{best_row["game"]} • {str(best_row["market"]).title()}</div>
                 <div class="slip-meta"><strong>Projected Odds:</strong> {best_row["odds"]}</div>
                 <div class="slip-meta"><strong>Confidence:</strong> {best_row["confidence"]}</div>
+                <div class="slip-meta"><strong>True Confidence:</strong> {best_row["true_confidence"]:.1f}</div>
                 <div class="slip-meta"><strong>Type:</strong> {slip_type}</div>
                 <div class="slip-meta"><strong>Risk Level:</strong> {risk_level}</div>
             </div>
@@ -808,7 +969,7 @@ elif nav == "AI Slip":
 # =========================================================
 elif nav == "Bet Log":
     st.header("🧾 Bet Log")
-    st.caption("Auto-logged active plays plus any future manual entries.")
+    st.caption("Auto-logged active plays plus future manual entries.")
 
     if len(st.session_state["bet_log"]) == 0:
         st.info("No bets logged yet.")
@@ -816,8 +977,11 @@ elif nav == "Bet Log":
         log_df = pd.DataFrame(st.session_state["bet_log"]).copy()
         log_cols = [
             "game", "market", "selection", "odds", "edge",
-            "score", "units", "confidence", "tier", "status"
+            "score", "units", "confidence", "true_confidence", "tier", "status"
         ]
+        for col in log_cols:
+            if col not in log_df.columns:
+                log_df[col] = None
         log_df = log_df[log_cols]
         st.dataframe(log_df, use_container_width=True, hide_index=True)
 
@@ -855,6 +1019,7 @@ elif nav == "Bet Log":
                 "score": None,
                 "units": units,
                 "confidence": confidence,
+                "true_confidence": None,
                 "tier": "Manual",
                 "status": "Manual",
             }

@@ -1206,20 +1206,22 @@ if not active_df.empty:
         ascending=False
     ).iloc[0]
 
-best_parlay, parlay_candidates, parlay_mode = choose_best_parlay(active_df)
+best_parlay, sharp_candidates, fallback_candidates = choose_best_parlay(active_df)
+
+all_portfolio_candidates = []
+all_portfolio_candidates.extend(sharp_candidates)
+all_portfolio_candidates.extend(fallback_candidates)
 
 portfolio = build_ai_portfolio(
     best_row,
     best_parlay,
-    parlay_candidates
+    all_portfolio_candidates
 )
 
 avg_active_edge = active_df["edge"].mean() if not active_df.empty else 0.0
 best_score = best_row["score"] if best_row is not None else "—"
 avg_true_conf = active_df["true_confidence"].mean() if not active_df.empty else 0.0
 total_units = active_df["units"].sum() if not active_df.empty else 0.0
-
-
 # =========================================================
 # PAGE STYLES
 # =========================================================
@@ -1456,12 +1458,12 @@ elif nav == "AI Slip":
 
     with st.expander("Show top parlay candidates", expanded=False):
         render_parlay_table(
-            [p for p in parlay_candidates if p.get("approval_type") == "Sharp Approved"],
+            sharp_candidates,
             "display_score",
             "Sharp Approved Candidates"
         )
         render_parlay_table(
-            [p for p in parlay_candidates if p.get("approval_type") != "Sharp Approved"],
+            fallback_candidates,
             "display_score",
             "Balanced Fallback Candidates"
         )
@@ -1495,66 +1497,8 @@ elif nav == "AI Slip":
             )
 
         st.dataframe(pd.DataFrame(portfolio_rows), use_container_width=True, hide_index=True)
+
 elif nav == "Bet Log":
-    st.header("🧾 Bet Log")
-    st.caption("Auto-logged active plays plus future manual entries.")
-
-    if len(st.session_state["bet_log"]) == 0:
-        st.info("No bets logged yet.")
-    else:
-        log_df = pd.DataFrame(st.session_state["bet_log"]).copy()
-        log_cols = [
-            "game", "market", "selection", "odds", "edge",
-            "score", "units", "confidence", "true_confidence",
-            "tier", "quality_label", "status"
-        ]
-        for col in log_cols:
-            if col not in log_df.columns:
-                log_df[col] = None
-        log_df = log_df[log_cols]
-        st.dataframe(log_df, use_container_width=True, hide_index=True)
-
-    st.markdown('<div class="bet-form-wrap">', unsafe_allow_html=True)
-    st.markdown('<div class="small-muted">Manual bet entry</div>', unsafe_allow_html=True)
-
-    with st.form("bet_log_form", clear_on_submit=True):
-        col1, col2 = st.columns(2)
-
-        with col1:
-            game = st.text_input("Game")
-            market = st.selectbox("Market", ["moneyline", "spread", "total", "prop"])
-            units = st.number_input("Units", min_value=0.0, max_value=10.0, value=0.50, step=0.05)
-
-        with col2:
-            selection = st.text_input("Selection")
-            odds = st.text_input("Odds", value="")
-            confidence = st.selectbox("Confidence", ["Medium", "High", "Elite"])
-
-        submitted = st.form_submit_button("Save Bet")
-
-        if submitted:
-            manual_row = {
-                "play_id": build_play_id({
-                    "game": game,
-                    "market": market,
-                    "selection": selection,
-                    "odds": odds,
-                }),
-                "game": game or "N/A",
-                "market": market,
-                "selection": selection or "N/A",
-                "odds": odds or "N/A",
-                "edge": None,
-                "score": None,
-                "units": units,
-                "confidence": confidence,
-                "true_confidence": None,
-                "tier": "Manual",
-                "quality_label": "Manual",
-                "status": "Manual",
-            }
-            st.session_state["bet_log"].append(manual_row)
-            st.success("Manual bet saved.")
 
 # =========================================================
 # ADAPTIVE SETTINGS

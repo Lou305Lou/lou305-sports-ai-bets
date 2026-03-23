@@ -930,9 +930,6 @@ def render_parlay_card(parlay):
         "Elevated": "#ef4444",
     }.get(parlay["risk_label"], "#94a3b8")
 
-    approval_bg = "#dcfce7" if parlay["approval_type"] == "Sharp Approved" else "#fef3c7"
-    approval_fg = "#166534" if parlay["approval_type"] == "Sharp Approved" else "#92400e"
-
     legs_html = ""
     for i, leg in enumerate(parlay["legs"], start=1):
         legs_html += f"""
@@ -943,15 +940,20 @@ def render_parlay_card(parlay):
         """
 
     html = f"""
-    <div style="background:#0e1422;border-radius:20px;padding:12px;border:1px solid #243047;">
-        <div style="font-weight:800;">🔥 AI PARLAY</div>
-        <div style="margin-bottom:8px;">{parlay['approval_type']}</div>
-        <div>Odds: {parlay['combined_odds']} | Conf: {parlay['avg_true_conf']}</div>
-        <div style="color:{risk_color};font-weight:800;">Risk: {parlay['risk_label']}</div>
-        {legs_html}
-    </div>
+    <html>
+    <body style="margin:0;font-family:sans-serif;">
+        <div style="background:#0e1422;border-radius:20px;padding:12px;border:1px solid #243047;color:white;">
+            <div style="font-weight:800;margin-bottom:6px;">🔥 AI PARLAY</div>
+            <div style="margin-bottom:6px;">{parlay['approval_type']}</div>
+            <div style="margin-bottom:6px;">Odds: {parlay['combined_odds']} | Conf: {parlay['avg_true_conf']}</div>
+            <div style="color:{risk_color};font-weight:800;margin-bottom:10px;">Risk: {parlay['risk_label']}</div>
+            {legs_html}
+        </div>
+    </body>
+    </html>
     """
-    st.markdown(html, unsafe_allow_html=True)
+
+    components.html(html, height=260, scrolling=False)
 
 # =========================================================
 # TABLE RENDER HELPERS

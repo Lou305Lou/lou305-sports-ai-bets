@@ -1138,6 +1138,13 @@ best_parlay, parlay_candidates, parlay_mode = choose_best_parlay(active_df)
 portfolio = build_ai_portfolio(
     best_row,
     best_parlay,
+   best_parlay, parlay_candidates, parlay_mode = choose_best_parlay(active_df)
+
+portfolio = build_ai_portfolio(
+    best_row,
+    best_parlay,
+    parlay_candidates
+)
     parlay_candidates
 )
 
@@ -1145,7 +1152,49 @@ avg_active_edge = active_df["edge"].mean() if not active_df.empty else 0.0
 best_score = best_row["score"] if best_row is not None else "—"
 avg_true_conf = active_df["true_confidence"].mean() if not active_df.empty else 0.0
 total_units = active_df["units"].sum() if not active_df.empty else 0.0
+# =========================================================
+# V32 PORTFOLIO ENGINE
+# =========================================================
+def build_ai_portfolio(best_single, chosen_parlay, parlay_candidates):
+    portfolio = []
 
+    if best_single is not None:
+        portfolio.append({
+            "type": "Single",
+            "label": "Core Play",
+            "units": 1.0,
+            "data": best_single
+        })
+
+    if chosen_parlay is not None:
+        portfolio.append({
+            "type": "Parlay",
+            "label": chosen_parlay.get("approval_type", "Sharp"),
+            "units": 1.0,
+            "data": chosen_parlay
+        })
+
+    # Fallback 2-leg
+    fallback_2 = [c for c in parlay_candidates if c["leg_count"] == 2 and c.get("approval_type") != "Sharp Approved"]
+    if fallback_2:
+        portfolio.append({
+            "type": "Parlay",
+            "label": "Fallback 2-Leg",
+            "units": 0.75,
+            "data": fallback_2[0]
+        })
+
+    # Fallback 3-leg
+    fallback_3 = [c for c in parlay_candidates if c["leg_count"] == 3]
+    if fallback_3:
+        portfolio.append({
+            "type": "Parlay",
+            "label": "Fallback 3-Leg",
+            "units": 0.25,
+            "data": fallback_3[0]
+        })
+
+    return portfolio
 # =========================================================
 # PAGE STYLES
 # =========================================================
@@ -1379,6 +1428,21 @@ elif nav == "AI Slip":
         st.info("Not enough qualifying active legs for a recommended parlay.")
     else:
         render_parlay_card(best_parlay)
+        render_parlay_card(best_parlay)
+
+# =========================
+# V32 PORTFOLIO DISPLAY
+# =========================
+st.markdown("### 🧠 AI Portfolio Allocation")
+
+if portfolio:
+    for p in portfolio:
+        if p["type"] == "Single":
+            st.markdown(f"**{p['label']}** — {p['units']}u")
+        else:
+            st.markdown(f"**{p['label']} ({p['data']['combined_odds']})** — {p['units']}u")
+else:
+    st.info("No portfolio generated.")
         with st.expander("Show top parlay candidates", expanded=False):
             render_parlay_table(parlay_candidates)
 

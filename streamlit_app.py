@@ -6,7 +6,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 st.set_page_config(
-    page_title="Sports Betting AI Dashboard V31.7.1",
+    page_title="Sports Betting AI Dashboard V31.7.2",
     layout="wide"
 )
 
@@ -41,7 +41,6 @@ MAX_TOTAL_UNITS = 3.50
 MAX_ACTIVE_PLAYS = 3
 DEFAULT_ODDS_RANGE = (-200, 150)
 
-# Balanced activation thresholds
 QUALITY_ACTIVE_PRIMARY = 0.58
 QUALITY_ACTIVE_SECONDARY = 0.64
 QUALITY_FLOOR_FALLBACK = 0.54
@@ -80,6 +79,15 @@ def tier_colors(tier: str):
     if t == "B":
         return "#dbeafe", "#1d4ed8"
     return "#fef3c7", "#92400e"
+
+
+def quality_label_from_tier(tier: str):
+    tier = str(tier).upper()
+    if tier == "A":
+        return "Elite"
+    if tier == "B":
+        return "Strong"
+    return "Watch"
 
 
 def build_play_id(row_dict):
@@ -253,19 +261,6 @@ def generate_ai_plays():
         if not in_allowed_odds_range(odds, DEFAULT_ODDS_RANGE[0], DEFAULT_ODDS_RANGE[1]):
             continue
 
-        if score >= 94:
-            tier = "A"
-        elif score >= 86:
-            tier = "B"
-        else:
-            tier = "C"
-
-        base_units = round(min(max(edge / 4.0, 0.05), 1.00), 2)
-        if consensus == "Thin":
-            base_units = round(max(base_units - 0.10, 0.05), 2)
-        if books_seen == 1:
-            base_units = round(max(base_units - 0.10, 0.05), 2)
-
         row = {
             "game": item["game"],
             "market": item["market"],
@@ -273,8 +268,9 @@ def generate_ai_plays():
             "odds": odds,
             "edge": edge,
             "score": score,
-            "units": base_units,
-            "tier": tier,
+            "units": 0.0,
+            "tier": "C",
+            "quality_label": "Watch",
             "status": "Watch",
             "confidence": confidence,
             "books_seen": books_seen,
@@ -289,6 +285,16 @@ def generate_ai_plays():
         row["quality_score"] = quality_score
         row["decision_reasons"] = reasons
 
+        # unit sizing
+        base_units = round(min(max(edge / 4.0, 0.05), 1.00), 2)
+        if consensus == "Thin":
+            base_units = round(max(base_units - 0.10, 0.05), 2)
+        if books_seen == 1:
+            base_units = round(max(base_units - 0.10, 0.05), 2)
+        if true_confidence < 58:
+            base_units = round(max(base_units - 0.10, 0.05), 2)
+        row["units"] = base_units
+
         tags = ["AI generated", "smart decision"]
         for reason in reasons:
             if reason not in tags:
@@ -302,7 +308,6 @@ def generate_ai_plays():
     if df.empty:
         return df
 
-    # smarter ranking
     df["rank_score"] = (
         df["quality_score"] * 100.0 * 0.55
         + df["score"] * 0.15
@@ -311,7 +316,6 @@ def generate_ai_plays():
         + df["books_seen"] * 1.5
     )
 
-    # balanced activation
     def decide_status(row):
         q = float(row["quality_score"])
         e = float(row["edge"])
@@ -331,18 +335,7 @@ def generate_ai_plays():
 
     df["status"] = df.apply(decide_status, axis=1)
 
-    def refine_tier(row):
-        tc = row["true_confidence"]
-        if tc >= 84:
-            return "A"
-        if tc >= 67:
-            return "B"
-        return "C"
-
-    df["tier"] = df.apply(refine_tier, axis=1)
-    df = df.sort_values(["status", "rank_score"], ascending=[True, False]).reset_index(drop=True)
-
-    # fallback safeguard: ensure at least some active plays when quality is acceptable
+    # fallback safeguard
     active_df = df[df["status"] == "Active"].copy().sort_values("rank_score", ascending=False)
     watch_df = df[df["status"] == "Watch"].copy().sort_values("rank_score", ascending=False)
 
@@ -356,6 +349,29 @@ def generate_ai_plays():
         if promote_n > 0:
             promote_ids = fallback_pool.head(promote_n).index.tolist()
             df.loc[promote_ids, "status"] = "Active"
+
+    # normalized tiering
+    def normalized_tier(row):
+        tc = float(row["true_confidence"])
+        status = str(row["status"])
+
+        if tc >= 78:
+            tier = "A"
+        elif tc >= 60:
+            tier = "B"
+        else:
+            tier = "C"
+
+        # safeguard: active plays cannot display below Tier B
+        if status == "Active" and tier == "C":
+            tier = "B"
+
+        return tier
+
+    df["tier"] = df.apply(normalized_tier, axis=1)
+    df["quality_label"] = df["tier"].apply(quality_label_from_tier)
+
+    df = df.sort_values(["status", "rank_score"], ascending=[True, False]).reset_index(drop=True)
 
     active_df = df[df["status"] == "Active"].copy().sort_values("rank_score", ascending=False)
     watch_df = df[df["status"] == "Watch"].copy().sort_values("rank_score", ascending=False)
@@ -430,6 +446,7 @@ def auto_log_active_plays(df):
             "confidence": row["confidence"],
             "true_confidence": row["true_confidence"],
             "tier": row["tier"],
+            "quality_label": row["quality_label"],
             "status": row["status"],
         }
 
@@ -578,15 +595,26 @@ def render_play_card(row: pd.Series, show_best_badge: bool = False):
     metric_label_size = "10px" if is_mobile() else "11px"
     metric_value_size = "14px" if is_mobile() else "16px"
     card_padding = "12px" if is_mobile() else "15px"
-    card_height = 265 if is_mobile() else 320
+    card_height = 285 if is_mobile() else 340
 
     true_conf = row.get("true_confidence", None)
+    quality_label = row.get("quality_label", "")
+
     tc_html = ""
     if true_conf is not None:
         tc_html = f"""
         <div>
             <div style="color:#91a0b7; font-size:{metric_label_size}; margin-bottom:1px;">True Conf</div>
             <div style="color:#f8fafc; font-size:{metric_value_size}; font-weight:700;">{true_conf:.1f}</div>
+        </div>
+        """
+
+    ql_html = ""
+    if quality_label:
+        ql_html = f"""
+        <div>
+            <div style="color:#91a0b7; font-size:{metric_label_size}; margin-bottom:1px;">Quality</div>
+            <div style="color:#f8fafc; font-size:{metric_value_size}; font-weight:700;">{quality_label}</div>
         </div>
         """
 
@@ -698,6 +726,7 @@ def render_play_card(row: pd.Series, show_best_badge: bool = False):
                 </div>
 
                 {tc_html}
+                {ql_html}
             </div>
 
             <div style="height:1px; background:#283550; margin:6px 0 7px 0;"></div>
@@ -724,7 +753,7 @@ def render_play_card(row: pd.Series, show_best_badge: bool = False):
 
 def render_table_desktop(dataframe: pd.DataFrame):
     cols = [
-        "tier", "status", "game", "market", "selection", "odds", "edge",
+        "tier", "quality_label", "status", "game", "market", "selection", "odds", "edge",
         "score", "units", "confidence", "true_confidence", "books_seen",
         "best_price", "consensus", "price_edge"
     ]
@@ -878,8 +907,8 @@ h1, h2, h3 {
 # =========================================================
 # HEADER
 # =========================================================
-st.title("🔥 Sports Betting AI Dashboard V31.7.1")
-st.caption("Balanced Activation Fix • Smart Decision Layer • Auto Bet Log")
+st.title("🔥 Sports Betting AI Dashboard V31.7.2")
+st.caption("Tier Normalization + Quality Labels • Smart Decision Layer • Auto Bet Log")
 
 if auto_logged_count > 0:
     st.markdown(
@@ -979,9 +1008,10 @@ elif nav == "AI Slip":
                 <div class="slip-kicker">🔥 AI Recommended Slip</div>
                 <div class="slip-title">{best_row["selection"]}</div>
                 <div class="slip-meta">{best_row["game"]} • {str(best_row["market"]).title()}</div>
-                <div class="slip-meta"><strong>Projected Odds:</strong> {best_row["odds"]}</div>
                 <div class="slip-meta"><strong>Confidence:</strong> {best_row["confidence"]}</div>
                 <div class="slip-meta"><strong>True Confidence:</strong> {best_row["true_confidence"]:.1f}</div>
+                <div class="slip-meta"><strong>Quality Label:</strong> {best_row["quality_label"]}</div>
+                <div class="slip-meta"><strong>Projected Odds:</strong> {best_row["odds"]}</div>
                 <div class="slip-meta"><strong>Type:</strong> {slip_type}</div>
                 <div class="slip-meta"><strong>Risk Level:</strong> {risk_level}</div>
             </div>
@@ -1005,7 +1035,8 @@ elif nav == "Bet Log":
         log_df = pd.DataFrame(st.session_state["bet_log"]).copy()
         log_cols = [
             "game", "market", "selection", "odds", "edge",
-            "score", "units", "confidence", "true_confidence", "tier", "status"
+            "score", "units", "confidence", "true_confidence",
+            "tier", "quality_label", "status"
         ]
         for col in log_cols:
             if col not in log_df.columns:
@@ -1049,6 +1080,7 @@ elif nav == "Bet Log":
                 "confidence": confidence,
                 "true_confidence": None,
                 "tier": "Manual",
+                "quality_label": "Manual",
                 "status": "Manual",
             }
             st.session_state["bet_log"].append(manual_row)

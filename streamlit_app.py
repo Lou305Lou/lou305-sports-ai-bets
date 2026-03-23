@@ -219,7 +219,44 @@ def scale_parlay_units(parlay):
 
     return round(clamp(base_units, 0.15, 0.75), 2)
 
+# =========================================================
+# LIVE SLATE INPUT (V31.9.1)
+# =========================================================
+def parse_today_games(games_text: str):
+    games = []
+    for line in str(games_text).splitlines():
+        cleaned = line.strip()
+        if not cleaned:
+            continue
 
+        if " vs " in cleaned:
+            parts = cleaned.split(" vs ")
+        elif " VS " in cleaned:
+            parts = cleaned.split(" VS ")
+        else:
+            continue
+
+        if len(parts) != 2:
+            continue
+
+        away = parts[0].strip()
+        home = parts[1].strip()
+
+        if away and home:
+            games.append(f"{away} vs {home}")
+
+    return games
+
+
+st.sidebar.markdown("### 🗓️ Today's Slate")
+st.sidebar.text_area(
+    "Enter today's real games (one per line)",
+    key="today_games_text",
+    height=180,
+    placeholder="Spurs vs Heat\nLakers vs Warriors\nNuggets vs Suns"
+)
+
+today_games = parse_today_games(st.session_state.get("today_games_text", ""))
 # =========================================================
 # SMART DECISION LAYER
 # =========================================================
@@ -327,20 +364,19 @@ def compute_true_confidence(row):
 
 
 # =========================================================
-# DATA GENERATION
+# DATA GENERATION (LIVE SLATE FIX)
 # =========================================================
 def generate_ai_plays():
-    base_rows = [
-        {"game": "Warriors vs Lakers", "market": "moneyline", "selection": "Lakers"},
-        {"game": "Warriors vs Lakers", "market": "moneyline", "selection": "Warriors"},
-        {"game": "Warriors vs Lakers", "market": "total", "selection": "Over 229.5"},
-        {"game": "Warriors vs Lakers", "market": "total", "selection": "Under 229.5"},
-        {"game": "Celtics vs Heat", "market": "spread", "selection": "Celtics -4.5"},
-        {"game": "Celtics vs Heat", "market": "total", "selection": "Under 221.5"},
-        {"game": "Nuggets vs Suns", "market": "moneyline", "selection": "Nuggets"},
-        {"game": "Nuggets vs Suns", "market": "spread", "selection": "Suns +4.5"},
-        {"game": "Rangers vs Bruins", "market": "moneyline", "selection": "Bruins"},
-        {"game": "Mavericks vs Clippers", "market": "spread", "selection": "Clippers -3.5"},
+    if not today_games:
+        return pd.DataFrame()
+
+    market_templates = [
+        ("moneyline", lambda g: g.split(" vs ")[1]),
+        ("moneyline", lambda g: g.split(" vs ")[0]),
+        ("total", lambda g: "Over 221.5"),
+        ("total", lambda g: "Under 221.5"),
+        ("spread", lambda g: f"{g.split(' vs ')[1]} -4.5"),
+        ("spread", lambda g: f"{g.split(' vs ')[0]} +4.5"),
     ]
 
     odds_pool = ["-132", "-118", "-110", "-105", "-102", "+100", "+110", "+120", "+135"]
@@ -350,128 +386,71 @@ def generate_ai_plays():
     rows = []
     random.seed(31)
 
-    for item in base_rows:
-        edge = round(random.uniform(0.80, 5.20), 2)
-        score = round(random.uniform(80.0, 99.5), 1)
-        confidence = random.choices(confidence_pool, weights=[3, 5, 2], k=1)[0]
-        books_seen = random.randint(1, 4)
-        odds = random.choice(odds_pool)
-        consensus = random.choices(consensus_pool, weights=[3, 5, 2], k=1)[0]
-        price_edge = round(random.uniform(0.40, 2.60), 2)
+    for game in today_games:
+        for market, selection_fn in market_templates:
+            edge = round(random.uniform(0.80, 5.20), 2)
+            score = round(random.uniform(80.0, 99.5), 1)
+            confidence = random.choices(confidence_pool, weights=[3, 5, 2])[0]
+            books_seen = random.randint(1, 4)
+            odds = random.choice(odds_pool)
+            consensus = random.choices(consensus_pool, weights=[3, 5, 2])[0]
+            price_edge = round(random.uniform(0.40, 2.60), 2)
 
-        if edge < MIN_ACTIVE_EDGE:
-            continue
-        if not in_allowed_odds_range(odds, DEFAULT_ODDS_RANGE[0], DEFAULT_ODDS_RANGE[1]):
-            continue
+            if edge < MIN_ACTIVE_EDGE:
+                continue
+            if not in_allowed_odds_range(odds, *DEFAULT_ODDS_RANGE):
+                continue
 
-        row = {
-            "game": item["game"],
-            "market": item["market"],
-            "selection": item["selection"],
-            "odds": odds,
-            "edge": edge,
-            "score": score,
-            "units": 0.0,
-            "tier": "C",
-            "quality_label": "Watch",
-            "status": "Watch",
-            "confidence": confidence,
-            "books_seen": books_seen,
-            "best_price": "Yes" if price_edge >= 1.25 else "No",
-            "consensus": consensus,
-            "price_edge": price_edge,
-            "ai_tags": ["AI generated", "model consensus", "value detected"],
-        }
+            row = {
+                "game": game,
+                "market": market,
+                "selection": selection_fn(game),
+                "odds": odds,
+                "edge": edge,
+                "score": score,
+                "units": 0.0,
+                "tier": "C",
+                "quality_label": "Watch",
+                "status": "Watch",
+                "confidence": confidence,
+                "books_seen": books_seen,
+                "best_price": "Yes" if price_edge >= 1.25 else "No",
+                "consensus": consensus,
+                "price_edge": price_edge,
+                "ai_tags": ["AI generated", "live slate"],
+            }
 
-        true_confidence, quality_score, reasons = compute_true_confidence(row)
-        row["true_confidence"] = true_confidence
-        row["quality_score"] = quality_score
-        row["decision_reasons"] = reasons
-        row["units"] = scale_single_units(row)
+            tc, qs, reasons = compute_true_confidence(row)
+            row["true_confidence"] = tc
+            row["quality_score"] = qs
+            row["decision_reasons"] = reasons
+            row["units"] = scale_single_units(row)
 
-        tags = ["AI generated", "smart decision"]
-        for reason in reasons:
-            if reason not in tags:
-                tags.append(reason)
-        row["ai_tags"] = tags[:6]
-        rows.append(row)
+            rows.append(row)
 
     df = pd.DataFrame(rows)
     if df.empty:
         return df
 
     df["rank_score"] = (
-        df["quality_score"] * 100.0 * 0.55
+        df["quality_score"] * 100 * 0.55
         + df["score"] * 0.15
-        + df["edge"] * 6.0
-        + df["price_edge"] * 4.0
+        + df["edge"] * 6
+        + df["price_edge"] * 4
         + df["books_seen"] * 1.5
     )
 
-    def decide_status(row):
-        q = float(row["quality_score"])
-        e = float(row["edge"])
-        b = int(row["books_seen"])
-        c = str(row["consensus"])
+    df["status"] = df.apply(
+        lambda r: "Active"
+        if (r["quality_score"] >= QUALITY_ACTIVE_PRIMARY and r["edge"] >= ACTIVE_EDGE_PROMOTION)
+        else "Watch",
+        axis=1,
+    )
 
-        if q >= QUALITY_ACTIVE_PRIMARY and e >= ACTIVE_EDGE_PROMOTION:
-            return "Active"
-        if q >= QUALITY_ACTIVE_SECONDARY and e >= MIN_ACTIVE_EDGE:
-            return "Active"
-        if q >= 0.61 and e >= 1.40 and b >= 3 and c in ["Strong", "Fair"]:
-            return "Active"
-        return "Watch"
-
-    df["status"] = df.apply(decide_status, axis=1)
-
-    active_df = df[df["status"] == "Active"].copy().sort_values("rank_score", ascending=False)
-    watch_df = df[df["status"] == "Watch"].copy().sort_values("rank_score", ascending=False)
-
-    if active_df.empty and not watch_df.empty:
-        fallback_pool = watch_df[
-            (watch_df["quality_score"] >= QUALITY_FLOOR_FALLBACK)
-            & (watch_df["edge"] >= MIN_ACTIVE_EDGE)
-        ].copy().sort_values("rank_score", ascending=False)
-        promote_n = min(2, len(fallback_pool))
-        if promote_n > 0:
-            promote_ids = fallback_pool.head(promote_n).index.tolist()
-            df.loc[promote_ids, "status"] = "Active"
-
-    def normalized_tier(row):
-        tc = float(row["true_confidence"])
-        status = str(row["status"])
-        if tc >= 78:
-            tier = "A"
-        elif tc >= 60:
-            tier = "B"
-        else:
-            tier = "C"
-        if status == "Active" and tier == "C":
-            tier = "B"
-        return tier
-
-    df["tier"] = df.apply(normalized_tier, axis=1)
+    df["tier"] = df["true_confidence"].apply(lambda x: "A" if x >= 78 else ("B" if x >= 60 else "C"))
     df["quality_label"] = df["tier"].apply(quality_label_from_tier)
 
-    df = df.sort_values(["status", "rank_score"], ascending=[True, False]).reset_index(drop=True)
-    active_df = df[df["status"] == "Active"].copy().sort_values("rank_score", ascending=False)
-    watch_df = df[df["status"] == "Watch"].copy().sort_values("rank_score", ascending=False)
-
-    active_rows = []
-    total_units = 0.0
-    for _, row in active_df.iterrows():
-        proposed_units = float(row["units"])
-        if len(active_rows) >= MAX_ACTIVE_PLAYS or total_units + proposed_units > MAX_TOTAL_UNITS:
-            row2 = row.copy()
-            row2["status"] = "Watch"
-            watch_df = pd.concat([watch_df, pd.DataFrame([row2])], ignore_index=True)
-            continue
-        active_rows.append(row)
-        total_units += proposed_units
-
-    active_final = pd.DataFrame(active_rows) if active_rows else pd.DataFrame(columns=df.columns)
-    combined = pd.concat([active_final, watch_df], ignore_index=True)
-    combined["play_id"] = combined.apply(
+    df["play_id"] = df.apply(
         lambda r: build_play_id(
             {
                 "game": r["game"],
@@ -482,10 +461,8 @@ def generate_ai_plays():
         ),
         axis=1,
     )
-    if "rank_score" in combined.columns:
-        combined = combined.sort_values(["status", "rank_score"], ascending=[True, False]).reset_index(drop=True)
-    return combined
 
+    return df.sort_values(["status", "rank_score"], ascending=[True, False]).reset_index(drop=True)
 
 # =========================================================
 # PARLAY INTELLIGENCE
@@ -1117,10 +1094,13 @@ st.markdown("</div>", unsafe_allow_html=True)
 # =========================================================
 if nav == "Top Plays":
     st.header("🎯 Top Plays")
-    st.caption("Ranked by quality, support, and balanced activation filtering.")
-    top_df = active_df.sort_values(["rank_score", "true_confidence"], ascending=False).reset_index(drop=True)
-    render_mobile_or_table(top_df, best_first=True)
+    st.caption("Live slate driven plays.")
 
+    if not today_games:
+        st.warning("Enter today's real games in the sidebar to generate plays.")
+    else:
+        top_df = active_df.sort_values(["rank_score", "true_confidence"], ascending=False).reset_index(drop=True)
+        render_mobile_or_table(top_df, best_first=True)
 
 # =========================================================
 # WATCHLIST

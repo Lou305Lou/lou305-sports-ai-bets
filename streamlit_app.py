@@ -54,6 +54,13 @@ SHARP_PARLAY_MIN_TRUE_CONF = 60.0
 SHARP_PARLAY_MAX_PENALTY = 0.18
 FALLBACK_PARLAY_MAX_PENALTY = 0.36
 
+TEST_MODE = "Paper Test"
+SINGLE_UNIT_MIN = 0.40
+SINGLE_UNIT_MAX = 1.25
+PARLAY_UNIT_SHARP = 0.60
+PARLAY_UNIT_FALLBACK_2 = 0.35
+PARLAY_UNIT_FALLBACK_3 = 0.20
+TEST_DAILY_UNIT_CAP = 3.50
 
 # =========================================================
 # HELPERS
@@ -139,7 +146,50 @@ def build_play_id(row_dict):
 def clamp(value, low, high):
     return max(low, min(high, value))
 
+def scale_single_units(row):
+    true_conf = float(row.get("true_confidence", 0))
+    edge = float(row.get("edge", 0))
+    price_edge = float(row.get("price_edge", 0))
+    books_seen = int(row.get("books_seen", 1))
 
+    strength = (
+        (true_conf * 0.50)
+        + (edge * 8.0)
+        + (price_edge * 5.0)
+        + (books_seen * 2.0)
+    )
+
+    raw_units = strength / 55.0
+    return round(clamp(raw_units, SINGLE_UNIT_MIN, SINGLE_UNIT_MAX), 2)
+
+
+def scale_parlay_units(parlay):
+    if not parlay:
+        return 0.0
+
+    approval_type = parlay.get("approval_type", "")
+    leg_count = int(parlay.get("leg_count", 2))
+    avg_true_conf = float(parlay.get("avg_true_conf", 0))
+    risk_label = str(parlay.get("risk_label", "Moderate"))
+
+    if approval_type == "Sharp Approved":
+        base_units = PARLAY_UNIT_SHARP
+    elif leg_count == 2:
+        base_units = PARLAY_UNIT_FALLBACK_2
+    else:
+        base_units = PARLAY_UNIT_FALLBACK_3
+
+    if avg_true_conf >= 64:
+        base_units += 0.10
+    elif avg_true_conf < 58:
+        base_units -= 0.05
+
+    if risk_label == "Low":
+        base_units += 0.05
+    elif risk_label == "Elevated":
+        base_units -= 0.10
+
+    return round(clamp(base_units, 0.15, 0.75), 2)
 # =========================================================
 # SMART DECISION LAYER
 # =========================================================

@@ -6,7 +6,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 st.set_page_config(
-    page_title="Sports Betting AI Dashboard V31.6",
+    page_title="Sports Betting AI Dashboard V31.6.1",
     layout="wide"
 )
 
@@ -88,7 +88,6 @@ def build_play_id(row_dict):
 
 # =========================================================
 # DYNAMIC ENGINE
-# Replace later with your real API/model pipeline
 # =========================================================
 def generate_ai_plays():
     base_rows = [
@@ -109,7 +108,7 @@ def generate_ai_plays():
     confidence_pool = ["Medium", "High", "Elite"]
 
     rows = []
-    random.seed(31)  # stable output while testing
+    random.seed(31)
 
     for item in base_rows:
         edge = round(random.uniform(0.80, 5.20), 2)
@@ -264,34 +263,42 @@ def auto_log_active_plays(df):
 
 
 # =========================================================
-# CARD RENDERING
+# MOBILE COMPACT CARD RENDERING
 # =========================================================
 def render_play_card(row: pd.Series, show_best_badge: bool = False):
     badge_bg, badge_fg = tier_colors(row["tier"])
     status_bg = "#f59e0b" if str(row["status"]) == "Active" else "#64748b"
     status_fg = "#111827" if str(row["status"]) == "Active" else "#f8fafc"
-    best_display = "inline-block" if show_best_badge else "none"
+    best_display = "inline-flex" if show_best_badge else "none"
 
     fill_width, fill_color = confidence_fill_and_color(row["confidence"])
+    edge_color = "#4ade80" if float(row["edge"]) >= 2 else "#fbbf24"
 
+    visible_tags = list(row["ai_tags"])[:3]
     tags_html = ""
-    for tag in row["ai_tags"]:
+    for tag in visible_tags:
         tags_html += f"""
         <span style="
             background:#202838;
             color:#d8e0ec;
             border:1px solid #2d3748;
             border-radius:999px;
-            padding:6px 10px;
-            font-size:12px;
+            padding:4px 9px;
+            font-size:11px;
             line-height:1;
             display:inline-block;
-            margin-right:8px;
-            margin-bottom:8px;
+            margin-right:6px;
+            margin-bottom:6px;
+            white-space:nowrap;
         ">{tag}</span>
         """
 
-    edge_color = "#4ade80" if float(row["edge"]) >= 2 else "#fbbf24"
+    title_size = "24px" if is_mobile() else "28px"
+    subtitle_size = "13px" if is_mobile() else "15px"
+    metric_label_size = "11px" if is_mobile() else "12px"
+    metric_value_size = "15px" if is_mobile() else "17px"
+    card_padding = "14px" if is_mobile() else "16px"
+    card_height = 325 if is_mobile() else 360
 
     html = f"""
     <html>
@@ -303,17 +310,17 @@ def render_play_card(row: pd.Series, show_best_badge: bool = False):
             background:linear-gradient(180deg, #171d2a 0%, #101624 100%);
             border:1px solid #273043;
             border-radius:22px;
-            padding:16px;
+            padding:{card_padding};
             color:#ffffff;
             box-sizing:border-box;
         ">
-            <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px;">
+            <div style="display:flex; flex-wrap:wrap; gap:7px; margin-bottom:10px;">
                 <span style="
                     background:{badge_bg};
                     color:{badge_fg};
-                    padding:7px 12px;
+                    padding:6px 11px;
                     border-radius:999px;
-                    font-size:12px;
+                    font-size:11px;
                     font-weight:800;
                     line-height:1;
                     display:inline-block;
@@ -322,9 +329,9 @@ def render_play_card(row: pd.Series, show_best_badge: bool = False):
                 <span style="
                     background:{status_bg};
                     color:{status_fg};
-                    padding:7px 12px;
+                    padding:6px 11px;
                     border-radius:999px;
-                    font-size:12px;
+                    font-size:11px;
                     font-weight:800;
                     line-height:1;
                     display:inline-block;
@@ -333,18 +340,19 @@ def render_play_card(row: pd.Series, show_best_badge: bool = False):
                 <span style="
                     background:#ead8ff;
                     color:#6b21a8;
-                    padding:7px 12px;
+                    padding:6px 11px;
                     border-radius:999px;
-                    font-size:12px;
+                    font-size:11px;
                     font-weight:800;
                     line-height:1;
                     display:{best_display};
+                    align-items:center;
                 ">🏆 Best Bet</span>
             </div>
 
             <div style="
-                font-size:30px;
-                line-height:1.05;
+                font-size:{title_size};
+                line-height:1.02;
                 font-weight:800;
                 margin:0 0 8px 0;
                 letter-spacing:-0.03em;
@@ -353,65 +361,65 @@ def render_play_card(row: pd.Series, show_best_badge: bool = False):
 
             <div style="
                 color:#d4dbe8;
-                font-size:16px;
-                margin-bottom:14px;
+                font-size:{subtitle_size};
+                margin-bottom:12px;
             ">{row["game"]} • {str(row["market"]).title()}</div>
 
             <div style="
                 display:grid;
                 grid-template-columns:1fr 1fr;
-                gap:12px 16px;
-                margin-bottom:12px;
+                gap:10px 14px;
+                margin-bottom:10px;
             ">
                 <div>
-                    <div style="color:#91a0b7; font-size:12px; margin-bottom:2px;">Odds</div>
-                    <div style="color:#f8fafc; font-size:17px; font-weight:700;">{row["odds"]}</div>
+                    <div style="color:#91a0b7; font-size:{metric_label_size}; margin-bottom:1px;">Odds</div>
+                    <div style="color:#f8fafc; font-size:{metric_value_size}; font-weight:700;">{row["odds"]}</div>
                 </div>
                 <div>
-                    <div style="color:#91a0b7; font-size:12px; margin-bottom:2px;">AI Score</div>
-                    <div style="color:#60a5fa; font-size:17px; font-weight:700;">{row["score"]}</div>
-                </div>
-
-                <div>
-                    <div style="color:#91a0b7; font-size:12px; margin-bottom:2px;">Edge</div>
-                    <div style="color:{edge_color}; font-size:17px; font-weight:700;">{row["edge"]:.2f}%</div>
-                </div>
-                <div>
-                    <div style="color:#91a0b7; font-size:12px; margin-bottom:2px;">Units</div>
-                    <div style="color:#f8fafc; font-size:17px; font-weight:700;">{row["units"]:.2f}u</div>
+                    <div style="color:#91a0b7; font-size:{metric_label_size}; margin-bottom:1px;">AI Score</div>
+                    <div style="color:#60a5fa; font-size:{metric_value_size}; font-weight:700;">{row["score"]}</div>
                 </div>
 
                 <div>
-                    <div style="color:#91a0b7; font-size:12px; margin-bottom:2px;">Consensus</div>
-                    <div style="color:#f8fafc; font-size:17px; font-weight:700;">{row["consensus"]}</div>
+                    <div style="color:#91a0b7; font-size:{metric_label_size}; margin-bottom:1px;">Edge</div>
+                    <div style="color:{edge_color}; font-size:{metric_value_size}; font-weight:700;">{row["edge"]:.2f}%</div>
                 </div>
                 <div>
-                    <div style="color:#91a0b7; font-size:12px; margin-bottom:2px;">Books Seen</div>
-                    <div style="color:#f8fafc; font-size:17px; font-weight:700;">{row["books_seen"]}</div>
+                    <div style="color:#91a0b7; font-size:{metric_label_size}; margin-bottom:1px;">Units</div>
+                    <div style="color:#f8fafc; font-size:{metric_value_size}; font-weight:700;">{row["units"]:.2f}u</div>
                 </div>
 
                 <div>
-                    <div style="color:#91a0b7; font-size:12px; margin-bottom:2px;">Best Price</div>
-                    <div style="color:#f8fafc; font-size:17px; font-weight:700;">{row["best_price"]}</div>
+                    <div style="color:#91a0b7; font-size:{metric_label_size}; margin-bottom:1px;">Consensus</div>
+                    <div style="color:#f8fafc; font-size:{metric_value_size}; font-weight:700;">{row["consensus"]}</div>
                 </div>
                 <div>
-                    <div style="color:#91a0b7; font-size:12px; margin-bottom:2px;">Price Edge</div>
-                    <div style="color:#f8fafc; font-size:17px; font-weight:700;">{row["price_edge"]:.2f}%</div>
+                    <div style="color:#91a0b7; font-size:{metric_label_size}; margin-bottom:1px;">Books</div>
+                    <div style="color:#f8fafc; font-size:{metric_value_size}; font-weight:700;">{row["books_seen"]}</div>
+                </div>
+
+                <div>
+                    <div style="color:#91a0b7; font-size:{metric_label_size}; margin-bottom:1px;">Best Price</div>
+                    <div style="color:#f8fafc; font-size:{metric_value_size}; font-weight:700;">{row["best_price"]}</div>
+                </div>
+                <div>
+                    <div style="color:#91a0b7; font-size:{metric_label_size}; margin-bottom:1px;">Price Edge</div>
+                    <div style="color:#f8fafc; font-size:{metric_value_size}; font-weight:700;">{row["price_edge"]:.2f}%</div>
                 </div>
             </div>
 
-            <div style="height:1px; background:#2a3448; margin:10px 0 12px 0;"></div>
+            <div style="height:1px; background:#2a3448; margin:8px 0 10px 0;"></div>
 
-            <div style="margin-top:2px;">
-                <div style="color:#91a0b7; font-size:12px; margin-bottom:6px;">Confidence • {row["confidence"]}</div>
-                <div style="width:100%; height:8px; background:#263041; border-radius:999px; overflow:hidden;">
-                    <div style="width:{fill_width}; height:8px; background:{fill_color}; border-radius:999px;"></div>
+            <div style="margin-top:0;">
+                <div style="color:#91a0b7; font-size:{metric_label_size}; margin-bottom:5px;">Confidence • {row["confidence"]}</div>
+                <div style="width:100%; height:6px; background:#263041; border-radius:999px; overflow:hidden;">
+                    <div style="width:{fill_width}; height:6px; background:{fill_color}; border-radius:999px;"></div>
                 </div>
             </div>
 
-            <div style="height:12px;"></div>
+            <div style="height:10px;"></div>
 
-            <div>
+            <div style="overflow:hidden;">
                 {tags_html}
             </div>
         </div>
@@ -419,7 +427,7 @@ def render_play_card(row: pd.Series, show_best_badge: bool = False):
     </html>
     """
 
-    components.html(html, height=430, scrolling=False)
+    components.html(html, height=card_height, scrolling=False)
 
 
 def render_table_desktop(dataframe: pd.DataFrame):
@@ -476,8 +484,8 @@ html, body, [class*="css"] {
 }
 .block-container {
     max-width: 880px;
-    padding-top: 1.2rem;
-    padding-bottom: 3rem;
+    padding-top: 1rem;
+    padding-bottom: 2.2rem;
 }
 h1, h2, h3 {
     letter-spacing: -0.02em;
@@ -487,26 +495,26 @@ h1, h2, h3 {
     background: #ffffff;
     border: 1px solid #e7ebf2;
     border-radius: 18px;
-    padding: 14px 16px;
-    margin-bottom: 14px;
+    padding: 12px 14px;
+    margin-bottom: 12px;
 }
 .metric-panel-title {
     color: #1f2937;
     font-weight: 800;
-    font-size: 1rem;
-    margin-bottom: 10px;
+    font-size: 0.98rem;
+    margin-bottom: 8px;
 }
 .metric-mini-grid {
     display: grid;
     grid-template-columns: repeat(2, 1fr);
-    gap: 12px 16px;
+    gap: 10px 14px;
 }
 .metric-mini-label {
-    font-size: 0.82rem;
+    font-size: 0.78rem;
     color: #6b7280;
 }
 .metric-mini-value {
-    font-size: 1.2rem;
+    font-size: 1.05rem;
     font-weight: 800;
     color: #111827;
 }
@@ -514,40 +522,40 @@ h1, h2, h3 {
     background: #ffffff;
     border: 1px solid #e6eaf2;
     border-radius: 18px;
-    padding: 14px 16px 8px 16px;
-    margin-bottom: 18px;
+    padding: 12px 14px 7px 14px;
+    margin-bottom: 14px;
 }
 .section-title {
-    font-size: 1.15rem;
+    font-size: 1.05rem;
     font-weight: 800;
-    margin-bottom: 0.5rem;
+    margin-bottom: 0.35rem;
     color: #1e2430;
 }
 .slip-card {
     background: linear-gradient(180deg, #171d2a 0%, #101624 100%);
     border: 1px solid #273043;
-    border-radius: 24px;
-    padding: 18px;
-    margin-bottom: 14px;
+    border-radius: 22px;
+    padding: 15px;
+    margin-bottom: 12px;
     box-shadow: 0 10px 24px rgba(0, 0, 0, 0.14);
 }
 .slip-kicker {
     color: #fbbf24;
-    font-size: 0.95rem;
+    font-size: 0.88rem;
     font-weight: 800;
-    margin-bottom: 8px;
+    margin-bottom: 6px;
 }
 .slip-title {
     color: #ffffff;
-    font-size: 1.95rem;
+    font-size: 1.55rem;
     font-weight: 800;
-    margin-bottom: 8px;
+    margin-bottom: 6px;
     letter-spacing: -0.03em;
 }
 .slip-meta {
     color: #d6deea;
-    font-size: 1rem;
-    margin-bottom: 6px;
+    font-size: 0.92rem;
+    margin-bottom: 4px;
 }
 .bet-form-wrap {
     background: #ffffff;
@@ -561,13 +569,19 @@ h1, h2, h3 {
     border: 1px solid #a7f3d0;
     color: #065f46;
     border-radius: 16px;
-    padding: 12px 14px;
-    margin-bottom: 14px;
+    padding: 11px 13px;
+    margin-bottom: 12px;
     font-weight: 700;
 }
 .small-muted {
     color: #6b7280;
-    font-size: 0.88rem;
+    font-size: 0.86rem;
+}
+div[data-testid="stRadio"] > div {
+    gap: 0.5rem;
+}
+div[data-testid="stRadio"] label {
+    padding-right: 0.25rem;
 }
 </style>
 """,
@@ -577,8 +591,8 @@ h1, h2, h3 {
 # =========================================================
 # HEADER
 # =========================================================
-st.title("🔥 Sports Betting AI Dashboard V31.6")
-st.caption("Real Engine Integration • Dynamic Play Generation • Auto Bet Log")
+st.title("🔥 Sports Betting AI Dashboard V31.6.1")
+st.caption("Mobile Compact Pro • Dynamic Play Generation • Auto Bet Log")
 
 if auto_logged_count > 0:
     st.markdown(

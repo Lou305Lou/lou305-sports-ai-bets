@@ -6,7 +6,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 st.set_page_config(
-    page_title="Sports Betting AI Dashboard V31.7",
+    page_title="Sports Betting AI Dashboard V31.7.1",
     layout="wide"
 )
 
@@ -40,6 +40,11 @@ ACTIVE_EDGE_PROMOTION = 1.50
 MAX_TOTAL_UNITS = 3.50
 MAX_ACTIVE_PLAYS = 3
 DEFAULT_ODDS_RANGE = (-200, 150)
+
+# Balanced activation thresholds
+QUALITY_ACTIVE_PRIMARY = 0.58
+QUALITY_ACTIVE_SECONDARY = 0.64
+QUALITY_FLOOR_FALLBACK = 0.54
 
 
 # =========================================================
@@ -147,26 +152,26 @@ def detect_traps(row):
     price_edge = float(row["price_edge"])
 
     if consensus == "Thin" and edge >= 3.0:
-        penalties += 0.18
+        penalties += 0.14
         trap_flags.append("thin consensus trap")
 
     if books_seen <= 1 and edge >= 2.0:
-        penalties += 0.18
+        penalties += 0.14
         trap_flags.append("low book count trap")
 
     if books_seen <= 2 and consensus == "Thin":
-        penalties += 0.14
+        penalties += 0.11
         trap_flags.append("weak market structure")
 
     if confidence == "Medium" and edge >= 3.5:
-        penalties += 0.08
+        penalties += 0.06
         trap_flags.append("edge-confidence mismatch")
 
     if price_edge < 0.80 and edge >= 3.0:
-        penalties += 0.07
+        penalties += 0.05
         trap_flags.append("weak price support")
 
-    return clamp(penalties, 0.0, 0.45), trap_flags
+    return clamp(penalties, 0.0, 0.35), trap_flags
 
 
 def compute_true_confidence(row):
@@ -297,7 +302,7 @@ def generate_ai_plays():
     if df.empty:
         return df
 
-    # smarter ranking: quality first, then price/edge/model
+    # smarter ranking
     df["rank_score"] = (
         df["quality_score"] * 100.0 * 0.55
         + df["score"] * 0.15
@@ -306,17 +311,26 @@ def generate_ai_plays():
         + df["books_seen"] * 1.5
     )
 
-    # active/watch decision based on quality, not raw edge alone
+    # balanced activation
     def decide_status(row):
-        if row["quality_score"] >= 0.67 and row["edge"] >= ACTIVE_EDGE_PROMOTION:
+        q = float(row["quality_score"])
+        e = float(row["edge"])
+        b = int(row["books_seen"])
+        c = str(row["consensus"])
+
+        if q >= QUALITY_ACTIVE_PRIMARY and e >= ACTIVE_EDGE_PROMOTION:
             return "Active"
-        if row["quality_score"] >= 0.74 and row["edge"] >= 1.30:
+
+        if q >= QUALITY_ACTIVE_SECONDARY and e >= MIN_ACTIVE_EDGE:
             return "Active"
+
+        if q >= 0.61 and e >= 1.40 and b >= 3 and c in ["Strong", "Fair"]:
+            return "Active"
+
         return "Watch"
 
     df["status"] = df.apply(decide_status, axis=1)
 
-    # tier refinement with quality
     def refine_tier(row):
         tc = row["true_confidence"]
         if tc >= 84:
@@ -326,8 +340,22 @@ def generate_ai_plays():
         return "C"
 
     df["tier"] = df.apply(refine_tier, axis=1)
-
     df = df.sort_values(["status", "rank_score"], ascending=[True, False]).reset_index(drop=True)
+
+    # fallback safeguard: ensure at least some active plays when quality is acceptable
+    active_df = df[df["status"] == "Active"].copy().sort_values("rank_score", ascending=False)
+    watch_df = df[df["status"] == "Watch"].copy().sort_values("rank_score", ascending=False)
+
+    if active_df.empty and not watch_df.empty:
+        fallback_pool = watch_df[
+            (watch_df["quality_score"] >= QUALITY_FLOOR_FALLBACK)
+            & (watch_df["edge"] >= MIN_ACTIVE_EDGE)
+        ].copy().sort_values("rank_score", ascending=False)
+
+        promote_n = min(2, len(fallback_pool))
+        if promote_n > 0:
+            promote_ids = fallback_pool.head(promote_n).index.tolist()
+            df.loc[promote_ids, "status"] = "Active"
 
     active_df = df[df["status"] == "Active"].copy().sort_values("rank_score", ascending=False)
     watch_df = df[df["status"] == "Watch"].copy().sort_values("rank_score", ascending=False)
@@ -850,8 +878,8 @@ h1, h2, h3 {
 # =========================================================
 # HEADER
 # =========================================================
-st.title("🔥 Sports Betting AI Dashboard V31.7")
-st.caption("Smart Decision Layer • Quality-Based Ranking • Auto Bet Log")
+st.title("🔥 Sports Betting AI Dashboard V31.7.1")
+st.caption("Balanced Activation Fix • Smart Decision Layer • Auto Bet Log")
 
 if auto_logged_count > 0:
     st.markdown(
@@ -922,7 +950,7 @@ st.markdown("</div>", unsafe_allow_html=True)
 # =========================================================
 if nav == "Top Plays":
     st.header("🎯 Top Plays")
-    st.caption("Ranked by quality, support, and smart-decision filtering.")
+    st.caption("Ranked by quality, support, and balanced activation filtering.")
     top_df = active_df.sort_values(["rank_score", "true_confidence"], ascending=False).reset_index(drop=True)
     render_mobile_or_table(top_df, best_first=True)
 
@@ -1036,10 +1064,12 @@ with st.expander("⚙️ Adaptive Settings", expanded=False):
 
     with c1:
         st.write(f"**Min Active Edge:** {MIN_ACTIVE_EDGE:.2f}%")
-        st.write(f"**Active Promotion Edge:** {ACTIVE_EDGE_PROMOTION:.2f}%")
-        st.write(f"**Max Active Plays:** {MAX_ACTIVE_PLAYS}")
+        st.write(f"**Primary Quality Threshold:** {QUALITY_ACTIVE_PRIMARY:.2f}")
+        st.write(f"**Secondary Quality Threshold:** {QUALITY_ACTIVE_SECONDARY:.2f}")
+        st.write(f"**Fallback Quality Floor:** {QUALITY_FLOOR_FALLBACK:.2f}")
 
     with c2:
+        st.write(f"**Active Promotion Edge:** {ACTIVE_EDGE_PROMOTION:.2f}%")
+        st.write(f"**Max Active Plays:** {MAX_ACTIVE_PLAYS}")
         st.write(f"**Max Total Units:** {MAX_TOTAL_UNITS:.1f}u")
-        st.write(f"**Odds Filter:** {DEFAULT_ODDS_RANGE[0]} to +{DEFAULT_ODDS_RANGE[1]}")
         st.write("**CLV Priority:** Delayed until more free books/APIs are added")

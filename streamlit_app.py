@@ -1033,8 +1033,8 @@ def render_parlay_card(parlay):
         <div style="padding:6px 0;border-bottom:1px solid #243047;">
             <div style="font-weight:800;">{i}. {leg['selection']}</div>
             <div style="font-size:12px;color:#cbd5e1;">
-    {leg['game']} • {prop_market_label(leg['market']) if is_prop_market(leg['market']) else "Team Market"} • {leg['odds']}
-</div>
+                {leg['game']} • {prop_market_label(leg['market']) if is_prop_market(leg['market']) else "Team Market"} • {leg['odds']}
+            </div>
         """
 
     html = f"""

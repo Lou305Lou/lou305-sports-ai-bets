@@ -227,6 +227,32 @@ def scale_single_units(row):
 def scale_parlay_units(parlay):
     if not parlay:
         return 0.0
+
+    approval_type = parlay.get("approval_type", "")
+    leg_count = int(parlay.get("leg_count", 2))
+    avg_true_conf = float(parlay.get("avg_true_conf", 0))
+    risk_label = str(parlay.get("risk_label", "Moderate"))
+
+    if approval_type == "Sharp Approved":
+        base_units = PARLAY_UNIT_SHARP
+    elif leg_count == 2:
+        base_units = PARLAY_UNIT_FALLBACK_2
+    else:
+        base_units = PARLAY_UNIT_FALLBACK_3
+
+    if avg_true_conf >= 75:
+        base_units += 0.10
+    elif avg_true_conf < 68:
+        base_units -= 0.08
+
+    if risk_label == "Low":
+        base_units += 0.05
+    elif risk_label == "Elevated":
+        base_units -= 0.10
+
+    return round(clamp(base_units, 0.15, 0.75), 2)
+
+
 def scale_watch_units(row):
     true_conf = float(row.get("true_confidence", 0))
     edge = float(row.get("edge", 0))
@@ -252,29 +278,6 @@ def classify_watch_tier(row):
     if tc >= 62 and edge >= 3.4 and books >= 3:
         return "Monitor"
     return "Weak Watch"
-    approval_type = parlay.get("approval_type", "")
-    leg_count = int(parlay.get("leg_count", 2))
-    avg_true_conf = float(parlay.get("avg_true_conf", 0))
-    risk_label = str(parlay.get("risk_label", "Moderate"))
-
-    if approval_type == "Sharp Approved":
-        base_units = PARLAY_UNIT_SHARP
-    elif leg_count == 2:
-        base_units = PARLAY_UNIT_FALLBACK_2
-    else:
-        base_units = PARLAY_UNIT_FALLBACK_3
-
-    if avg_true_conf >= 75:
-        base_units += 0.10
-    elif avg_true_conf < 68:
-        base_units -= 0.08
-
-    if risk_label == "Low":
-        base_units += 0.05
-    elif risk_label == "Elevated":
-        base_units -= 0.10
-
-    return round(clamp(base_units, 0.15, 0.75), 2)
 
 
 def normalize_team_name(team_name: str):

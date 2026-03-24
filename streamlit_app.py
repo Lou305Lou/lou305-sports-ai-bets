@@ -235,6 +235,86 @@ def scale_parlay_units(parlay):
 
     return round(clamp(base_units, 0.15, 0.75), 2)
 
+def team_names_from_game(game: str):
+    parts = str(game).split(" vs ")
+    if len(parts) == 2:
+        return parts[0].strip(), parts[1].strip()
+    return "Away", "Home"
+
+
+def starter_pool_for_team(team_name: str):
+    starters_map = {
+        "Lakers": ["LeBron James", "Anthony Davis", "Austin Reaves", "D'Angelo Russell", "Rui Hachimura"],
+        "Warriors": ["Stephen Curry", "Klay Thompson", "Andrew Wiggins", "Draymond Green", "Jonathan Kuminga"],
+        "Heat": ["Jimmy Butler", "Bam Adebayo", "Tyler Herro", "Terry Rozier", "Jaime Jaquez Jr."],
+        "Spurs": ["Victor Wembanyama", "Devin Vassell", "Keldon Johnson", "Tre Jones", "Jeremy Sochan"],
+        "Celtics": ["Jayson Tatum", "Jaylen Brown", "Kristaps Porzingis", "Jrue Holiday", "Derrick White"],
+        "Nuggets": ["Nikola Jokic", "Jamal Murray", "Michael Porter Jr.", "Aaron Gordon", "Kentavious Caldwell-Pope"],
+        "Suns": ["Kevin Durant", "Devin Booker", "Bradley Beal", "Jusuf Nurkic", "Grayson Allen"],
+        "Clippers": ["Kawhi Leonard", "Paul George", "James Harden", "Ivica Zubac", "Terance Mann"],
+        "Mavericks": ["Luka Doncic", "Kyrie Irving", "Tim Hardaway Jr.", "P.J. Washington", "Dereck Lively II"],
+        "Thunder": ["Shai Gilgeous-Alexander", "Jalen Williams", "Chet Holmgren", "Josh Giddey", "Luguentz Dort"],
+        "76ers": ["Joel Embiid", "Tyrese Maxey", "Tobias Harris", "Kelly Oubre Jr.", "Nicolas Batum"],
+    }
+
+    if team_name in starters_map:
+        return starters_map[team_name]
+
+    return [
+        f"{team_name} Player 1",
+        f"{team_name} Player 2",
+        f"{team_name} Player 3",
+        f"{team_name} Player 4",
+        f"{team_name} Player 5",
+    ]
+
+
+def prop_line_for_type(prop_type: str):
+    default_lines = {
+        "points": [19.5, 21.5, 23.5, 25.5, 27.5],
+        "rebounds": [6.5, 7.5, 8.5, 9.5, 10.5],
+        "assists": [4.5, 5.5, 6.5, 7.5, 8.5],
+        "pra": [28.5, 31.5, 34.5, 37.5, 40.5],
+        "threes": [1.5, 2.5, 3.5, 4.5, 5.5],
+    }
+    choices = default_lines.get(prop_type, [10.5, 12.5, 14.5])
+    return random.choice(choices)
+
+
+def build_prop_selection(player_name: str, prop_type: str):
+    line = prop_line_for_type(prop_type)
+
+    label_map = {
+        "points": "Points",
+        "rebounds": "Rebounds",
+        "assists": "Assists",
+        "pra": "PRA",
+        "threes": "3PM",
+    }
+
+    direction = random.choice(["Over", "Under"])
+    label = label_map.get(prop_type, prop_type.title())
+    return f"{player_name} {direction} {line} {label}"
+
+
+def is_prop_market(market: str):
+    return str(market).lower().startswith("prop_")
+
+
+def prop_market_label(market: str):
+    m = str(market).lower()
+    if m == "prop_points":
+        return "Player Props • Points"
+    if m == "prop_rebounds":
+        return "Player Props • Rebounds"
+    if m == "prop_assists":
+        return "Player Props • Assists"
+    if m == "prop_pra":
+        return "Player Props • PRA"
+    if m == "prop_threes":
+        return "Player Props • 3PM"
+    return str(market).replace("_", " ").title()
+
 
 # =========================================================
 # LIVE SLATE INPUT (V31.9.1)

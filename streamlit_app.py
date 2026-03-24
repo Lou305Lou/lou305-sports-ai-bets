@@ -1190,256 +1190,31 @@ def build_ai_portfolio(best_single, chosen_parlay, parlay_candidates):
 
     return portfolio
 
+
 # =========================================================
-# DATA BUILD
+# DATA PREP (CRITICAL FIX)
 # =========================================================
-def generate_ai_plays():
-    empty_cols = [
-        "game", "market", "selection", "odds", "edge", "score", "units", "tier",
-        "quality_label", "status", "confidence", "books_seen", "best_price",
-        "consensus", "price_edge", "ai_tags", "true_confidence", "quality_score",
-        "decision_reasons", "rank_score", "play_id"
-    ]
+df = generate_ai_plays()
+auto_logged_count = auto_log_active_plays(df)
 
-    if not today_games:
-        return pd.DataFrame(columns=empty_cols)
+active_df = df[df["status"] == "Active"].copy().reset_index(drop=True)
+watch_df = df[df["status"] == "Watch"].copy().reset_index(drop=True)
 
-    team_market_templates = [
-        ("moneyline", lambda g: normalize_team_name(g.split(" vs ")[1])),
-        ("moneyline", lambda g: normalize_team_name(g.split(" vs ")[0])),
-        ("total", lambda g: "Over 221.5"),
-        ("total", lambda g: "Under 221.5"),
-        ("spread", lambda g: f"{normalize_team_name(g.split(' vs ')[1])} -4.5"),
-        ("spread", lambda g: f"{normalize_team_name(g.split(' vs ')[0])} +4.5"),
-    ]
+best_row = None
+if not active_df.empty:
+    best_row = active_df.sort_values(
+        ["rank_score", "true_confidence"],
+        ascending=False
+    ).iloc[0]
 
-    odds_pool = ["-132", "-118", "-110", "-105", "-102", "+100", "+110", "+120", "+135"]
-    consensus_pool = ["Strong", "Fair", "Thin"]
+best_parlay, sharp_candidates, fallback_candidates = choose_best_parlay(active_df)
+all_portfolio_candidates = [*sharp_candidates, *fallback_candidates]
+portfolio = build_ai_portfolio(best_row, best_parlay, all_portfolio_candidates)
 
-    rows = []
-    random.seed(331)
-
-    for game in today_games:
-        away_team, home_team = team_names_from_game(game)
-
-        # ---------------------------
-        # TEAM MARKETS
-        # ---------------------------
-        for market, selection_fn in team_market_templates:
-            edge = round(random.uniform(1.50, 5.60), 2)
-            score = round(random.uniform(79.0, 99.5), 1)
-            books_seen = random.randint(1, 4)
-            odds = random.choice(odds_pool)
-            consensus = random.choices(consensus_pool, weights=[4, 4, 2], k=1)[0]
-            price_edge = round(random.uniform(0.50, 2.80), 2)
-
-            if edge < MIN_WATCH_EDGE:
-                continue
-            if not in_allowed_odds_range(odds, *DEFAULT_ODDS_RANGE):
-                continue
-
-            row = {
-                "game": game,
-                "market": market,
-                "selection": selection_fn(game),
-                "odds": odds,
-                "edge": edge,
-                "score": score,
-                "units": 0.0,
-                "tier": "C",
-                "quality_label": "Watch",
-                "status": "Watch",
-                "confidence": "Low",
-                "books_seen": books_seen,
-                "best_price": "Yes" if price_edge >= 1.25 else "No",
-                "consensus": consensus,
-                "price_edge": price_edge,
-                "ai_tags": ["AI generated", "live slate", "team market"],
-            }
-
-            tc, qs, reasons = compute_true_confidence(row)
-            row["true_confidence"] = tc
-            row["quality_score"] = qs
-            row["decision_reasons"] = reasons
-            row["confidence"] = confidence_bucket_from_true_conf(tc)
-            row["units"] = scale_single_units(row)
-
-            tags = ["AI generated", "live slate", "team market"]
-            for reason in reasons:
-                if reason not in tags:
-                    tags.append(reason)
-            row["ai_tags"] = tags[:6]
-            rows.append(row)
-
-        # ---------------------------
-        # PLAYER PROPS
-        # ---------------------------
-        if ENABLE_PLAYER_PROPS:
-            prop_rows_this_game = 0
-
-            for team_name in [away_team, home_team]:
-                players = starter_pool_for_team(team_name)
-
-                if PROPS_ONLY_STARTERS:
-                    players = players[:5]
-
-                for player_name in players:
-                    if prop_rows_this_game >= MAX_PROP_PLAYS_PER_GAME:
-                        break
-
-                    player_plays_added = 0
-                    prop_types_this_player = PROP_TYPES.copy()
-                    random.shuffle(prop_types_this_player)
-
-                    for prop_type in prop_types_this_player:
-                        if prop_rows_this_game >= MAX_PROP_PLAYS_PER_GAME:
-                            break
-                        if player_plays_added >= MAX_PLAYS_PER_PLAYER:
-                            break
-
-                        edge = round(random.uniform(1.60, 5.80), 2)
-                        score = round(random.uniform(79.0, 99.5), 1)
-                        books_seen = random.randint(1, 4)
-                        odds = random.choice(odds_pool)
-                        consensus = random.choices(consensus_pool, weights=[4, 4, 2], k=1)[0]
-                        price_edge = round(random.uniform(0.50, 2.90), 2)
-
-                        if edge < MIN_WATCH_EDGE:
-                            continue
-                        if not in_allowed_odds_range(odds, *PROP_ODDS_RANGE):
-                            continue
-
-                        selection = build_prop_selection(player_name, prop_type)
-
-                        row = {
-                            "game": game,
-                            "market": f"prop_{prop_type}",
-                            "selection": selection,
-                            "odds": odds,
-                            "edge": edge,
-                            "score": score,
-                            "units": 0.0,
-                            "tier": "C",
-                            "quality_label": "Watch",
-                            "status": "Watch",
-                            "confidence": "Low",
-                            "books_seen": books_seen,
-                            "best_price": "Yes" if price_edge >= 1.25 else "No",
-                            "consensus": consensus,
-                            "price_edge": price_edge,
-                            "ai_tags": ["AI generated", "live slate", "player prop"],
-                        }
-
-                        tc, qs, reasons = compute_true_confidence(row)
-                        row["true_confidence"] = tc
-                        row["quality_score"] = qs
-                        row["decision_reasons"] = reasons
-                        row["confidence"] = confidence_bucket_from_true_conf(tc)
-                        row["units"] = scale_single_units(row)
-
-                        tags = ["AI generated", "live slate", "player prop"]
-                        for reason in reasons:
-                            if reason not in tags:
-                                tags.append(reason)
-                        row["ai_tags"] = tags[:6]
-
-                        rows.append(row)
-                        prop_rows_this_game += 1
-                        player_plays_added += 1
-
-    df = pd.DataFrame(rows)
-    if df.empty:
-        return pd.DataFrame(columns=empty_cols)
-
-    df["rank_score"] = (
-        df["true_confidence"] * 0.55
-        + df["edge"] * 7.0
-        + df["price_edge"] * 3.5
-        + df["books_seen"] * 2.0
-        + df["score"] * 0.08
-    )
-
-    def decide_status(row):
-        if (
-            float(row["edge"]) >= MIN_ACTIVE_EDGE
-            and float(row["true_confidence"]) >= MIN_ACTIVE_TRUE_CONF
-            and int(row["books_seen"]) >= MIN_ACTIVE_BOOKS
-            and str(row["consensus"]) in ["Strong", "Fair"]
-        ):
-            return "Active"
-
-        if (
-            float(row["edge"]) >= MIN_WATCH_EDGE
-            and float(row["true_confidence"]) >= MIN_WATCH_TRUE_CONF
-            and int(row["books_seen"]) >= MIN_WATCH_BOOKS
-        ):
-            return "Watch"
-
-        return "Discard"
-
-    df["status"] = df.apply(decide_status, axis=1)
-    df = df[df["status"] != "Discard"].copy()
-
-    if df.empty:
-        return pd.DataFrame(columns=empty_cols)
-
-    df["tier"] = df["true_confidence"].apply(tier_from_true_conf)
-    df["quality_label"] = df["tier"].apply(quality_label_from_tier)
-
-    df["play_id"] = df.apply(
-        lambda r: build_play_id(
-            {
-                "game": r["game"],
-                "market": r["market"],
-                "selection": r["selection"],
-                "odds": r["odds"],
-            }
-        ),
-        axis=1,
-    )
-
-    active_local = (
-        df[df["status"] == "Active"]
-        .sort_values(["rank_score", "true_confidence"], ascending=False)
-        .head(TOP_PLAYS_LIMIT)
-        .copy()
-    )
-
-    watch_local = (
-        df[df["status"] == "Watch"]
-        .sort_values(["rank_score", "true_confidence"], ascending=False)
-        .head(WATCHLIST_LIMIT)
-        .copy()
-    )
-
-    active_rows = []
-    running_units = 0.0
-
-    for _, row in active_local.iterrows():
-        proposed_units = float(row["units"])
-
-        if len(active_rows) >= MAX_ACTIVE_PLAYS:
-            row2 = row.copy()
-            row2["status"] = "Watch"
-            watch_local = pd.concat([watch_local, pd.DataFrame([row2])], ignore_index=True)
-            continue
-
-        if running_units + proposed_units > MAX_TOTAL_UNITS:
-            row2 = row.copy()
-            row2["status"] = "Watch"
-            watch_local = pd.concat([watch_local, pd.DataFrame([row2])], ignore_index=True)
-            continue
-
-        active_rows.append(row)
-        running_units += proposed_units
-
-    active_final = pd.DataFrame(active_rows) if active_rows else pd.DataFrame(columns=df.columns)
-    combined = pd.concat([active_final, watch_local], ignore_index=True)
-
-    if combined.empty:
-        return pd.DataFrame(columns=empty_cols)
-
-    return combined.sort_values(["status", "rank_score"], ascending=[True, False]).reset_index(drop=True)
+avg_active_edge = active_df["edge"].mean() if not active_df.empty else 0.0
+best_score = best_row["score"] if best_row is not None else "—"
+avg_true_conf = active_df["true_confidence"].mean() if not active_df.empty else 0.0
+total_units = active_df["units"].sum() if not active_df.empty else 0.0
 
 # =========================================================
 # PAGE STYLES

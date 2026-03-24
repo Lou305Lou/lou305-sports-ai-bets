@@ -542,7 +542,6 @@ def generate_ai_plays():
         "decision_reasons",
         "rank_score",
         "play_id",
-        "status_reason",
     ]
 
     if not today_games:
@@ -599,7 +598,6 @@ def generate_ai_plays():
                 "consensus": consensus,
                 "price_edge": price_edge,
                 "ai_tags": ["AI generated", "live slate", "team market"],
-                "status_reason": "initial",
             }
 
             tc, qs, reasons = compute_true_confidence(row)
@@ -674,7 +672,6 @@ def generate_ai_plays():
                             "consensus": consensus,
                             "price_edge": price_edge,
                             "ai_tags": ["AI generated", "live slate", "player prop"],
-                            "status_reason": "initial",
                         }
 
                         tc, qs, reasons = compute_true_confidence(row)
@@ -707,18 +704,31 @@ def generate_ai_plays():
     )
 
     def decide_status(row):
+        edge = float(row["edge"])
+        tc = float(row["true_confidence"])
+        books = int(row["books_seen"])
+        consensus = str(row["consensus"])
+        price_edge = float(row["price_edge"])
+        score = float(row["score"])
+
+        # ACTIVE = truly qualified only
         if (
-            float(row["edge"]) >= MIN_ACTIVE_EDGE
-            and float(row["true_confidence"]) >= MIN_ACTIVE_TRUE_CONF
-            and int(row["books_seen"]) >= MIN_ACTIVE_BOOKS
-            and str(row["consensus"]) in ["Strong", "Fair"]
+            edge >= 4.00
+            and tc >= 75.0
+            and books >= 3
+            and consensus in ["Strong", "Fair"]
+            and price_edge >= 1.10
+            and score >= 84.0
         ):
             return "Active"
 
+        # WATCH = near-qualified only, but not too strong
         if (
-            float(row["edge"]) >= MIN_WATCH_EDGE
-            and float(row["true_confidence"]) >= MIN_WATCH_TRUE_CONF
-            and int(row["books_seen"]) >= MIN_WATCH_BOOKS
+            edge >= 3.25
+            and tc >= 58.0
+            and books >= 3
+            and consensus in ["Strong", "Fair"]
+            and price_edge >= 0.90
         ):
             return "Watch"
 
@@ -745,90 +755,70 @@ def generate_ai_plays():
         axis=1,
     )
 
-    # --------------------------------
-    # Split into pre-qualified buckets
-    # --------------------------------
-    qualified_active = (
+    active_local = (
         df[df["status"] == "Active"]
         .sort_values(["rank_score", "true_confidence"], ascending=False)
+        .head(TOP_PLAYS_LIMIT)
         .copy()
     )
 
-    qualified_watch = (
+    watch_local = (
         df[df["status"] == "Watch"]
         .sort_values(["rank_score", "true_confidence"], ascending=False)
+        .head(WATCHLIST_LIMIT)
         .copy()
     )
 
-    # --------------------------------
-    # Final Active selection
-    # --------------------------------
     active_rows = []
-    overflow_rows = []
     running_units = 0.0
+    active_ids = set()
 
-    for _, row in qualified_active.iterrows():
+    for _, row in active_local.iterrows():
         proposed_units = float(row["units"])
 
         if len(active_rows) >= MAX_ACTIVE_PLAYS:
-            row2 = row.copy()
-            row2["status"] = "Watch"
-            row2["status_reason"] = "active_cap_overflow"
-            overflow_rows.append(row2)
             continue
 
         if running_units + proposed_units > MAX_TOTAL_UNITS:
-            row2 = row.copy()
-            row2["status"] = "Watch"
-            row2["status_reason"] = "unit_cap_overflow"
-            overflow_rows.append(row2)
             continue
 
         row2 = row.copy()
-        row2["status"] = "Active"
-        row2["status_reason"] = "qualified_active"
+        row2["units"] = round(clamp(row2["units"], 0.90, 1.25), 2)
         active_rows.append(row2)
-        running_units += proposed_units
+        running_units += float(row2["units"])
+        active_ids.add(row2["play_id"])
 
     active_final = pd.DataFrame(active_rows) if active_rows else pd.DataFrame(columns=df.columns)
 
-    # --------------------------------
-    # Final Watchlist build
-    # --------------------------------
-    qualified_watch["status_reason"] = "qualified_watch"
+    if not watch_local.empty:
+        watch_local = watch_local[~watch_local["play_id"].isin(active_ids)].copy()
+        watch_local["units"] = watch_local["units"].apply(lambda x: round(clamp(float(x) * 0.60, 0.30, 0.75), 2))
 
-    overflow_df = pd.DataFrame(overflow_rows) if overflow_rows else pd.DataFrame(columns=df.columns)
+        # remove anything that still looks too "active"
+        watch_local = watch_local[
+            ~(
+                (watch_local["true_confidence"] >= 75.0)
+                & (watch_local["edge"] >= 4.00)
+                & (watch_local["books_seen"] >= 3)
+                & (watch_local["consensus"].isin(["Strong", "Fair"]))
+            )
+        ].copy()
 
-    watch_pool = pd.concat([qualified_watch, overflow_df], ignore_index=True)
-
-    if not watch_pool.empty:
-        watch_pool = (
-            watch_pool
+        watch_local = (
+            watch_local
             .sort_values(["rank_score", "true_confidence"], ascending=False)
-            .drop_duplicates(subset=["play_id"], keep="first")
             .head(WATCHLIST_LIMIT)
-            .copy()
         )
 
-        # Watchlist plays should not all carry full-size units
-        watch_pool["units"] = watch_pool["units"].apply(lambda u: round(min(float(u), 0.75), 2))
-
-    combined = pd.concat([active_final, watch_pool], ignore_index=True)
+    combined = pd.concat([active_final, watch_local], ignore_index=True)
 
     if combined.empty:
         return pd.DataFrame(columns=empty_cols)
 
-    status_order = {"Active": 0, "Watch": 1}
-    combined["status_sort"] = combined["status"].map(status_order).fillna(9)
-
-    combined = (
-        combined
-        .sort_values(["status_sort", "rank_score", "true_confidence"], ascending=[True, False, False])
-        .drop(columns=["status_sort"])
-        .reset_index(drop=True)
-    )
-
-    return combined
+    return combined.sort_values(
+        ["status", "rank_score"],
+        ascending=[True, False]
+    ).reset_index(drop=True)
 # =========================================================
 # PARLAY INTELLIGENCE
 # =========================================================

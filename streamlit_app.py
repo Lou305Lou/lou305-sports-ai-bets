@@ -1389,10 +1389,10 @@ def generate_ai_plays():
         return pd.DataFrame(columns=empty_cols)
 
     df["rank_score"] = (
-        df["quality_score"] * 100 * 0.55
+        df["quality_score"] * 100.0 * 0.55
         + df["score"] * 0.15
-        + df["edge"] * 6
-        + df["price_edge"] * 4
+        + df["edge"] * 6.0
+        + df["price_edge"] * 4.0
         + df["books_seen"] * 1.5
     )
 
@@ -1430,7 +1430,54 @@ def generate_ai_plays():
         axis=1,
     )
 
-    return df.sort_values(["status", "rank_score"], ascending=[True, False]).reset_index(drop=True)
+    active_local = df[df["status"] == "Active"].copy().sort_values("rank_score", ascending=False)
+    watch_local = df[df["status"] == "Watch"].copy().sort_values("rank_score", ascending=False)
+
+    active_rows = []
+    running_units = 0.0
+
+    for _, row in active_local.iterrows():
+        proposed_units = float(row["units"])
+
+        if len(active_rows) >= MAX_ACTIVE_PLAYS or running_units + proposed_units > MAX_TOTAL_UNITS:
+            row2 = row.copy()
+            row2["status"] = "Watch"
+            watch_local = pd.concat([watch_local, pd.DataFrame([row2])], ignore_index=True)
+            continue
+
+        active_rows.append(row)
+        running_units += proposed_units
+
+    active_final = pd.DataFrame(active_rows) if active_rows else pd.DataFrame(columns=df.columns)
+    combined = pd.concat([active_final, watch_local], ignore_index=True)
+
+    if combined.empty:
+        return pd.DataFrame(columns=empty_cols)
+
+    return combined.sort_values(["status", "rank_score"], ascending=[True, False]).reset_index(drop=True)
+
+
+df = generate_ai_plays()
+auto_logged_count = auto_log_active_plays(df)
+
+active_df = df[df["status"] == "Active"].copy().reset_index(drop=True)
+watch_df = df[df["status"] == "Watch"].copy().reset_index(drop=True)
+
+best_row = None
+if not active_df.empty:
+    best_row = active_df.sort_values(
+        ["rank_score", "true_confidence"],
+        ascending=False
+    ).iloc[0]
+
+best_parlay, sharp_candidates, fallback_candidates = choose_best_parlay(active_df)
+all_portfolio_candidates = [*sharp_candidates, *fallback_candidates]
+portfolio = build_ai_portfolio(best_row, best_parlay, all_portfolio_candidates)
+
+avg_active_edge = active_df["edge"].mean() if not active_df.empty else 0.0
+best_score = best_row["score"] if best_row is not None else "—"
+avg_true_conf = active_df["true_confidence"].mean() if not active_df.empty else 0.0
+total_units = active_df["units"].sum() if not active_df.empty else 0.0
 
 
 # =========================================================

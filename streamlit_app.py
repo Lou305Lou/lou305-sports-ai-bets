@@ -1195,47 +1195,29 @@ def build_ai_portfolio(best_single, chosen_parlay, parlay_candidates):
 # =========================================================
 def generate_ai_plays():
     empty_cols = [
-        "game",
-        "market",
-        "selection",
-        "odds",
-        "edge",
-        "score",
-        "units",
-        "tier",
-        "quality_label",
-        "status",
-        "confidence",
-        "books_seen",
-        "best_price",
-        "consensus",
-        "price_edge",
-        "ai_tags",
-        "true_confidence",
-        "quality_score",
-        "decision_reasons",
-        "rank_score",
-        "play_id",
+        "game", "market", "selection", "odds", "edge", "score", "units", "tier",
+        "quality_label", "status", "confidence", "books_seen", "best_price",
+        "consensus", "price_edge", "ai_tags", "true_confidence", "quality_score",
+        "decision_reasons", "rank_score", "play_id"
     ]
 
     if not today_games:
         return pd.DataFrame(columns=empty_cols)
 
     team_market_templates = [
-        ("moneyline", lambda g: g.split(" vs ")[1]),
-        ("moneyline", lambda g: g.split(" vs ")[0]),
+        ("moneyline", lambda g: normalize_team_name(g.split(" vs ")[1])),
+        ("moneyline", lambda g: normalize_team_name(g.split(" vs ")[0])),
         ("total", lambda g: "Over 221.5"),
         ("total", lambda g: "Under 221.5"),
-        ("spread", lambda g: f"{g.split(' vs ')[1]} -4.5"),
-        ("spread", lambda g: f"{g.split(' vs ')[0]} +4.5"),
+        ("spread", lambda g: f"{normalize_team_name(g.split(' vs ')[1])} -4.5"),
+        ("spread", lambda g: f"{normalize_team_name(g.split(' vs ')[0])} +4.5"),
     ]
 
     odds_pool = ["-132", "-118", "-110", "-105", "-102", "+100", "+110", "+120", "+135"]
     consensus_pool = ["Strong", "Fair", "Thin"]
-    confidence_pool = ["Medium", "High", "Elite"]
 
     rows = []
-    random.seed(3192)
+    random.seed(331)
 
     for game in today_games:
         away_team, home_team = team_names_from_game(game)
@@ -1244,15 +1226,14 @@ def generate_ai_plays():
         # TEAM MARKETS
         # ---------------------------
         for market, selection_fn in team_market_templates:
-            edge = round(random.uniform(0.80, 5.20), 2)
-            score = round(random.uniform(80.0, 99.5), 1)
-            confidence = random.choices(confidence_pool, weights=[3, 5, 2], k=1)[0]
+            edge = round(random.uniform(1.50, 5.60), 2)
+            score = round(random.uniform(79.0, 99.5), 1)
             books_seen = random.randint(1, 4)
             odds = random.choice(odds_pool)
-            consensus = random.choices(consensus_pool, weights=[3, 5, 2], k=1)[0]
-            price_edge = round(random.uniform(0.40, 2.60), 2)
+            consensus = random.choices(consensus_pool, weights=[4, 4, 2], k=1)[0]
+            price_edge = round(random.uniform(0.50, 2.80), 2)
 
-            if edge < MIN_ACTIVE_EDGE:
+            if edge < MIN_WATCH_EDGE:
                 continue
             if not in_allowed_odds_range(odds, *DEFAULT_ODDS_RANGE):
                 continue
@@ -1268,7 +1249,7 @@ def generate_ai_plays():
                 "tier": "C",
                 "quality_label": "Watch",
                 "status": "Watch",
-                "confidence": confidence,
+                "confidence": "Low",
                 "books_seen": books_seen,
                 "best_price": "Yes" if price_edge >= 1.25 else "No",
                 "consensus": consensus,
@@ -1280,6 +1261,7 @@ def generate_ai_plays():
             row["true_confidence"] = tc
             row["quality_score"] = qs
             row["decision_reasons"] = reasons
+            row["confidence"] = confidence_bucket_from_true_conf(tc)
             row["units"] = scale_single_units(row)
 
             tags = ["AI generated", "live slate", "team market"]
@@ -1287,7 +1269,6 @@ def generate_ai_plays():
                 if reason not in tags:
                     tags.append(reason)
             row["ai_tags"] = tags[:6]
-
             rows.append(row)
 
         # ---------------------------
@@ -1303,27 +1284,37 @@ def generate_ai_plays():
                     players = players[:5]
 
                 for player_name in players:
-                    for prop_type in PROP_TYPES:
+                    if prop_rows_this_game >= MAX_PROP_PLAYS_PER_GAME:
+                        break
+
+                    player_plays_added = 0
+                    prop_types_this_player = PROP_TYPES.copy()
+                    random.shuffle(prop_types_this_player)
+
+                    for prop_type in prop_types_this_player:
                         if prop_rows_this_game >= MAX_PROP_PLAYS_PER_GAME:
                             break
+                        if player_plays_added >= MAX_PLAYS_PER_PLAYER:
+                            break
 
-                        edge = round(random.uniform(0.90, 5.40), 2)
+                        edge = round(random.uniform(1.60, 5.80), 2)
                         score = round(random.uniform(79.0, 99.5), 1)
-                        confidence = random.choices(confidence_pool, weights=[3, 5, 2], k=1)[0]
                         books_seen = random.randint(1, 4)
                         odds = random.choice(odds_pool)
-                        consensus = random.choices(consensus_pool, weights=[2, 5, 2], k=1)[0]
-                        price_edge = round(random.uniform(0.45, 2.80), 2)
+                        consensus = random.choices(consensus_pool, weights=[4, 4, 2], k=1)[0]
+                        price_edge = round(random.uniform(0.50, 2.90), 2)
 
-                        if edge < MIN_ACTIVE_EDGE:
+                        if edge < MIN_WATCH_EDGE:
                             continue
                         if not in_allowed_odds_range(odds, *PROP_ODDS_RANGE):
                             continue
 
+                        selection = build_prop_selection(player_name, prop_type)
+
                         row = {
                             "game": game,
                             "market": f"prop_{prop_type}",
-                            "selection": build_prop_selection(player_name, prop_type),
+                            "selection": selection,
                             "odds": odds,
                             "edge": edge,
                             "score": score,
@@ -1331,7 +1322,7 @@ def generate_ai_plays():
                             "tier": "C",
                             "quality_label": "Watch",
                             "status": "Watch",
-                            "confidence": confidence,
+                            "confidence": "Low",
                             "books_seen": books_seen,
                             "best_price": "Yes" if price_edge >= 1.25 else "No",
                             "consensus": consensus,
@@ -1343,6 +1334,7 @@ def generate_ai_plays():
                         row["true_confidence"] = tc
                         row["quality_score"] = qs
                         row["decision_reasons"] = reasons
+                        row["confidence"] = confidence_bucket_from_true_conf(tc)
                         row["units"] = scale_single_units(row)
 
                         tags = ["AI generated", "live slate", "player prop"]
@@ -1353,43 +1345,45 @@ def generate_ai_plays():
 
                         rows.append(row)
                         prop_rows_this_game += 1
-
-                    if prop_rows_this_game >= MAX_PROP_PLAYS_PER_GAME:
-                        break
+                        player_plays_added += 1
 
     df = pd.DataFrame(rows)
-
     if df.empty:
         return pd.DataFrame(columns=empty_cols)
 
     df["rank_score"] = (
-        df["quality_score"] * 100.0 * 0.55
-        + df["score"] * 0.15
-        + df["edge"] * 6.0
-        + df["price_edge"] * 4.0
-        + df["books_seen"] * 1.5
+        df["true_confidence"] * 0.55
+        + df["edge"] * 7.0
+        + df["price_edge"] * 3.5
+        + df["books_seen"] * 2.0
+        + df["score"] * 0.08
     )
 
     def decide_status(row):
-        q = float(row["quality_score"])
-        e = float(row["edge"])
-        b = int(row["books_seen"])
-        c = str(row["consensus"])
+        if (
+            float(row["edge"]) >= MIN_ACTIVE_EDGE
+            and float(row["true_confidence"]) >= MIN_ACTIVE_TRUE_CONF
+            and int(row["books_seen"]) >= MIN_ACTIVE_BOOKS
+            and str(row["consensus"]) in ["Strong", "Fair"]
+        ):
+            return "Active"
 
-        if q >= QUALITY_ACTIVE_PRIMARY and e >= ACTIVE_EDGE_PROMOTION:
-            return "Active"
-        if q >= QUALITY_ACTIVE_SECONDARY and e >= MIN_ACTIVE_EDGE:
-            return "Active"
-        if q >= 0.61 and e >= 1.40 and b >= 3 and c in ["Strong", "Fair"]:
-            return "Active"
-        return "Watch"
+        if (
+            float(row["edge"]) >= MIN_WATCH_EDGE
+            and float(row["true_confidence"]) >= MIN_WATCH_TRUE_CONF
+            and int(row["books_seen"]) >= MIN_WATCH_BOOKS
+        ):
+            return "Watch"
+
+        return "Discard"
 
     df["status"] = df.apply(decide_status, axis=1)
+    df = df[df["status"] != "Discard"].copy()
 
-    df["tier"] = df.apply(
-        lambda r: "A" if r["true_confidence"] >= 78 else ("B" if r["true_confidence"] >= 60 else "C"),
-        axis=1,
-    )
+    if df.empty:
+        return pd.DataFrame(columns=empty_cols)
+
+    df["tier"] = df["true_confidence"].apply(tier_from_true_conf)
     df["quality_label"] = df["tier"].apply(quality_label_from_tier)
 
     df["play_id"] = df.apply(
@@ -1404,8 +1398,19 @@ def generate_ai_plays():
         axis=1,
     )
 
-    active_local = df[df["status"] == "Active"].copy().sort_values("rank_score", ascending=False)
-    watch_local = df[df["status"] == "Watch"].copy().sort_values("rank_score", ascending=False)
+    active_local = (
+        df[df["status"] == "Active"]
+        .sort_values(["rank_score", "true_confidence"], ascending=False)
+        .head(TOP_PLAYS_LIMIT)
+        .copy()
+    )
+
+    watch_local = (
+        df[df["status"] == "Watch"]
+        .sort_values(["rank_score", "true_confidence"], ascending=False)
+        .head(WATCHLIST_LIMIT)
+        .copy()
+    )
 
     active_rows = []
     running_units = 0.0
@@ -1413,7 +1418,13 @@ def generate_ai_plays():
     for _, row in active_local.iterrows():
         proposed_units = float(row["units"])
 
-        if len(active_rows) >= MAX_ACTIVE_PLAYS or running_units + proposed_units > MAX_TOTAL_UNITS:
+        if len(active_rows) >= MAX_ACTIVE_PLAYS:
+            row2 = row.copy()
+            row2["status"] = "Watch"
+            watch_local = pd.concat([watch_local, pd.DataFrame([row2])], ignore_index=True)
+            continue
+
+        if running_units + proposed_units > MAX_TOTAL_UNITS:
             row2 = row.copy()
             row2["status"] = "Watch"
             watch_local = pd.concat([watch_local, pd.DataFrame([row2])], ignore_index=True)
@@ -1429,30 +1440,6 @@ def generate_ai_plays():
         return pd.DataFrame(columns=empty_cols)
 
     return combined.sort_values(["status", "rank_score"], ascending=[True, False]).reset_index(drop=True)
-
-
-df = generate_ai_plays()
-auto_logged_count = auto_log_active_plays(df)
-
-active_df = df[df["status"] == "Active"].copy().reset_index(drop=True)
-watch_df = df[df["status"] == "Watch"].copy().reset_index(drop=True)
-
-best_row = None
-if not active_df.empty:
-    best_row = active_df.sort_values(
-        ["rank_score", "true_confidence"],
-        ascending=False
-    ).iloc[0]
-
-best_parlay, sharp_candidates, fallback_candidates = choose_best_parlay(active_df)
-all_portfolio_candidates = [*sharp_candidates, *fallback_candidates]
-portfolio = build_ai_portfolio(best_row, best_parlay, all_portfolio_candidates)
-
-avg_active_edge = active_df["edge"].mean() if not active_df.empty else 0.0
-best_score = best_row["score"] if best_row is not None else "—"
-avg_true_conf = active_df["true_confidence"].mean() if not active_df.empty else 0.0
-total_units = active_df["units"].sum() if not active_df.empty else 0.0
-
 
 # =========================================================
 # PAGE STYLES

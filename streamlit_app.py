@@ -521,10 +521,28 @@ def tier_from_true_conf(tc):
 # =========================================================
 def generate_ai_plays():
     empty_cols = [
-        "game", "market", "selection", "odds", "edge", "score", "units", "tier",
-        "quality_label", "status", "confidence", "books_seen", "best_price",
-        "consensus", "price_edge", "ai_tags", "true_confidence", "quality_score",
-        "decision_reasons", "rank_score", "play_id"
+        "game",
+        "market",
+        "selection",
+        "odds",
+        "edge",
+        "score",
+        "units",
+        "tier",
+        "quality_label",
+        "status",
+        "confidence",
+        "books_seen",
+        "best_price",
+        "consensus",
+        "price_edge",
+        "ai_tags",
+        "true_confidence",
+        "quality_score",
+        "decision_reasons",
+        "rank_score",
+        "play_id",
+        "status_reason",
     ]
 
     if not today_games:
@@ -581,6 +599,7 @@ def generate_ai_plays():
                 "consensus": consensus,
                 "price_edge": price_edge,
                 "ai_tags": ["AI generated", "live slate", "team market"],
+                "status_reason": "initial",
             }
 
             tc, qs, reasons = compute_true_confidence(row)
@@ -595,6 +614,7 @@ def generate_ai_plays():
                 if reason not in tags:
                     tags.append(reason)
             row["ai_tags"] = tags[:6]
+
             rows.append(row)
 
         # ---------------------------
@@ -654,6 +674,7 @@ def generate_ai_plays():
                             "consensus": consensus,
                             "price_edge": price_edge,
                             "ai_tags": ["AI generated", "live slate", "player prop"],
+                            "status_reason": "initial",
                         }
 
                         tc, qs, reasons = compute_true_confidence(row)
@@ -724,48 +745,90 @@ def generate_ai_plays():
         axis=1,
     )
 
-    active_local = (
+    # --------------------------------
+    # Split into pre-qualified buckets
+    # --------------------------------
+    qualified_active = (
         df[df["status"] == "Active"]
         .sort_values(["rank_score", "true_confidence"], ascending=False)
-        .head(TOP_PLAYS_LIMIT)
         .copy()
     )
 
-    watch_local = (
+    qualified_watch = (
         df[df["status"] == "Watch"]
         .sort_values(["rank_score", "true_confidence"], ascending=False)
-        .head(WATCHLIST_LIMIT)
         .copy()
     )
 
+    # --------------------------------
+    # Final Active selection
+    # --------------------------------
     active_rows = []
+    overflow_rows = []
     running_units = 0.0
 
-    for _, row in active_local.iterrows():
+    for _, row in qualified_active.iterrows():
         proposed_units = float(row["units"])
 
         if len(active_rows) >= MAX_ACTIVE_PLAYS:
             row2 = row.copy()
             row2["status"] = "Watch"
-            watch_local = pd.concat([watch_local, pd.DataFrame([row2])], ignore_index=True)
+            row2["status_reason"] = "active_cap_overflow"
+            overflow_rows.append(row2)
             continue
 
         if running_units + proposed_units > MAX_TOTAL_UNITS:
             row2 = row.copy()
             row2["status"] = "Watch"
-            watch_local = pd.concat([watch_local, pd.DataFrame([row2])], ignore_index=True)
+            row2["status_reason"] = "unit_cap_overflow"
+            overflow_rows.append(row2)
             continue
 
-        active_rows.append(row)
+        row2 = row.copy()
+        row2["status"] = "Active"
+        row2["status_reason"] = "qualified_active"
+        active_rows.append(row2)
         running_units += proposed_units
 
     active_final = pd.DataFrame(active_rows) if active_rows else pd.DataFrame(columns=df.columns)
-    combined = pd.concat([active_final, watch_local], ignore_index=True)
+
+    # --------------------------------
+    # Final Watchlist build
+    # --------------------------------
+    qualified_watch["status_reason"] = "qualified_watch"
+
+    overflow_df = pd.DataFrame(overflow_rows) if overflow_rows else pd.DataFrame(columns=df.columns)
+
+    watch_pool = pd.concat([qualified_watch, overflow_df], ignore_index=True)
+
+    if not watch_pool.empty:
+        watch_pool = (
+            watch_pool
+            .sort_values(["rank_score", "true_confidence"], ascending=False)
+            .drop_duplicates(subset=["play_id"], keep="first")
+            .head(WATCHLIST_LIMIT)
+            .copy()
+        )
+
+        # Watchlist plays should not all carry full-size units
+        watch_pool["units"] = watch_pool["units"].apply(lambda u: round(min(float(u), 0.75), 2))
+
+    combined = pd.concat([active_final, watch_pool], ignore_index=True)
 
     if combined.empty:
         return pd.DataFrame(columns=empty_cols)
 
-    return combined.sort_values(["status", "rank_score"], ascending=[True, False]).reset_index(drop=True)
+    status_order = {"Active": 0, "Watch": 1}
+    combined["status_sort"] = combined["status"].map(status_order).fillna(9)
+
+    combined = (
+        combined
+        .sort_values(["status_sort", "rank_score", "true_confidence"], ascending=[True, False, False])
+        .drop(columns=["status_sort"])
+        .reset_index(drop=True)
+    )
+
+    return combined
 # =========================================================
 # PARLAY INTELLIGENCE
 # =========================================================

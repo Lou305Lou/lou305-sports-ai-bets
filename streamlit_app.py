@@ -77,23 +77,6 @@ MAX_PROP_PLAYS_PER_GAME = 8
 MAX_PLAYS_PER_PLAYER = 1
 
 # =========================================================
-# V31.9.2 LIVE PLAYER PROPS SETTINGS
-# =========================================================
-ENABLE_PLAYER_PROPS = True
-PROPS_ONLY_STARTERS = False
-
-PROP_TYPES = [
-    "points",
-    "rebounds",
-    "assists",
-    "pra",
-    "threes",
-]
-
-PROP_ODDS_RANGE = (-200, 150)
-MAX_PROP_PLAYS_PER_GAME = 4
-
-# =========================================================
 # HELPERS
 # =========================================================
 def clamp(value, low, high):
@@ -565,6 +548,9 @@ def generate_ai_plays():
     for game in today_games:
         away_team, home_team = team_names_from_game(game)
 
+        # ---------------------------
+        # TEAM MARKETS
+        # ---------------------------
         for market, selection_fn in team_market_templates:
             edge = round(random.uniform(1.50, 5.60), 2)
             score = round(random.uniform(79.0, 99.5), 1)
@@ -611,19 +597,27 @@ def generate_ai_plays():
             row["ai_tags"] = tags[:6]
             rows.append(row)
 
+        # ---------------------------
+        # PLAYER PROPS
+        # ---------------------------
         if ENABLE_PLAYER_PROPS:
             prop_rows_this_game = 0
 
             for team_name in [away_team, home_team]:
                 players = starter_pool_for_team(team_name)
+
                 if PROPS_ONLY_STARTERS:
                     players = players[:5]
 
                 for player_name in players:
-                    player_plays_added = 0
+                    if prop_rows_this_game >= MAX_PROP_PLAYS_PER_GAME:
+                        break
 
-                    random.shuffle(PROP_TYPES)
-                    for prop_type in PROP_TYPES:
+                    player_plays_added = 0
+                    prop_types_this_player = PROP_TYPES.copy()
+                    random.shuffle(prop_types_this_player)
+
+                    for prop_type in prop_types_this_player:
                         if prop_rows_this_game >= MAX_PROP_PLAYS_PER_GAME:
                             break
                         if player_plays_added >= MAX_PLAYS_PER_PLAYER:
@@ -678,9 +672,6 @@ def generate_ai_plays():
                         rows.append(row)
                         prop_rows_this_game += 1
                         player_plays_added += 1
-
-                    if prop_rows_this_game >= MAX_PROP_PLAYS_PER_GAME:
-                        break
 
     df = pd.DataFrame(rows)
     if df.empty:
@@ -752,11 +743,13 @@ def generate_ai_plays():
 
     for _, row in active_local.iterrows():
         proposed_units = float(row["units"])
+
         if len(active_rows) >= MAX_ACTIVE_PLAYS:
             row2 = row.copy()
             row2["status"] = "Watch"
             watch_local = pd.concat([watch_local, pd.DataFrame([row2])], ignore_index=True)
             continue
+
         if running_units + proposed_units > MAX_TOTAL_UNITS:
             row2 = row.copy()
             row2["status"] = "Watch"

@@ -227,7 +227,31 @@ def scale_single_units(row):
 def scale_parlay_units(parlay):
     if not parlay:
         return 0.0
+def scale_watch_units(row):
+    true_conf = float(row.get("true_confidence", 0))
+    edge = float(row.get("edge", 0))
+    books_seen = int(row.get("books_seen", 1))
 
+    base = (
+        (true_conf * 0.42)
+        + (edge * 4.5)
+        + (books_seen * 2.0)
+    ) / 55.0
+
+    return round(clamp(base, WATCH_UNIT_MIN, WATCH_UNIT_MAX), 2)
+
+
+def classify_watch_tier(row):
+    tc = float(row.get("true_confidence", 0))
+    edge = float(row.get("edge", 0))
+    books = int(row.get("books_seen", 0))
+    consensus = str(row.get("consensus", "")).strip()
+
+    if tc >= 68 and edge >= 4.0 and books >= 3 and consensus in ["Strong", "Fair"]:
+        return "Near Active"
+    if tc >= 62 and edge >= 3.4 and books >= 3:
+        return "Monitor"
+    return "Weak Watch"
     approval_type = parlay.get("approval_type", "")
     leg_count = int(parlay.get("leg_count", 2))
     avg_true_conf = float(parlay.get("avg_true_conf", 0))
@@ -533,6 +557,7 @@ def generate_ai_plays():
         "tier",
         "quality_label",
         "status",
+        "watch_tier",
         "confidence",
         "books_seen",
         "best_price",
@@ -594,6 +619,7 @@ def generate_ai_plays():
                 "tier": "C",
                 "quality_label": "Watch",
                 "status": "Watch",
+                "watch_tier": "",
                 "confidence": "Low",
                 "books_seen": books_seen,
                 "best_price": "Yes" if price_edge >= 1.25 else "No",
@@ -607,7 +633,6 @@ def generate_ai_plays():
             row["quality_score"] = qs
             row["decision_reasons"] = reasons
             row["confidence"] = confidence_bucket_from_true_conf(tc)
-            row["units"] = scale_single_units(row)
 
             tags = ["AI generated", "live slate", "team market"]
             for reason in reasons:
@@ -668,6 +693,7 @@ def generate_ai_plays():
                             "tier": "C",
                             "quality_label": "Watch",
                             "status": "Watch",
+                            "watch_tier": "",
                             "confidence": "Low",
                             "books_seen": books_seen,
                             "best_price": "Yes" if price_edge >= 1.25 else "No",
@@ -681,7 +707,6 @@ def generate_ai_plays():
                         row["quality_score"] = qs
                         row["decision_reasons"] = reasons
                         row["confidence"] = confidence_bucket_from_true_conf(tc)
-                        row["units"] = scale_single_units(row)
 
                         tags = ["AI generated", "live slate", "player prop"]
                         for reason in reasons:
@@ -706,31 +731,18 @@ def generate_ai_plays():
     )
 
     def decide_status(row):
-        edge = float(row["edge"])
-        tc = float(row["true_confidence"])
-        books = int(row["books_seen"])
-        consensus = str(row["consensus"])
-        price_edge = float(row["price_edge"])
-        score = float(row["score"])
-
-        # ACTIVE = truly qualified only
         if (
-            edge >= 4.00
-            and tc >= 75.0
-            and books >= 3
-            and consensus in ["Strong", "Fair"]
-            and price_edge >= 1.10
-            and score >= 84.0
+            float(row["edge"]) >= MIN_ACTIVE_EDGE
+            and float(row["true_confidence"]) >= MIN_ACTIVE_TRUE_CONF
+            and int(row["books_seen"]) >= MIN_ACTIVE_BOOKS
+            and str(row["consensus"]) in ["Strong", "Fair"]
         ):
             return "Active"
 
-        # WATCH = near-qualified only, but not too strong
         if (
-            edge >= 3.25
-            and tc >= 58.0
-            and books >= 3
-            and consensus in ["Strong", "Fair"]
-            and price_edge >= 0.90
+            float(row["edge"]) >= MIN_WATCH_EDGE
+            and float(row["true_confidence"]) >= MIN_WATCH_TRUE_CONF
+            and int(row["books_seen"]) >= MIN_WATCH_BOOKS
         ):
             return "Watch"
 
@@ -742,8 +754,18 @@ def generate_ai_plays():
     if df.empty:
         return pd.DataFrame(columns=empty_cols)
 
+    df["watch_tier"] = df.apply(
+        lambda r: classify_watch_tier(r) if str(r["status"]) == "Watch" else "",
+        axis=1,
+    )
+
     df["tier"] = df["true_confidence"].apply(tier_from_true_conf)
     df["quality_label"] = df["tier"].apply(quality_label_from_tier)
+
+    df["units"] = df.apply(
+        lambda r: scale_single_units(r) if str(r["status"]) == "Active" else scale_watch_units(r),
+        axis=1,
+    )
 
     df["play_id"] = df.apply(
         lambda r: build_play_id(
@@ -773,54 +795,45 @@ def generate_ai_plays():
 
     active_rows = []
     running_units = 0.0
-    active_ids = set()
 
     for _, row in active_local.iterrows():
         proposed_units = float(row["units"])
 
         if len(active_rows) >= MAX_ACTIVE_PLAYS:
+            row2 = row.copy()
+            row2["status"] = "Watch"
+            row2["watch_tier"] = classify_watch_tier(row2)
+            row2["units"] = scale_watch_units(row2)
+            watch_local = pd.concat([watch_local, pd.DataFrame([row2])], ignore_index=True)
             continue
 
         if running_units + proposed_units > MAX_TOTAL_UNITS:
+            row2 = row.copy()
+            row2["status"] = "Watch"
+            row2["watch_tier"] = classify_watch_tier(row2)
+            row2["units"] = scale_watch_units(row2)
+            watch_local = pd.concat([watch_local, pd.DataFrame([row2])], ignore_index=True)
             continue
 
-        row2 = row.copy()
-        row2["units"] = round(clamp(row2["units"], 0.90, 1.25), 2)
-        active_rows.append(row2)
-        running_units += float(row2["units"])
-        active_ids.add(row2["play_id"])
+        active_rows.append(row)
+        running_units += proposed_units
 
     active_final = pd.DataFrame(active_rows) if active_rows else pd.DataFrame(columns=df.columns)
 
     if not watch_local.empty:
-        watch_local = watch_local[~watch_local["play_id"].isin(active_ids)].copy()
-        watch_local["units"] = watch_local["units"].apply(lambda x: round(clamp(float(x) * 0.60, 0.30, 0.75), 2))
-
-        # remove anything that still looks too "active"
-        watch_local = watch_local[
-            ~(
-                (watch_local["true_confidence"] >= 75.0)
-                & (watch_local["edge"] >= 4.00)
-                & (watch_local["books_seen"] >= 3)
-                & (watch_local["consensus"].isin(["Strong", "Fair"]))
-            )
-        ].copy()
-
-        watch_local = (
-            watch_local
-            .sort_values(["rank_score", "true_confidence"], ascending=False)
-            .head(WATCHLIST_LIMIT)
-        )
+        watch_priority = {"Near Active": 3, "Monitor": 2, "Weak Watch": 1}
+        watch_local["watch_priority"] = watch_local["watch_tier"].map(watch_priority).fillna(0)
+        watch_local = watch_local.sort_values(
+            ["watch_priority", "rank_score", "true_confidence"],
+            ascending=[False, False, False]
+        ).drop(columns=["watch_priority"], errors="ignore")
 
     combined = pd.concat([active_final, watch_local], ignore_index=True)
 
     if combined.empty:
         return pd.DataFrame(columns=empty_cols)
 
-    return combined.sort_values(
-        ["status", "rank_score"],
-        ascending=[True, False]
-    ).reset_index(drop=True)
+    return combined.sort_values(["status", "rank_score"], ascending=[True, False]).reset_index(drop=True)
 # =========================================================
 # PARLAY INTELLIGENCE
 # =========================================================
@@ -1059,12 +1072,30 @@ def auto_log_active_plays(df):
 # =========================================================
 def render_play_card(row: pd.Series, show_best_badge: bool = False):
     badge_bg, badge_fg = tier_colors(row["tier"])
-    status_bg = "#f59e0b" if str(row["status"]) == "Active" else "#64748b"
-    status_fg = "#111827" if str(row["status"]) == "Active" else "#f8fafc"
+    is_active_play = str(row["status"]) == "Active"
+    status_bg = "#f59e0b" if is_active_play else "#64748b"
+    status_fg = "#111827" if is_active_play else "#f8fafc"
     best_display = "inline-flex" if show_best_badge else "none"
 
     fill_width, fill_color, conf_label = confidence_fill_and_color(row["true_confidence"])
     edge_color = "#4ade80" if float(row["edge"]) >= 4 else "#fbbf24"
+
+    watch_tier = str(row.get("watch_tier", "")).strip()
+    watch_display = "none"
+    watch_bg = "#334155"
+    watch_fg = "#e2e8f0"
+
+    if not is_active_play and watch_tier:
+        watch_display = "inline-flex"
+        if watch_tier == "Near Active":
+            watch_bg = "#fef3c7"
+            watch_fg = "#92400e"
+        elif watch_tier == "Monitor":
+            watch_bg = "#dbeafe"
+            watch_fg = "#1d4ed8"
+        else:
+            watch_bg = "#e5e7eb"
+            watch_fg = "#374151"
 
     visible_tags = list(row["ai_tags"])[:3]
     tags_html = ""
@@ -1083,6 +1114,7 @@ def render_play_card(row: pd.Series, show_best_badge: bool = False):
         <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:7px;">
             <span style="background:{badge_bg};color:{badge_fg};padding:5px 9px;border-radius:999px;font-size:10px;font-weight:800;">Tier {row['tier']}</span>
             <span style="background:{status_bg};color:{status_fg};padding:5px 9px;border-radius:999px;font-size:10px;font-weight:800;">{row['status']}</span>
+            <span style="background:{watch_bg};color:{watch_fg};padding:5px 9px;border-radius:999px;font-size:10px;font-weight:800;display:{watch_display};">{watch_tier}</span>
             <span style="background:#efe2ff;color:#6b21a8;padding:4px 8px;border-radius:999px;font-size:9px;font-weight:800;display:{best_display};">🏆 Best Bet</span>
         </div>
 
@@ -1113,7 +1145,6 @@ def render_play_card(row: pd.Series, show_best_badge: bool = False):
     """
 
     components.html(html, height=285 if is_mobile() else 340, scrolling=False)
-
 
 # =========================================================
 # PARLAY CARD RENDER
@@ -1183,9 +1214,23 @@ def render_parlay_table(candidates, title):
 
 def render_table_desktop(df: pd.DataFrame):
     cols = [
-        "tier", "quality_label", "status", "game", "market", "selection",
-        "odds", "edge", "score", "units", "confidence", "true_confidence",
-        "books_seen", "best_price", "consensus", "price_edge"
+        "tier",
+        "quality_label",
+        "status",
+        "watch_tier",
+        "game",
+        "market",
+        "selection",
+        "odds",
+        "edge",
+        "score",
+        "units",
+        "confidence",
+        "true_confidence",
+        "books_seen",
+        "best_price",
+        "consensus",
+        "price_edge",
     ]
     existing_cols = [c for c in cols if c in df.columns]
     st.dataframe(df[existing_cols], use_container_width=True, hide_index=True)

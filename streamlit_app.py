@@ -59,6 +59,23 @@ PARLAY_UNIT_FALLBACK_3 = 0.20
 TEST_DAILY_UNIT_CAP = 3.50
 
 # =========================================================
+# V31.9.2 LIVE PLAYER PROPS SETTINGS
+# =========================================================
+ENABLE_PLAYER_PROPS = True
+PROPS_ONLY_STARTERS = False
+
+PROP_TYPES = [
+    "points",
+    "rebounds",
+    "assists",
+    "pra",
+    "threes",
+]
+
+PROP_ODDS_RANGE = (-200, 150)
+MAX_PROP_PLAYS_PER_GAME = 4
+
+# =========================================================
 # HELPERS
 # =========================================================
 def clamp(value, low, high):

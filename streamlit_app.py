@@ -1080,7 +1080,7 @@ def render_play_card(row: pd.Series, show_best_badge: bool = False):
     fill_width, fill_color, conf_label = confidence_fill_and_color(row["true_confidence"])
     edge_color = "#4ade80" if float(row["edge"]) >= 4 else "#fbbf24"
 
-    watch_tier = str(row.get("watch_tier", "")).strip()
+    watch_tier = row["watch_tier"] if "watch_tier" in row and pd.notna(row["watch_tier"]) else ""
     watch_display = "none"
     watch_bg = "#334155"
     watch_fg = "#e2e8f0"

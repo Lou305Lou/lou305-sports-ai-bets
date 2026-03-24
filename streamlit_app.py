@@ -782,22 +782,15 @@ def calculate_correlation_score(legs):
         for j in range(i + 1, len(legs)):
             a = legs[i]
             b = legs[j]
+
             same_game = a.get("game") == b.get("game")
             market_a = market_family(a.get("market"))
             market_b = market_family(b.get("market"))
-            sel_a = str(a.get("selection", "")).lower()
-            sel_b = str(b.get("selection", "")).lower()
 
             if same_game:
-                if {market_a, market_b} == {"spread", "total"}:
-                    if ("under" in sel_a) or ("under" in sel_b):
-                        score += 1.5
-                    elif ("over" in sel_a) or ("over" in sel_b):
-                        score -= 2.0
-                elif {market_a, market_b} == {"moneyline", "total"}:
-                    score += 0.25
-                elif market_a == market_b:
-                    score -= 1.0
+                score -= 1.0
+                if market_a == market_b:
+                    score -= 0.5
             else:
                 score += 0.5
     return score
@@ -807,23 +800,14 @@ def selections_conflict(row_a, row_b):
     if row_a["game"] != row_b["game"]:
         return False
 
-    fam_a = market_family(row_a["market"])
-    fam_b = market_family(row_b["market"])
     sel_a = str(row_a["selection"]).lower()
     sel_b = str(row_b["selection"]).lower()
 
-    if fam_a == fam_b and row_a["selection"] != row_b["selection"]:
+    if row_a["market"] == row_b["market"] and row_a["selection"] != row_b["selection"]:
         return True
-    if "over" in sel_a and "under" in sel_b:
-        return True
-    if "under" in sel_a and "over" in sel_b:
+    if ("over" in sel_a and "under" in sel_b) or ("under" in sel_a and "over" in sel_b):
         return True
 
-    teams = [t.strip().lower() for t in str(row_a["game"]).split("vs")]
-    if len(teams) == 2:
-        t1, t2 = teams[0], teams[1]
-        if (t1 in sel_a and t2 in sel_b) or (t2 in sel_a and t1 in sel_b):
-            return True
     return False
 
 
@@ -835,19 +819,8 @@ def pair_correlation_penalty(row_a, row_b):
         return 1.0, ["conflicting legs"]
 
     if row_a["game"] == row_b["game"]:
-        penalty += 0.18
+        penalty += 0.22
         reasons.append("same-game correlation")
-
-        fam_a = market_family(row_a["market"])
-        fam_b = market_family(row_b["market"])
-
-        if fam_a == fam_b:
-            penalty += 0.12
-            reasons.append("same-market overlap")
-
-        if {fam_a, fam_b} == {"moneyline", "spread"}:
-            penalty += 0.08
-            reasons.append("side correlation")
 
     return clamp(penalty, 0.0, 1.0), reasons
 
@@ -855,18 +828,13 @@ def pair_correlation_penalty(row_a, row_b):
 def score_parlay_combo(combo):
     total_penalty = 0.0
     penalty_reasons = []
-    valid = True
 
     for a, b in combinations(combo, 2):
         penalty, reasons = pair_correlation_penalty(a, b)
         if penalty >= 1.0:
-            valid = False
-            break
+            return None
         total_penalty += penalty
         penalty_reasons.extend(reasons)
-
-    if not valid:
-        return None
 
     decimal_odds = 1.0
     for leg in combo:
@@ -882,26 +850,23 @@ def score_parlay_combo(combo):
     avg_true_conf = sum(float(leg["true_confidence"]) for leg in combo) / len(combo)
     avg_edge = sum(float(leg["edge"]) for leg in combo) / len(combo)
     avg_books = sum(float(leg["books_seen"]) for leg in combo) / len(combo)
-    avg_price_edge = sum(float(leg["price_edge"]) for leg in combo) / len(combo)
 
     distinct_games = len(set(leg["game"] for leg in combo))
     cross_game = distinct_games == len(combo)
-    game_diversity_bonus = 0.12 if cross_game else 0.02
-
-    raw_score = (
-        avg_true_conf * 0.55
-        + avg_edge * 6.0
-        + avg_price_edge * 4.0
-        + avg_books * 1.2
-        + (game_diversity_bonus * 100)
-    )
     correlation_score = calculate_correlation_score(list(combo))
-    conservative_score = raw_score - (total_penalty * 30) + (correlation_score * 5)
-    fallback_score = (raw_score * (1 - total_penalty)) + (correlation_score * 5)
 
-    if total_penalty <= 0.08 and avg_true_conf >= 64:
+    score = (
+        avg_true_conf * 0.65
+        + avg_edge * 7.0
+        + avg_books * 1.5
+        + (4 if cross_game else -6)
+        - (total_penalty * 35)
+        + (correlation_score * 4)
+    )
+
+    if total_penalty <= 0.10 and avg_true_conf >= 74:
         risk_label = "Low"
-    elif total_penalty <= 0.22 and avg_true_conf >= 58:
+    elif total_penalty <= 0.20 and avg_true_conf >= 70:
         risk_label = "Moderate"
     else:
         risk_label = "Elevated"
@@ -909,20 +874,13 @@ def score_parlay_combo(combo):
     reasons = []
     if cross_game:
         reasons.append("cross-game diversification")
-    else:
-        reasons.append("same-game correlation adjusted")
-    if correlation_score > 1:
-        reasons.append("positive correlation")
-    elif correlation_score < -1:
-        reasons.append("conflict risk")
-    if avg_true_conf >= 62:
-        reasons.append("high true confidence")
-    elif avg_true_conf >= 57:
-        reasons.append("solid true confidence")
+    if avg_true_conf >= 72:
+        reasons.append("strong true confidence")
+    if avg_edge >= 4.2:
+        reasons.append("sharp average edge")
     if avg_books >= 3:
         reasons.append("broad book support")
-    if avg_price_edge >= 1.2:
-        reasons.append("price support")
+    reasons.extend(penalty_reasons)
 
     return {
         "legs": list(combo),
@@ -932,16 +890,13 @@ def score_parlay_combo(combo):
         "avg_true_conf": round(avg_true_conf, 1),
         "avg_edge": round(avg_edge, 2),
         "avg_books": round(avg_books, 2),
-        "avg_price_edge": round(avg_price_edge, 2),
         "total_penalty": round(total_penalty, 3),
         "cross_game": cross_game,
         "correlation_score": round(correlation_score, 2),
-        "conservative_score": round(conservative_score, 1),
-        "fallback_score": round(fallback_score, 1),
-        "score": round(fallback_score, 1),
-        "display_score": round(fallback_score, 1),
+        "score": round(score, 1),
+        "display_score": round(score, 1),
         "risk_label": risk_label,
-        "reasons": (reasons + penalty_reasons)[:6],
+        "reasons": reasons[:6],
     }
 
 
@@ -954,6 +909,13 @@ def build_all_parlay_candidates(active_df):
 
     for leg_count in range(MIN_PARLAY_LEGS, min(MAX_PARLAY_LEGS, len(rows)) + 1):
         for combo in combinations(rows, leg_count):
+            if any(float(leg["edge"]) < 4.0 for leg in combo):
+                continue
+            if any(float(leg["true_confidence"]) < 70.0 for leg in combo):
+                continue
+            if any(int(leg["books_seen"]) < 3 for leg in combo):
+                continue
+
             scored = score_parlay_combo(combo)
             if scored is not None:
                 candidates.append(scored)
@@ -973,42 +935,23 @@ def classify_parlay_candidates(candidates):
             and c["correlation_score"] >= 0
         )
         fallback_ok = (
-            c["total_penalty"] <= (FALLBACK_PARLAY_MAX_PENALTY + 0.08)
-            and c["combined_odds_int"] >= (MIN_PARLAY_ODDS + 40)
-            and c["avg_true_conf"] >= 55
+            c["avg_true_conf"] >= 68
+            and c["total_penalty"] <= FALLBACK_PARLAY_MAX_PENALTY
+            and c["combined_odds_int"] >= MIN_PARLAY_ODDS
         )
 
         if sharp_ok:
-            sharp_copy = c.copy()
-            sharp_copy["approval_type"] = "Sharp Approved"
-            sharp_copy["display_score"] = sharp_copy["conservative_score"]
-            sharp_copy["score"] = sharp_copy["conservative_score"]
-            sharp_candidates.append(sharp_copy)
+            c1 = c.copy()
+            c1["approval_type"] = "Sharp Approved"
+            sharp_candidates.append(c1)
 
         if fallback_ok:
-            fallback_copy = c.copy()
-            fallback_copy["approval_type"] = "Balanced Fallback"
-            fallback_copy["display_score"] = fallback_copy["fallback_score"]
-            fallback_copy["score"] = fallback_copy["fallback_score"]
-            fallback_candidates.append(fallback_copy)
+            c2 = c.copy()
+            c2["approval_type"] = "Balanced Fallback"
+            fallback_candidates.append(c2)
 
-    sharp_candidates.sort(
-        key=lambda x: (
-            x["conservative_score"],
-            x["avg_true_conf"],
-            x["combined_odds_int"],
-        ),
-        reverse=True,
-    )
-    fallback_candidates.sort(
-        key=lambda x: (
-            x["fallback_score"],
-            x["avg_true_conf"],
-            x["combined_odds_int"],
-        ),
-        reverse=True,
-    )
-
+    sharp_candidates.sort(key=lambda x: (x["score"], x["avg_true_conf"]), reverse=True)
+    fallback_candidates.sort(key=lambda x: (x["score"], x["avg_true_conf"]), reverse=True)
     return sharp_candidates, fallback_candidates
 
 
@@ -1016,23 +959,10 @@ def choose_best_parlay(active_df):
     all_candidates = build_all_parlay_candidates(active_df)
     sharp_candidates, fallback_candidates = classify_parlay_candidates(all_candidates)
 
-    sharp_best = sharp_candidates[0] if sharp_candidates else None
-    fallback_best = fallback_candidates[0] if fallback_candidates else None
-
-    if sharp_best is not None:
-        chosen = sharp_best.copy()
-        chosen["approval_type"] = "Sharp Approved"
-        chosen["display_score"] = chosen["conservative_score"]
-        chosen["score"] = chosen["conservative_score"]
-        return chosen, sharp_candidates, fallback_candidates
-
-    if fallback_best is not None:
-        chosen = fallback_best.copy()
-        chosen["approval_type"] = "Balanced Fallback"
-        chosen["display_score"] = chosen["fallback_score"]
-        chosen["score"] = chosen["fallback_score"]
-        return chosen, sharp_candidates, fallback_candidates
-
+    if sharp_candidates:
+        return sharp_candidates[0], sharp_candidates, fallback_candidates
+    if fallback_candidates:
+        return fallback_candidates[0], sharp_candidates, fallback_candidates
     return None, sharp_candidates, fallback_candidates
 
 
@@ -1084,8 +1014,9 @@ def render_play_card(row: pd.Series, show_best_badge: bool = False):
     status_bg = "#f59e0b" if str(row["status"]) == "Active" else "#64748b"
     status_fg = "#111827" if str(row["status"]) == "Active" else "#f8fafc"
     best_display = "inline-flex" if show_best_badge else "none"
-    fill_width, fill_color = confidence_fill_and_color(row["confidence"])
-    edge_color = "#4ade80" if float(row["edge"]) >= 2 else "#fbbf24"
+
+    fill_width, fill_color, conf_label = confidence_fill_and_color(row["true_confidence"])
+    edge_color = "#4ade80" if float(row["edge"]) >= 4 else "#fbbf24"
 
     visible_tags = list(row["ai_tags"])[:3]
     tags_html = ""
@@ -1094,21 +1025,6 @@ def render_play_card(row: pd.Series, show_best_badge: bool = False):
         <span style="background:#1e2638;color:#d8e0ec;border:1px solid #2a3448;border-radius:999px;
         padding:3px 7px;font-size:10px;line-height:1;display:inline-block;margin-right:5px;margin-bottom:4px;white-space:nowrap;">{tag}</span>
         """
-
-    true_conf = row.get("true_confidence", None)
-    quality_label = row.get("quality_label", "")
-
-    tc_html = (
-        f'<div><div style="color:#91a0b7;font-size:10px;margin-bottom:1px;">True Conf</div>'
-        f'<div style="color:#f8fafc;font-size:14px;font-weight:700;">{true_conf:.1f}</div></div>'
-        if true_conf is not None else ""
-    )
-
-    ql_html = (
-        f'<div><div style="color:#91a0b7;font-size:10px;margin-bottom:1px;">Quality</div>'
-        f'<div style="color:#f8fafc;font-size:14px;font-weight:700;">{quality_label}</div></div>'
-        if quality_label else ""
-    )
 
     html = f"""
     <html><head><meta name="viewport" content="width=device-width, initial-scale=1" /></head>
@@ -1132,13 +1048,13 @@ def render_play_card(row: pd.Series, show_best_badge: bool = False):
             <div><div style="color:#91a0b7;font-size:10px;">Units</div><div style="font-weight:700;">{row['units']:.2f}u</div></div>
             <div><div style="color:#91a0b7;font-size:10px;">Consensus</div><div style="font-weight:700;">{row['consensus']}</div></div>
             <div><div style="color:#91a0b7;font-size:10px;">Books</div><div style="font-weight:700;">{row['books_seen']}</div></div>
-            {tc_html}
-            {ql_html}
+            <div><div style="color:#91a0b7;font-size:10px;">True Conf</div><div style="font-weight:700;">{row['true_confidence']:.1f}</div></div>
+            <div><div style="color:#91a0b7;font-size:10px;">Quality</div><div style="font-weight:700;">{row['quality_label']}</div></div>
         </div>
 
         <div style="height:1px;background:#283550;margin:6px 0;"></div>
 
-        <div style="color:#91a0b7;font-size:10px;">Confidence • {row['confidence']}</div>
+        <div style="color:#91a0b7;font-size:10px;">Confidence • {conf_label}</div>
         <div style="width:100%;height:5px;background:#24324b;border-radius:999px;">
             <div style="width:{fill_width};height:5px;background:{fill_color};border-radius:999px;"></div>
         </div>
@@ -1173,6 +1089,7 @@ def render_parlay_card(parlay):
             <div style="font-size:12px;color:#cbd5e1;">
                 {leg['game']} • {prop_market_label(leg['market']) if is_prop_market(leg['market']) else "Team Market"} • {leg['odds']}
             </div>
+        </div>
         """
 
     html = f"""
@@ -1194,7 +1111,7 @@ def render_parlay_card(parlay):
 # =========================================================
 # TABLE RENDER HELPERS
 # =========================================================
-def render_parlay_table(candidates, score_key, title):
+def render_parlay_table(candidates, title):
     st.markdown(f"**{title}**")
 
     if not candidates:
@@ -1203,14 +1120,12 @@ def render_parlay_table(candidates, score_key, title):
 
     rows = []
     for p in candidates[:5]:
-        score_value = p.get(score_key) or p.get("display_score") or p.get("score")
-
         rows.append(
             {
                 "Legs": p.get("leg_count"),
                 "Odds": p.get("combined_odds"),
                 "Avg Conf": round(p.get("avg_true_conf", 0), 1),
-                "Score": round(score_value, 1) if isinstance(score_value, (int, float)) else "—",
+                "Score": round(p.get("display_score", p.get("score", 0)), 1),
                 "Risk": p.get("risk_label"),
             }
         )
@@ -1220,24 +1135,10 @@ def render_parlay_table(candidates, score_key, title):
 
 def render_table_desktop(df: pd.DataFrame):
     cols = [
-        "tier",
-        "quality_label",
-        "status",
-        "game",
-        "market",
-        "selection",
-        "odds",
-        "edge",
-        "score",
-        "units",
-        "confidence",
-        "true_confidence",
-        "books_seen",
-        "best_price",
-        "consensus",
-        "price_edge",
+        "tier", "quality_label", "status", "game", "market", "selection",
+        "odds", "edge", "score", "units", "confidence", "true_confidence",
+        "books_seen", "best_price", "consensus", "price_edge"
     ]
-
     existing_cols = [c for c in cols if c in df.columns]
     st.dataframe(df[existing_cols], use_container_width=True, hide_index=True)
 
@@ -1255,16 +1156,13 @@ def render_mobile_or_table(df: pd.DataFrame, best_first: bool = False):
 
 
 # =========================================================
-# V31.9 SMART UNIT SCALING + TEST TRACKING LAYER
+# PORTFOLIO LAYER
 # =========================================================
 def build_ai_portfolio(best_single, chosen_parlay, parlay_candidates):
     portfolio = []
     used_keys = set()
     running_units = 0.0
 
-    # -----------------------
-    # Core Single
-    # -----------------------
     if best_single is not None:
         units = scale_single_units(best_single)
         key = f"single::{best_single.get('play_id', best_single.get('selection', ''))}"
@@ -1281,14 +1179,9 @@ def build_ai_portfolio(best_single, chosen_parlay, parlay_candidates):
             used_keys.add(key)
             running_units += units
 
-    # -----------------------
-    # Main Parlay
-    # -----------------------
     if chosen_parlay is not None:
         units = scale_parlay_units(chosen_parlay)
-        key = "parlay::" + "|".join(
-            [leg.get("selection", "") for leg in chosen_parlay.get("legs", [])]
-        )
+        key = "parlay::" + "|".join([leg.get("selection", "") for leg in chosen_parlay.get("legs", [])])
 
         if key not in used_keys and running_units + units <= TEST_DAILY_UNIT_CAP:
             portfolio.append(
@@ -1297,56 +1190,6 @@ def build_ai_portfolio(best_single, chosen_parlay, parlay_candidates):
                     "label": chosen_parlay.get("approval_type", "Primary"),
                     "units": units,
                     "data": chosen_parlay,
-                }
-            )
-            used_keys.add(key)
-            running_units += units
-
-    # -----------------------
-    # Fallback 2-Leg
-    # -----------------------
-    fallback_2 = [
-        c for c in parlay_candidates
-        if c.get("leg_count") == 2 and c.get("approval_type") == "Balanced Fallback"
-    ]
-
-    if fallback_2:
-        p = fallback_2[0]
-        units = scale_parlay_units(p)
-        key = "parlay::" + "|".join([leg.get("selection", "") for leg in p.get("legs", [])])
-
-        if key not in used_keys and running_units + units <= TEST_DAILY_UNIT_CAP:
-            portfolio.append(
-                {
-                    "type": "Parlay",
-                    "label": "Fallback 2-Leg",
-                    "units": units,
-                    "data": p,
-                }
-            )
-            used_keys.add(key)
-            running_units += units
-
-    # -----------------------
-    # Fallback 3-Leg
-    # -----------------------
-    fallback_3 = [
-        c for c in parlay_candidates
-        if c.get("leg_count") == 3 and c.get("approval_type") == "Balanced Fallback"
-    ]
-
-    if fallback_3:
-        p = fallback_3[0]
-        units = scale_parlay_units(p)
-        key = "parlay::" + "|".join([leg.get("selection", "") for leg in p.get("legs", [])])
-
-        if key not in used_keys and running_units + units <= TEST_DAILY_UNIT_CAP:
-            portfolio.append(
-                {
-                    "type": "Parlay",
-                    "label": "Fallback 3-Leg",
-                    "units": units,
-                    "data": p,
                 }
             )
             used_keys.add(key)
@@ -1721,10 +1564,6 @@ h1, h2, h3 {
     margin-bottom: 10px;
     font-weight: 700;
 }
-.small-muted {
-    color: #6b7280;
-    font-size: 0.84rem;
-}
 </style>
 """,
     unsafe_allow_html=True,
@@ -1733,8 +1572,8 @@ h1, h2, h3 {
 # =========================================================
 # HEADER
 # =========================================================
-st.title("🔥 Sports Betting AI Dashboard V31.9.1")
-st.caption("Live Slate Fix • Smart Unit Scaling + Test Tracking Layer • Auto Bet Log")
+st.title("🔥 Sports Betting AI Dashboard V33.1")
+st.caption("Real Player Fix • Smart Filter Engine • True Confidence Cleanup • Top Plays Cap")
 
 if auto_logged_count > 0:
     st.markdown(
@@ -1786,33 +1625,37 @@ st.markdown("</div>", unsafe_allow_html=True)
 # =========================================================
 if nav == "Top Plays":
     st.header("🎯 Top Plays")
-    st.caption("Live slate driven plays.")
+    st.caption("Up to 10 qualified plays only. No filler.")
 
     if not today_games:
         st.warning("Enter today's real games in the sidebar to generate plays.")
     else:
-        top_df = active_df.sort_values(
-            ["rank_score", "true_confidence"],
-            ascending=False
-        ).reset_index(drop=True)
+        top_df = (
+            active_df.sort_values(["rank_score", "true_confidence"], ascending=False)
+            .head(TOP_PLAYS_LIMIT)
+            .reset_index(drop=True)
+        )
 
-        render_mobile_or_table(top_df, best_first=True)
-
+        if top_df.empty:
+            st.info("No plays met the active criteria for this slate.")
+        else:
+            render_mobile_or_table(top_df, best_first=True)
 
 # =========================================================
 # WATCHLIST
 # =========================================================
 elif nav == "Watchlist":
     st.header("👀 Watchlist")
-    st.caption("Downgraded or near-qualified plays.")
+    st.caption("Near-qualified plays only.")
 
     if not today_games:
         st.warning("Enter today's real games in the sidebar to generate plays.")
     else:
-        wl_df = watch_df.sort_values(
-            ["rank_score", "true_confidence"],
-            ascending=False
-        ).reset_index(drop=True)
+        wl_df = (
+            watch_df.sort_values(["rank_score", "true_confidence"], ascending=False)
+            .head(WATCHLIST_LIMIT)
+            .reset_index(drop=True)
+        )
 
         render_mobile_or_table(wl_df)
 
@@ -1827,12 +1670,8 @@ elif nav == "AI Slip":
     else:
         st.warning("No live slate entered.")
 
-    # -----------------------
-    # SINGLE
-    # -----------------------
     if best_row is not None:
-        slip_type = "Single best bet"
-        risk_level = "Low" if float(best_row["units"]) <= 0.50 else "Moderate"
+        risk_level = "Low" if float(best_row["units"]) <= 0.60 else "Moderate"
 
         st.markdown(
             f"""
@@ -1844,7 +1683,7 @@ elif nav == "AI Slip":
                 <div class="slip-meta"><strong>True Confidence:</strong> {best_row['true_confidence']:.1f}</div>
                 <div class="slip-meta"><strong>Quality Label:</strong> {best_row['quality_label']}</div>
                 <div class="slip-meta"><strong>Odds:</strong> {best_row['odds']}</div>
-                <div class="slip-meta"><strong>Type:</strong> {slip_type}</div>
+                <div class="slip-meta"><strong>Type:</strong> Single best bet</div>
                 <div class="slip-meta"><strong>Risk Level:</strong> {risk_level}</div>
             </div>
             """,
@@ -1855,9 +1694,6 @@ elif nav == "AI Slip":
     else:
         st.info("No active AI single available.")
 
-    # -----------------------
-    # PARLAY
-    # -----------------------
     st.subheader("🎯 AI Parlay Intelligence")
 
     if best_parlay is None:
@@ -1866,12 +1702,9 @@ elif nav == "AI Slip":
         render_parlay_card(best_parlay)
 
     with st.expander("Show top parlay candidates", expanded=False):
-        render_parlay_table(sharp_candidates, "display_score", "Sharp Approved")
-        render_parlay_table(fallback_candidates, "display_score", "Fallback")
+        render_parlay_table(sharp_candidates, "Sharp Approved")
+        render_parlay_table(fallback_candidates, "Fallback")
 
-    # -----------------------
-    # PORTFOLIO
-    # -----------------------
     st.subheader("🧠 AI Portfolio Allocation")
 
     if not portfolio:
@@ -1916,7 +1749,6 @@ elif nav == "Bet Log":
     else:
         log_df = pd.DataFrame(st.session_state["bet_log"]).copy()
 
-        # Apply saved results
         for idx in log_df.index:
             pid = log_df.loc[idx, "play_id"]
             if pid in st.session_state["manual_results"]:
@@ -1930,17 +1762,11 @@ elif nav == "Bet Log":
 
         st.dataframe(log_df, use_container_width=True, hide_index=True)
 
-        # -------- Result Input --------
         st.subheader("Update Results")
 
-        options = [
-            f"{r['selection']} | {r['game']} | {r['play_id']}"
-            for _, r in log_df.iterrows()
-        ]
-
+        options = [f"{r['selection']} | {r['game']} | {r['play_id']}" for _, r in log_df.iterrows()]
         selected = st.selectbox("Select Bet", options)
         selected_id = selected.split(" | ")[-1]
-
         result_choice = st.selectbox("Result", ["Pending", "Win", "Loss", "Push"])
 
         if st.button("Save Result"):
@@ -1948,7 +1774,6 @@ elif nav == "Bet Log":
             st.success("Updated.")
             st.rerun()
 
-    # -------- Manual Entry --------
     st.markdown('<div class="bet-form-wrap">', unsafe_allow_html=True)
 
     with st.form("manual_bet", clear_on_submit=True):
@@ -1956,13 +1781,13 @@ elif nav == "Bet Log":
 
         with c1:
             game = st.text_input("Game")
-            market = st.selectbox("Market", ["moneyline", "spread", "total"])
+            market = st.selectbox("Market", ["moneyline", "spread", "total", "prop_points", "prop_rebounds", "prop_assists", "prop_pra"])
             units = st.number_input("Units", 0.0, 10.0, 0.5)
 
         with c2:
             selection = st.text_input("Selection")
             odds = st.text_input("Odds")
-            confidence = st.selectbox("Confidence", ["Medium", "High", "Elite"])
+            confidence = st.selectbox("Confidence", ["Low", "Medium", "High", "Elite"])
 
         submit = st.form_submit_button("Add Bet")
 
@@ -1993,14 +1818,13 @@ with st.expander("⚙️ Adaptive Settings", expanded=False):
     c1, c2 = st.columns(2)
 
     with c1:
-        st.write(f"Min Edge: {MIN_ACTIVE_EDGE}")
-        st.write(f"Primary Quality: {QUALITY_ACTIVE_PRIMARY}")
-        st.write(f"Secondary Quality: {QUALITY_ACTIVE_SECONDARY}")
-        st.write(f"Sharp Parlay Conf: {SHARP_PARLAY_MIN_TRUE_CONF}")
+        st.write(f"Min Active Edge: {MIN_ACTIVE_EDGE}")
+        st.write(f"Min Watch Edge: {MIN_WATCH_EDGE}")
+        st.write(f"Min Active True Conf: {MIN_ACTIVE_TRUE_CONF}")
+        st.write(f"Min Active Books: {MIN_ACTIVE_BOOKS}")
 
     with c2:
-        st.write(f"Max Plays: {MAX_ACTIVE_PLAYS}")
-        st.write(f"Max Units: {MAX_TOTAL_UNITS}")
+        st.write(f"Max Top Plays: {TOP_PLAYS_LIMIT}")
+        st.write(f"Max Active Plays: {MAX_ACTIVE_PLAYS}")
+        st.write(f"Max Total Units: {MAX_TOTAL_UNITS}")
         st.write(f"Min Parlay Odds: +{MIN_PARLAY_ODDS}")
-
-

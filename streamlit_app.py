@@ -224,7 +224,6 @@ def scale_single_units(row):
     return round(clamp(base, SINGLE_UNIT_MIN, SINGLE_UNIT_MAX), 2)
 
 
-# ✅ FIXED PARLAY + WATCH FUNCTIONS
 def scale_parlay_units(parlay):
     if not parlay:
         return 0.0
@@ -279,6 +278,124 @@ def classify_watch_tier(row):
     if tc >= 62 and edge >= 3.4 and books >= 3:
         return "Monitor"
     return "Weak Watch"
+
+
+def normalize_team_name(team_name: str):
+    team_name = str(team_name).strip()
+    alias_map = {
+        "ATL": "Hawks",
+        "BOS": "Celtics",
+        "BKN": "Nets",
+        "BRK": "Nets",
+        "CHA": "Hornets",
+        "CHI": "Bulls",
+        "CLE": "Cavaliers",
+        "DAL": "Mavericks",
+        "DEN": "Nuggets",
+        "DET": "Pistons",
+        "GSW": "Warriors",
+        "HOU": "Rockets",
+        "IND": "Pacers",
+        "LAC": "Clippers",
+        "LAL": "Lakers",
+        "MEM": "Grizzlies",
+        "MIA": "Heat",
+        "MIL": "Bucks",
+        "MIN": "Timberwolves",
+        "NOP": "Pelicans",
+        "NO": "Pelicans",
+        "NYK": "Knicks",
+        "OKC": "Thunder",
+        "ORL": "Magic",
+        "PHI": "76ers",
+        "PHX": "Suns",
+        "PHO": "Suns",
+        "POR": "Trail Blazers",
+        "SAC": "Kings",
+        "SAS": "Spurs",
+        "SA": "Spurs",
+        "TOR": "Raptors",
+        "UTA": "Jazz",
+        "UTH": "Jazz",
+        "WAS": "Wizards",
+    }
+    return alias_map.get(team_name.upper(), team_name)
+
+
+def team_names_from_game(game: str):
+    parts = str(game).split(" vs ")
+    if len(parts) == 2:
+        return normalize_team_name(parts[0]), normalize_team_name(parts[1])
+    return "Away", "Home"
+
+
+def starter_pool_for_team(team_name: str):
+    normalized = normalize_team_name(team_name)
+
+    starters_map = {
+        "Knicks": ["Jalen Brunson", "Donte DiVincenzo", "Josh Hart", "OG Anunoby", "Julius Randle"],
+        "Pelicans": ["CJ McCollum", "Brandon Ingram", "Herb Jones", "Zion Williamson", "Jonas Valanciunas"],
+        "Magic": ["Jalen Suggs", "Franz Wagner", "Paolo Banchero", "Jonathan Isaac", "Wendell Carter Jr."],
+        "Cavaliers": ["Darius Garland", "Donovan Mitchell", "Max Strus", "Evan Mobley", "Jarrett Allen"],
+        "Nuggets": ["Jamal Murray", "Kentavious Caldwell-Pope", "Michael Porter Jr.", "Aaron Gordon", "Nikola Jokic"],
+        "Suns": ["Bradley Beal", "Devin Booker", "Grayson Allen", "Kevin Durant", "Jusuf Nurkic"],
+        "Spurs": ["Tre Jones", "Devin Vassell", "Keldon Johnson", "Jeremy Sochan", "Victor Wembanyama"],
+        "Hornets": ["LaMelo Ball", "Terry Rozier", "Brandon Miller", "Miles Bridges", "Mark Williams"],
+        "Lakers": ["D'Angelo Russell", "Austin Reaves", "LeBron James", "Rui Hachimura", "Anthony Davis"],
+        "Warriors": ["Stephen Curry", "Klay Thompson", "Andrew Wiggins", "Draymond Green", "Jonathan Kuminga"],
+        "Heat": ["Terry Rozier", "Tyler Herro", "Jimmy Butler", "Nikola Jovic", "Bam Adebayo"],
+        "Celtics": ["Jrue Holiday", "Derrick White", "Jaylen Brown", "Jayson Tatum", "Kristaps Porzingis"],
+    }
+
+    if normalized in starters_map:
+        return starters_map[normalized]
+
+    return [
+        f"{normalized} Starter 1",
+        f"{normalized} Starter 2",
+        f"{normalized} Starter 3",
+        f"{normalized} Starter 4",
+        f"{normalized} Starter 5",
+    ]
+
+
+def prop_line_for_type(prop_type: str):
+    default_lines = {
+        "points": [17.5, 19.5, 21.5, 23.5, 25.5, 27.5],
+        "rebounds": [5.5, 6.5, 7.5, 8.5, 9.5, 10.5],
+        "assists": [4.5, 5.5, 6.5, 7.5, 8.5],
+        "pra": [28.5, 31.5, 34.5, 37.5, 40.5],
+    }
+    return random.choice(default_lines.get(prop_type, [10.5, 12.5]))
+
+
+def build_prop_selection(player_name: str, prop_type: str):
+    line = prop_line_for_type(prop_type)
+    label_map = {
+        "points": "Points",
+        "rebounds": "Rebounds",
+        "assists": "Assists",
+        "pra": "PRA",
+    }
+    direction = random.choice(["Over", "Under"])
+    return f"{player_name} {direction} {line} {label_map.get(prop_type, prop_type.title())}"
+
+
+def is_prop_market(market: str):
+    return str(market).lower().startswith("prop_")
+
+
+def prop_market_label(market: str):
+    m = str(market).lower()
+    if m == "prop_points":
+        return "Player Props • Points"
+    if m == "prop_rebounds":
+        return "Player Props • Rebounds"
+    if m == "prop_assists":
+        return "Player Props • Assists"
+    if m == "prop_pra":
+        return "Player Props • PRA"
+    return str(market).replace("_", " ").title()
 
 
 # =========================================================

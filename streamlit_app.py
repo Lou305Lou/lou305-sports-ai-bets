@@ -1303,7 +1303,6 @@ def generate_ai_plays():
                 "price_edge": price_edge,
                 "ai_tags": [],
             }
-
             add_scored_row(row, ["API live odds", "moneyline", "best price"])
 
         for team_name in [away_team, home_team]:
@@ -1339,7 +1338,6 @@ def generate_ai_plays():
                 "price_edge": price_edge,
                 "ai_tags": [],
             }
-
             add_scored_row(row, ["API live odds", "spread", "best line"])
 
         for side in ["Over", "Under"]:
@@ -1373,7 +1371,6 @@ def generate_ai_plays():
                 "price_edge": price_edge,
                 "ai_tags": [],
             }
-
             add_scored_row(row, ["API live odds", "total", "best line"])
 
         build_prop_rows_for_game(game, away_team, home_team, bookmakers)

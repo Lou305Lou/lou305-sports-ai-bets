@@ -2118,7 +2118,7 @@ h1, h2, h3 {
 status_text, status_dot, status_bg, status_fg = api_status_label()
 
 st.title("🔥 Sports Betting AI Dashboard V33.4")
-st.caption("Manual Live Odds Refresh • API Status Badge • Fallback Polish • True Confidence Cleanup")
+st.caption("Manual Live Odds Refresh • API Status Badge • Cached Fallback • True Confidence Cleanup")
 
 st.markdown(
     f"""
@@ -2145,8 +2145,8 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-if status_text in ["KEY ERROR", "NO KEY", "LIMIT HIT", "OFFLINE"]:
-    st.info("Fallback mode is active. Team-market logic still runs cleanly, but live odds are unavailable until API access is restored.")
+if status_text in ["CACHED", "LIMIT HIT", "OFFLINE", "KEY ERROR", "NO KEY"]:
+    st.info("Fallback mode is active. The app will use cached odds when available so your team-market engine can still run.")
 
 if auto_logged_count > 0:
     st.markdown(

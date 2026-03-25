@@ -465,6 +465,44 @@ def starter_pool_for_team(team_name: str):
         f"{normalized} Starter 4",
         f"{normalized} Starter 5",
     ]
+def prop_line_for_type(prop_type: str):
+    default_lines = {
+        "points": [17.5, 19.5, 21.5, 23.5, 25.5, 27.5],
+        "rebounds": [5.5, 6.5, 7.5, 8.5, 9.5, 10.5],
+        "assists": [4.5, 5.5, 6.5, 7.5, 8.5],
+        "pra": [28.5, 31.5, 34.5, 37.5, 40.5],
+    }
+    return random.choice(default_lines.get(prop_type, [10.5, 12.5]))
+
+
+def build_prop_selection(player_name: str, prop_type: str):
+    line = prop_line_for_type(prop_type)
+    label_map = {
+        "points": "Points",
+        "rebounds": "Rebounds",
+        "assists": "Assists",
+        "pra": "PRA",
+    }
+    direction = random.choice(["Over", "Under"])
+    return f"{player_name} {direction} {line} {label_map.get(prop_type, prop_type.title())}"
+
+
+def is_prop_market(market: str):
+    return str(market).lower().startswith("prop_")
+
+
+def prop_market_label(market: str):
+    m = str(market).lower()
+    if m == "prop_points":
+        return "Player Props • Points"
+    if m == "prop_rebounds":
+        return "Player Props • Rebounds"
+    if m == "prop_assists":
+        return "Player Props • Assists"
+    if m == "prop_pra":
+        return "Player Props • PRA"
+    return str(market).replace("_", " ").title()
+
 # =========================================================
 # LIVE SLATE INPUT
 # =========================================================
@@ -677,7 +715,7 @@ def tier_from_true_conf(tc):
     return "C"
 
 
-=========================================================
+# =========================================================
 # DATA BUILD
 # =========================================================
 def generate_ai_plays():

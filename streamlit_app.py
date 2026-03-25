@@ -408,23 +408,26 @@ def prop_market_label(market: str):
 # =========================================================
 def parse_today_games(games_text: str):
     games = []
+
     for line in str(games_text).splitlines():
         cleaned = line.strip()
         if not cleaned:
             continue
 
-        if " vs " in cleaned:
-            parts = cleaned.split(" vs ")
-        elif " VS " in cleaned:
-            parts = cleaned.split(" VS ")
+        lowered = cleaned.lower()
+
+        if " vs " in lowered:
+            parts = lowered.split(" vs ")
+        elif " v " in lowered:
+            parts = lowered.split(" v ")
         else:
             continue
 
         if len(parts) != 2:
             continue
 
-        away = parts[0].strip()
-        home = parts[1].strip()
+        away = parts[0].strip().upper()
+        home = parts[1].strip().upper()
 
         if away and home:
             games.append(f"{away} vs {home}")

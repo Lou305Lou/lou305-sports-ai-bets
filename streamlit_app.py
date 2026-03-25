@@ -285,46 +285,47 @@ def classify_watch_tier(row):
     return "Weak Watch"
 
 
-def normalize_team_name(team_name: str):
-    team_name = str(team_name).strip()
-    alias_map = {
+# =========================================================
+# TEAM NORMALIZATION (FULL NBA COVERAGE)
+# =========================================================
+def normalize_team_name(abbrev: str):
+    mapping = {
+        # EAST
         "ATL": "Hawks",
         "BOS": "Celtics",
         "BKN": "Nets",
-        "BRK": "Nets",
         "CHA": "Hornets",
         "CHI": "Bulls",
         "CLE": "Cavaliers",
+        "DET": "Pistons",
+        "IND": "Pacers",
+        "MIA": "Heat",
+        "MIL": "Bucks",
+        "NYK": "Knicks",
+        "ORL": "Magic",
+        "PHI": "76ers",
+        "TOR": "Raptors",
+        "WAS": "Wizards",
+
+        # WEST
         "DAL": "Mavericks",
         "DEN": "Nuggets",
-        "DET": "Pistons",
         "GSW": "Warriors",
         "HOU": "Rockets",
-        "IND": "Pacers",
         "LAC": "Clippers",
         "LAL": "Lakers",
         "MEM": "Grizzlies",
-        "MIA": "Heat",
-        "MIL": "Bucks",
         "MIN": "Timberwolves",
         "NOP": "Pelicans",
-        "NO": "Pelicans",
-        "NYK": "Knicks",
         "OKC": "Thunder",
-        "ORL": "Magic",
-        "PHI": "76ers",
         "PHX": "Suns",
-        "PHO": "Suns",
         "POR": "Trail Blazers",
         "SAC": "Kings",
         "SAS": "Spurs",
-        "SA": "Spurs",
-        "TOR": "Raptors",
         "UTA": "Jazz",
-        "UTH": "Jazz",
-        "WAS": "Wizards",
     }
-    return alias_map.get(team_name.upper(), team_name)
+
+    return mapping.get(abbrev.upper(), abbrev.upper())
 
 
 def team_names_from_game(game: str):

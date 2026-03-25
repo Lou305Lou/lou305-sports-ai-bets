@@ -1196,18 +1196,21 @@ def generate_ai_plays():
         game_prop_count = 0
         players_seen = set()
 
-        for team_name in [away_team, home_team]:
-            if game_prop_count >= MAX_PROP_PLAYS_PER_GAME:
-                break
+        for player_name in player_pool:
+    if game_prop_count >= MAX_PROP_PLAYS_PER_GAME:
+        break
 
-            player_pool = starter_pool_for_team(team_name)
+    player_key = f"{game}::{player_name}"
+    if player_key in players_seen:
+        continue
 
-            player_plays_added = 0
-            for player_name in player_pool:
-                if game_prop_count >= MAX_PROP_PLAYS_PER_GAME:
-                    break
-                if player_plays_added >= len(player_pool):
-                    break
+    prop_type = random.choice(PROP_TYPES)
+    market_name = f"prop_{prop_type}"
+    selection = build_prop_selection(player_name, prop_type)
+
+    odds_val = random.choice([-135, -125, -120, -115, -110, -105, 100, 105, 110, 115, 120, 125])
+    if not in_allowed_odds_range(format_american(odds_val), PROP_ODDS_RANGE[0], PROP_ODDS_RANGE[1]):
+        continue
 
                 player_key = f"{game}::{player_name}"
                 if player_key in players_seen:
@@ -1269,8 +1272,7 @@ def generate_ai_plays():
                 player_plays_added += 1
                 game_prop_count += 1
 
-                if player_plays_added >= MAX_PLAYS_PER_PLAYER:
-                    continue
+                
 
     for event in live_games:
         home_team = normalize_team_name(event.get("home_team", "Home"))

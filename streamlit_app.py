@@ -1183,7 +1183,7 @@ def generate_ai_plays():
 
         return edge_boost, score_boost, price_boost, tags
 
-        def build_prop_rows_for_game(game, away_team, home_team, bookmakers):
+    def build_prop_rows_for_game(game, away_team, home_team, bookmakers):
         if not ENABLE_PLAYER_PROPS:
             return
 

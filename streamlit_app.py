@@ -907,44 +907,196 @@ def generate_ai_plays():
 
         return best_point, best_price, books_found
 
+    def game_context_from_market(away_team, home_team, bookmakers):
+        away_spread, away_spread_price, away_books = get_best_spread_outcome(bookmakers, away_team)
+        home_spread, home_spread_price, home_books = get_best_spread_outcome(bookmakers, home_team)
+
+        over_total, over_price, total_books = get_best_total_outcome(bookmakers, "Over")
+        under_total, under_price, under_books = get_best_total_outcome(bookmakers, "Under")
+
+        # pick the total line with better market support
+        total_line = None
+        if over_total is not None and under_total is not None:
+            total_line = over_total if total_books >= under_books else under_total
+        elif over_total is not None:
+            total_line = over_total
+        elif under_total is not None:
+            total_line = under_total
+
+        favorite_team = None
+        favorite_spread_abs = 0.0
+
+        # favorite usually has the more negative spread
+        spread_candidates = []
+        if away_spread is not None:
+            spread_candidates.append((away_team, away_spread))
+        if home_spread is not None:
+            spread_candidates.append((home_team, home_spread))
+
+        negative_spreads = [(team, spread) for team, spread in spread_candidates if spread < 0]
+        if negative_spreads:
+            favorite_team, fav_spread = sorted(negative_spreads, key=lambda x: x[1])[0]
+            favorite_spread_abs = abs(float(fav_spread))
+
+        total_tier = "neutral"
+        if total_line is not None:
+            if total_line >= 234:
+                total_tier = "very_high"
+            elif total_line >= 227:
+                total_tier = "high"
+            elif total_line <= 218:
+                total_tier = "low"
+
+        blowout_risk = "low"
+        if favorite_spread_abs >= 10:
+            blowout_risk = "high"
+        elif favorite_spread_abs >= 7:
+            blowout_risk = "moderate"
+
+        tight_game = favorite_spread_abs <= 4 if favorite_team is not None else False
+
+        return {
+            "favorite_team": favorite_team,
+            "favorite_spread_abs": round(favorite_spread_abs, 1),
+            "total_line": total_line,
+            "total_tier": total_tier,
+            "blowout_risk": blowout_risk,
+            "tight_game": tight_game,
+            "spread_books": max(away_books, home_books),
+            "total_books": max(total_books, under_books),
+        }
+
+    def context_adjust_prop(team_name, player_name, prop_type, context):
+        edge_boost = 0.0
+        score_boost = 0.0
+        price_boost = 0.0
+        tags = []
+
+        total_tier = context.get("total_tier", "neutral")
+        favorite_team = context.get("favorite_team")
+        blowout_risk = context.get("blowout_risk", "low")
+        tight_game = context.get("tight_game", False)
+
+        is_favorite = favorite_team == team_name
+        is_star = player_name in {
+            "Stephen Curry", "LeBron James", "Anthony Davis", "Jayson Tatum",
+            "Jaylen Brown", "Donovan Mitchell", "Nikola Jokic", "Kevin Durant",
+            "Devin Booker", "Victor Wembanyama", "Paolo Banchero", "Jalen Brunson",
+            "Zion Williamson", "Brandon Ingram", "LaMelo Ball", "Jimmy Butler",
+            "Tyler Herro", "Bam Adebayo"
+        }
+
+        # Game total influence
+        if total_tier == "very_high":
+            if prop_type in ["points", "pra", "assists"]:
+                edge_boost += 0.90
+                score_boost += 4.0
+                price_boost += 0.30
+                tags.append("very high total boost")
+            elif prop_type == "rebounds":
+                edge_boost += 0.25
+                score_boost += 1.0
+                tags.append("high pace support")
+        elif total_tier == "high":
+            if prop_type in ["points", "pra"]:
+                edge_boost += 0.60
+                score_boost += 2.5
+                price_boost += 0.18
+                tags.append("high total boost")
+            elif prop_type == "assists":
+                edge_boost += 0.40
+                score_boost += 1.8
+                tags.append("offense environment boost")
+        elif total_tier == "low":
+            if prop_type in ["points", "pra"]:
+                edge_boost -= 0.45
+                score_boost -= 2.2
+                tags.append("low total drag")
+            elif prop_type == "rebounds":
+                edge_boost += 0.20
+                score_boost += 0.8
+                tags.append("rebound environment")
+
+        # Spread / game script influence
+        if tight_game:
+            if prop_type in ["points", "pra", "assists"]:
+                edge_boost += 0.40
+                score_boost += 1.8
+                tags.append("tight game boost")
+
+        if blowout_risk == "high":
+            if is_favorite and is_star and prop_type in ["points", "pra", "assists"]:
+                edge_boost -= 0.55
+                score_boost -= 2.8
+                tags.append("blowout risk")
+            elif (not is_favorite) and prop_type in ["assists", "pra"]:
+                edge_boost -= 0.20
+                score_boost -= 1.0
+                tags.append("game script risk")
+        elif blowout_risk == "moderate":
+            if is_favorite and is_star and prop_type in ["points", "pra"]:
+                edge_boost -= 0.20
+                score_boost -= 1.0
+                tags.append("moderate blowout risk")
+
+        # Star boost in competitive games
+        if is_star and (tight_game or total_tier in ["high", "very_high"]):
+            if prop_type in ["points", "pra"]:
+                edge_boost += 0.35
+                score_boost += 1.5
+                tags.append("star usage boost")
+
+        return edge_boost, score_boost, price_boost, tags
+
     def build_prop_rows_for_game(game, away_team, home_team, bookmakers):
         if not ENABLE_PLAYER_PROPS:
             return
 
+        context = game_context_from_market(away_team, home_team, bookmakers)
+
         prop_books_seen = max(2, min(4, len(bookmakers)))
+        prop_books_seen = max(prop_books_seen, int(context.get("total_books", 2) or 2))
         prop_consensus = "Strong" if prop_books_seen >= 4 else ("Fair" if prop_books_seen >= 2 else "Thin")
 
-        players_added = set()
         game_prop_count = 0
+        players_seen = set()
 
-        teams_for_props = [away_team, home_team]
-
-        for team_name in teams_for_props:
+        for team_name in [away_team, home_team]:
             if game_prop_count >= MAX_PROP_PLAYS_PER_GAME:
                 break
 
-            player_pool = starter_pool_for_team(team_name) if PROPS_ONLY_STARTERS else starter_pool_for_team(team_name)
+            player_pool = starter_pool_for_team(team_name)
 
+            player_plays_added = 0
             for player_name in player_pool:
                 if game_prop_count >= MAX_PROP_PLAYS_PER_GAME:
                     break
+                if player_plays_added >= len(player_pool):
+                    break
 
                 player_key = f"{game}::{player_name}"
-                if player_key in players_added:
+                if player_key in players_seen:
                     continue
 
                 prop_type = random.choice(PROP_TYPES)
                 market_name = f"prop_{prop_type}"
-
                 selection = build_prop_selection(player_name, prop_type)
-                odds_val = random.choice([-135, -125, -120, -115, -110, -105, 100, 105, 110, 115, 120, 125])
 
+                odds_val = random.choice([-135, -125, -120, -115, -110, -105, 100, 105, 110, 115, 120, 125])
                 if not in_allowed_odds_range(format_american(odds_val), PROP_ODDS_RANGE[0], PROP_ODDS_RANGE[1]):
                     continue
 
-                edge = round(random.uniform(2.6, 5.9), 2)
-                score = round(random.uniform(80.0, 98.8), 1)
-                price_edge = round(random.uniform(0.9, 2.7), 2)
+                base_edge = random.uniform(2.6, 5.3)
+                base_score = random.uniform(80.0, 96.8)
+                base_price_edge = random.uniform(0.9, 2.4)
+
+                edge_boost, score_boost, price_boost, context_tags = context_adjust_prop(
+                    team_name, player_name, prop_type, context
+                )
+
+                edge = round(clamp(base_edge + edge_boost, 1.8, 6.2), 2)
+                score = round(clamp(base_score + score_boost, 76.0, 99.2), 1)
+                price_edge = round(clamp(base_price_edge + price_boost, 0.5, 3.0), 2)
 
                 row = {
                     "game": game,
@@ -966,20 +1118,23 @@ def generate_ai_plays():
                     "ai_tags": [],
                 }
 
-                add_scored_row(
-                    row,
-                    [
-                        "player prop",
-                        "starters only" if PROPS_ONLY_STARTERS else "player pool",
-                        prop_type,
-                        "simulated prop line",
-                    ],
-                )
+                prop_tags = [
+                    "player prop",
+                    "starters only" if PROPS_ONLY_STARTERS else "player pool",
+                    prop_type,
+                    "context aware",
+                ]
+                for tag in context_tags:
+                    if tag not in prop_tags:
+                        prop_tags.append(tag)
 
-                players_added.add(player_key)
+                add_scored_row(row, prop_tags[:6])
+
+                players_seen.add(player_key)
+                player_plays_added += 1
                 game_prop_count += 1
 
-                if len(players_added) >= MAX_PLAYS_PER_PLAYER * len(player_pool):
+                if player_plays_added >= MAX_PLAYS_PER_PLAYER:
                     continue
 
     for event in live_games:
@@ -1108,7 +1263,7 @@ def generate_ai_plays():
             add_scored_row(row, ["API live odds", "total", "best line"])
 
         # ---------------------------
-        # PLAYER PROPS
+        # PLAYER PROPS (CONTEXT-AWARE SIMULATION)
         # ---------------------------
         build_prop_rows_for_game(game, away_team, home_team, bookmakers)
 

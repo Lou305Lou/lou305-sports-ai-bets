@@ -879,7 +879,7 @@ def generate_ai_plays():
         "play_id",
     ]
 
-    live_games = st.session_state.get("odds_api_games", [])
+    live_games = get_effective_odds_games()
     if not live_games:
         return pd.DataFrame(columns=empty_cols)
 

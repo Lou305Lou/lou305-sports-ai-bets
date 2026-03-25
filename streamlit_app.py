@@ -677,7 +677,7 @@ def tier_from_true_conf(tc):
     return "C"
 
 
-# =========================================================
+=========================================================
 # DATA BUILD
 # =========================================================
 def generate_ai_plays():
@@ -713,6 +713,9 @@ def generate_ai_plays():
     allowed_games = set(today_games) if today_games else None
     rows = []
 
+    def normalize_outcome_name(name):
+        return normalize_team_name(str(name).strip())
+
     def get_best_market_outcome(bookmakers, market_key, target_name=None):
         best_price = None
         books_found = 0
@@ -723,10 +726,13 @@ def generate_ai_plays():
                 if market.get("key") != market_key:
                     continue
 
+                matched_this_book = False
+
                 for outcome in market.get("outcomes", []):
                     outcome_name = str(outcome.get("name", "")).strip()
+                    normalized_outcome_name = normalize_outcome_name(outcome_name)
 
-                    if target_name is not None and outcome_name != target_name:
+                    if target_name is not None and normalized_outcome_name != target_name:
                         continue
 
                     price = outcome.get("price")
@@ -738,13 +744,12 @@ def generate_ai_plays():
                     except Exception:
                         continue
 
-                    books_found += 1
+                    if not matched_this_book:
+                        books_found += 1
+                        matched_this_book = True
 
-                    if best_price is None:
+                    if best_price is None or price > best_price:
                         best_price = price
-                    else:
-                        if price > best_price:
-                            best_price = price
 
         return best_price, books_found
 
@@ -759,9 +764,13 @@ def generate_ai_plays():
                 if market.get("key") != "spreads":
                     continue
 
+                matched_this_book = False
+
                 for outcome in market.get("outcomes", []):
                     outcome_name = str(outcome.get("name", "")).strip()
-                    if outcome_name != target_name:
+                    normalized_outcome_name = normalize_outcome_name(outcome_name)
+
+                    if normalized_outcome_name != target_name:
                         continue
 
                     price = outcome.get("price")
@@ -776,7 +785,9 @@ def generate_ai_plays():
                     except Exception:
                         continue
 
-                    books_found += 1
+                    if not matched_this_book:
+                        books_found += 1
+                        matched_this_book = True
 
                     if best_point is None:
                         best_point = point
@@ -801,6 +812,8 @@ def generate_ai_plays():
                 if market.get("key") != "totals":
                     continue
 
+                matched_this_book = False
+
                 for outcome in market.get("outcomes", []):
                     outcome_name = str(outcome.get("name", "")).strip()
                     if outcome_name != over_under_name:
@@ -818,7 +831,9 @@ def generate_ai_plays():
                     except Exception:
                         continue
 
-                    books_found += 1
+                    if not matched_this_book:
+                        books_found += 1
+                        matched_this_book = True
 
                     if best_point is None:
                         best_point = point

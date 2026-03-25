@@ -2245,8 +2245,8 @@ elif nav == "AI Slip":
         st.warning("No live slate entered.")
 
     if len(get_effective_odds_games()) == 0:
-    st.warning("Press 'Refresh Live Odds' in the sidebar to load live odds.")
-elif best_row is not None:
+        st.warning("Press 'Refresh Live Odds' in the sidebar to load live odds.")
+    elif best_row is not None:
         risk_level = "Low" if float(best_row["units"]) <= 0.60 else "Moderate"
 
         st.markdown(

@@ -1183,88 +1183,87 @@ def generate_ai_plays():
 
         return edge_boost, score_boost, price_boost, tags
 
-    def build_prop_rows_for_game(game, away_team, home_team, bookmakers):
-    if not ENABLE_PLAYER_PROPS:
-        return
+        def build_prop_rows_for_game(game, away_team, home_team, bookmakers):
+        if not ENABLE_PLAYER_PROPS:
+            return
 
-    context = game_context_from_market(away_team, home_team, bookmakers)
+        context = game_context_from_market(away_team, home_team, bookmakers)
 
-    prop_books_seen = max(2, min(4, len(bookmakers)))
-    prop_books_seen = max(prop_books_seen, int(context.get("total_books", 2) or 2))
-    prop_consensus = "Strong" if prop_books_seen >= 4 else ("Fair" if prop_books_seen >= 2 else "Thin")
+        prop_books_seen = max(2, min(4, len(bookmakers)))
+        prop_books_seen = max(prop_books_seen, int(context.get("total_books", 2) or 2))
+        prop_consensus = "Strong" if prop_books_seen >= 4 else ("Fair" if prop_books_seen >= 2 else "Thin")
 
-    game_prop_count = 0
-    players_seen = set()
+        game_prop_count = 0
+        players_seen = set()
 
-    for team_name in [away_team, home_team]:
-        if game_prop_count >= MAX_PROP_PLAYS_PER_GAME:
-            break
-
-        player_pool = starter_pool_for_team(team_name)
-
-        for player_name in player_pool:
+        for team_name in [away_team, home_team]:
             if game_prop_count >= MAX_PROP_PLAYS_PER_GAME:
                 break
 
-            player_key = f"{game}::{player_name}"
-            if player_key in players_seen:
-                continue
+            player_pool = starter_pool_for_team(team_name)
 
-            prop_type = random.choice(PROP_TYPES)
-            market_name = f"prop_{prop_type}"
-            selection = build_prop_selection(player_name, prop_type)
+            for player_name in player_pool:
+                if game_prop_count >= MAX_PROP_PLAYS_PER_GAME:
+                    break
 
-            odds_val = random.choice([-135, -125, -120, -115, -110, -105, 100, 105, 110, 115, 120, 125])
-            if not in_allowed_odds_range(format_american(odds_val), PROP_ODDS_RANGE[0], PROP_ODDS_RANGE[1]):
-                continue
+                player_key = f"{game}::{player_name}"
+                if player_key in players_seen:
+                    continue
 
-            base_edge = random.uniform(2.6, 5.3)
-            base_score = random.uniform(80.0, 96.8)
-            base_price_edge = random.uniform(0.9, 2.4)
+                prop_type = random.choice(PROP_TYPES)
+                market_name = f"prop_{prop_type}"
+                selection = build_prop_selection(player_name, prop_type)
 
-            edge_boost, score_boost, price_boost, context_tags = context_adjust_prop(
-                team_name, player_name, prop_type, context
-            )
+                odds_val = random.choice([-135, -125, -120, -115, -110, -105, 100, 105, 110, 115, 120, 125])
+                if not in_allowed_odds_range(format_american(odds_val), PROP_ODDS_RANGE[0], PROP_ODDS_RANGE[1]):
+                    continue
 
-            edge = round(clamp(base_edge + edge_boost, 1.8, 6.2), 2)
-            score = round(clamp(base_score + score_boost, 76.0, 99.2), 1)
-            price_edge = round(clamp(base_price_edge + price_boost, 0.5, 3.0), 2)
+                base_edge = random.uniform(2.6, 5.3)
+                base_score = random.uniform(80.0, 96.8)
+                base_price_edge = random.uniform(0.9, 2.4)
 
-            row = {
-                "game": game,
-                "market": market_name,
-                "selection": selection,
-                "odds": format_american(odds_val),
-                "edge": edge,
-                "score": score,
-                "units": 0.0,
-                "tier": "C",
-                "quality_label": "Watch",
-                "status": "Watch",
-                "watch_tier": "",
-                "confidence": "Low",
-                "books_seen": prop_books_seen,
-                "best_price": "Sim",
-                "consensus": prop_consensus,
-                "price_edge": price_edge,
-                "ai_tags": [],
-            }
+                edge_boost, score_boost, price_boost, context_tags = context_adjust_prop(
+                    team_name, player_name, prop_type, context
+                )
 
-            prop_tags = [
-                "player prop",
-                "starters only" if PROPS_ONLY_STARTERS else "player pool",
-                prop_type,
-                "context aware",
-            ]
-            for tag in context_tags:
-                if tag not in prop_tags:
-                    prop_tags.append(tag)
+                edge = round(clamp(base_edge + edge_boost, 1.8, 6.2), 2)
+                score = round(clamp(base_score + score_boost, 76.0, 99.2), 1)
+                price_edge = round(clamp(base_price_edge + price_boost, 0.5, 3.0), 2)
 
-            add_scored_row(row, prop_tags[:6])
+                row = {
+                    "game": game,
+                    "market": market_name,
+                    "selection": selection,
+                    "odds": format_american(odds_val),
+                    "edge": edge,
+                    "score": score,
+                    "units": 0.0,
+                    "tier": "C",
+                    "quality_label": "Watch",
+                    "status": "Watch",
+                    "watch_tier": "",
+                    "confidence": "Low",
+                    "books_seen": prop_books_seen,
+                    "best_price": "Sim",
+                    "consensus": prop_consensus,
+                    "price_edge": price_edge,
+                    "ai_tags": [],
+                }
 
-            players_seen.add(player_key)
-            game_prop_count += 1
+                prop_tags = [
+                    "player prop",
+                    "starters only" if PROPS_ONLY_STARTERS else "player pool",
+                    prop_type,
+                    "context aware",
+                ]
+                for tag in context_tags:
+                    if tag not in prop_tags:
+                        prop_tags.append(tag)
 
+                add_scored_row(row, prop_tags[:6])
+
+                players_seen.add(player_key)
+                game_prop_count += 1
     for event in live_games:
         home_team = normalize_team_name(event.get("home_team", "Home"))
         away_team = normalize_team_name(event.get("away_team", "Away"))

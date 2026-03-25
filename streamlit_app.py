@@ -546,70 +546,7 @@ if st.session_state.get("last_refresh_time"):
 st.sidebar.caption(f"Games in memory: {len(st.session_state.get('odds_api_games', []))}")
 
 if st.session_state.get("last_refresh_error"):
-    st.sidebar.caption(f"Error: {st.session_state['last_refresh_error']}")
-
-# =========================================================
-# LIVE ODDS FETCH (MANUAL REFRESH ONLY)
-# =========================================================
-def fetch_live_nba_odds():
-    if not ODDS_API_KEY:
-        st.session_state["odds_api_games"] = []
-        st.session_state["last_odds_refresh_ok"] = False
-        st.session_state["last_refresh_error"] = "Missing ODDS_API_KEY in Streamlit secrets."
-        st.session_state["last_refresh_count"] = 0
-        return []
-
-    params = {
-        "apiKey": ODDS_API_KEY,
-        "regions": "us",
-        "markets": "h2h,spreads,totals",
-        "oddsFormat": "american",
-        "bookmakers": ODDS_BOOKMAKERS,
-    }
-
-    try:
-        response = requests.get(ODDS_API_URL, params=params, timeout=20)
-        response.raise_for_status()
-        data = response.json()
-
-        if not isinstance(data, list):
-            data = []
-
-        st.session_state["odds_api_games"] = data
-        st.session_state["last_odds_refresh_ok"] = True
-        st.session_state["last_refresh_error"] = ""
-        st.session_state["last_refresh_count"] = len(data)
-        st.session_state["last_refresh_time"] = pd.Timestamp.now().strftime("%Y-%m-%d %I:%M:%S %p")
-        return data
-
-    except Exception as e:
-        st.session_state["odds_api_games"] = []
-        st.session_state["last_odds_refresh_ok"] = False
-        st.session_state["last_refresh_error"] = str(e)
-        st.session_state["last_refresh_count"] = 0
-        return []
-
-
-st.sidebar.markdown("### 📡 Live Odds Control")
-
-if st.sidebar.button("🔄 Refresh Live Odds"):
-    with st.sidebar:
-        with st.spinner("Refreshing live odds..."):
-            data = fetch_live_nba_odds()
-            if st.session_state["last_odds_refresh_ok"]:
-                st.success(f"Loaded {len(data)} game(s).")
-            else:
-                st.error("Refresh failed.")
-
-if st.session_state.get("last_refresh_time"):
-    st.sidebar.caption(f"Last refresh: {st.session_state['last_refresh_time']}")
-
-st.sidebar.caption(f"Games in memory: {len(st.session_state.get('odds_api_games', []))}")
-
-if st.session_state.get("last_refresh_error"):
-    st.sidebar.caption(f"Error: {st.session_state['last_refresh_error']}")
-
-# =========================================================
+    st.sidebar.caption(f"Error: {st.session_state['last_refresh_error']}")# =========================================================
 # SMART DECISION LAYER
 # =========================================================
 def books_score(books_seen):

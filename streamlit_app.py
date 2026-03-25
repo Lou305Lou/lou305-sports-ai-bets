@@ -1049,7 +1049,6 @@ def generate_ai_plays():
         over_total, over_price, total_books = get_best_total_outcome(bookmakers, "Over")
         under_total, under_price, under_books = get_best_total_outcome(bookmakers, "Under")
 
-        # pick the total line with better market support
         total_line = None
         if over_total is not None and under_total is not None:
             total_line = over_total if total_books >= under_books else under_total
@@ -1061,7 +1060,6 @@ def generate_ai_plays():
         favorite_team = None
         favorite_spread_abs = 0.0
 
-        # favorite usually has the more negative spread
         spread_candidates = []
         if away_spread is not None:
             spread_candidates.append((away_team, away_spread))
@@ -1121,7 +1119,6 @@ def generate_ai_plays():
             "Tyler Herro", "Bam Adebayo"
         }
 
-        # Game total influence
         if total_tier == "very_high":
             if prop_type in ["points", "pra", "assists"]:
                 edge_boost += 0.90
@@ -1152,7 +1149,6 @@ def generate_ai_plays():
                 score_boost += 0.8
                 tags.append("rebound environment")
 
-        # Spread / game script influence
         if tight_game:
             if prop_type in ["points", "pra", "assists"]:
                 edge_boost += 0.40
@@ -1174,7 +1170,6 @@ def generate_ai_plays():
                 score_boost -= 1.0
                 tags.append("moderate blowout risk")
 
-        # Star boost in competitive games
         if is_star and (tight_game or total_tier in ["high", "very_high"]):
             if prop_type in ["points", "pra"]:
                 edge_boost += 0.35
@@ -1264,6 +1259,7 @@ def generate_ai_plays():
 
                 players_seen.add(player_key)
                 game_prop_count += 1
+
     for event in live_games:
         home_team = normalize_team_name(event.get("home_team", "Home"))
         away_team = normalize_team_name(event.get("away_team", "Away"))
@@ -1276,9 +1272,6 @@ def generate_ai_plays():
         if not bookmakers:
             continue
 
-        # ---------------------------
-        # MONEYLINE
-        # ---------------------------
         for team_name in [away_team, home_team]:
             best_price, books_found = get_best_market_outcome(bookmakers, "h2h", team_name)
             if best_price is None or books_found == 0:
@@ -1313,9 +1306,6 @@ def generate_ai_plays():
 
             add_scored_row(row, ["API live odds", "moneyline", "best price"])
 
-        # ---------------------------
-        # SPREADS
-        # ---------------------------
         for team_name in [away_team, home_team]:
             best_point, best_price, books_found = get_best_spread_outcome(bookmakers, team_name)
             if best_point is None or best_price is None or books_found == 0:
@@ -1352,9 +1342,6 @@ def generate_ai_plays():
 
             add_scored_row(row, ["API live odds", "spread", "best line"])
 
-        # ---------------------------
-        # TOTALS
-        # ---------------------------
         for side in ["Over", "Under"]:
             best_point, best_price, books_found = get_best_total_outcome(bookmakers, side)
             if best_point is None or best_price is None or books_found == 0:
@@ -1389,9 +1376,6 @@ def generate_ai_plays():
 
             add_scored_row(row, ["API live odds", "total", "best line"])
 
-        # ---------------------------
-        # PLAYER PROPS (CONTEXT-AWARE SIMULATION)
-        # ---------------------------
         build_prop_rows_for_game(game, away_team, home_team, bookmakers)
 
     df = pd.DataFrame(rows)

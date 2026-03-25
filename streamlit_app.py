@@ -1266,8 +1266,6 @@ def generate_ai_plays():
             players_seen.add(player_key)
             game_prop_count += 1
 
-                
-
     for event in live_games:
         home_team = normalize_team_name(event.get("home_team", "Home"))
         away_team = normalize_team_name(event.get("away_team", "Away"))

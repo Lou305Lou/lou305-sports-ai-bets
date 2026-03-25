@@ -548,6 +548,328 @@ def tier_from_true_conf(tc):
 # =========================================================
 # DATA BUILD
 # =========================================================
+def get_live_odds_source():
+    """
+    Looks for live odds JSON already loaded into session_state or globals.
+    Supported common names:
+    - st.session_state["odds_api_games"]
+    - st.session_state["live_odds_games"]
+    - st.session_state["raw_odds_games"]
+    - global odds_api_games / live_odds_games / raw_odds_games
+    """
+    for key in ["odds_api_games", "live_odds_games", "raw_odds_games"]:
+        if key in st.session_state and isinstance(st.session_state[key], list):
+            return st.session_state[key]
+
+    for key in ["odds_api_games", "live_odds_games", "raw_odds_games"]:
+        if key in globals() and isinstance(globals()[key], list):
+            return globals()[key]
+
+    return []
+
+
+def safe_float(value, default=0.0):
+    try:
+        return float(value)
+    except Exception:
+        return default
+
+
+def american_to_implied_prob(odds):
+    odds_int = american_to_int(odds)
+    if odds_int is None:
+        return None
+    if odds_int > 0:
+        return 100.0 / (odds_int + 100.0)
+    return abs(odds_int) / (abs(odds_int) + 100.0)
+
+
+def extract_market_outcomes(bookmaker, market_key):
+    markets = bookmaker.get("markets", []) or []
+    for market in markets:
+        if str(market.get("key", "")).lower() == str(market_key).lower():
+            return market.get("outcomes", []) or []
+    return []
+
+
+def median_value(values):
+    vals = sorted([safe_float(v) for v in values if v is not None])
+    if not vals:
+        return None
+    n = len(vals)
+    if n % 2 == 1:
+        return vals[n // 2]
+    return (vals[(n // 2) - 1] + vals[n // 2]) / 2.0
+
+
+def average_value(values):
+    vals = [safe_float(v) for v in values if v is not None]
+    if not vals:
+        return None
+    return sum(vals) / len(vals)
+
+
+def build_moneyline_candidates(game_obj):
+    home_team = normalize_team_name(game_obj.get("home_team", "Home"))
+    away_team = normalize_team_name(game_obj.get("away_team", "Away"))
+    game_label = f"{away_team} vs {home_team}"
+
+    books = game_obj.get("bookmakers", []) or []
+    candidates = []
+
+    for selection_name in [home_team, away_team]:
+        seen_prices = []
+        supporting_books = 0
+
+        for book in books:
+            outcomes = extract_market_outcomes(book, "h2h")
+            matched = None
+            for o in outcomes:
+                outcome_name = normalize_team_name(o.get("name", ""))
+                if outcome_name == selection_name:
+                    matched = o
+                    break
+
+            if matched is not None and matched.get("price") is not None:
+                seen_prices.append(int(matched["price"]))
+                supporting_books += 1
+
+        if supporting_books < 1 or not seen_prices:
+            continue
+
+        best_odds = max(seen_prices)
+        avg_odds = average_value(seen_prices)
+        implied_best = american_to_implied_prob(best_odds)
+        implied_avg = american_to_implied_prob(round(avg_odds)) if avg_odds is not None else None
+
+        price_edge = 0.0
+        if implied_best is not None and implied_avg is not None:
+            price_edge = round(max((implied_avg - implied_best) * 100.0, 0.0), 2)
+
+        books_seen = supporting_books
+        consensus = "Strong" if books_seen >= 4 else ("Fair" if books_seen >= 3 else "Thin")
+
+        score = round(
+            78
+            + min(books_seen * 3.5, 14)
+            + min(price_edge * 2.2, 8)
+            + (3 if consensus == "Strong" else (1.5 if consensus == "Fair" else 0)),
+            1,
+        )
+
+        edge = round(
+            max(price_edge + (books_seen * 0.35), 0.0),
+            2,
+        )
+
+        candidates.append(
+            {
+                "game": game_label,
+                "market": "moneyline",
+                "selection": selection_name,
+                "odds": format_american(best_odds),
+                "edge": edge,
+                "score": score,
+                "units": 0.0,
+                "tier": "C",
+                "quality_label": "Watch",
+                "status": "Watch",
+                "watch_tier": "",
+                "confidence": "Low",
+                "books_seen": books_seen,
+                "best_price": "Yes",
+                "consensus": consensus,
+                "price_edge": price_edge,
+                "ai_tags": ["live odds", "team market", "moneyline"],
+            }
+        )
+
+    return candidates
+
+
+def build_spread_candidates(game_obj):
+    home_team = normalize_team_name(game_obj.get("home_team", "Home"))
+    away_team = normalize_team_name(game_obj.get("away_team", "Away"))
+    game_label = f"{away_team} vs {home_team}"
+
+    books = game_obj.get("bookmakers", []) or []
+    side_data = {}
+
+    for team_name in [home_team, away_team]:
+        side_data[team_name] = {
+            "prices": [],
+            "points": [],
+            "books_seen": 0,
+        }
+
+    for book in books:
+        outcomes = extract_market_outcomes(book, "spreads")
+        for o in outcomes:
+            outcome_name = normalize_team_name(o.get("name", ""))
+            if outcome_name not in side_data:
+                continue
+            if o.get("price") is None or o.get("point") is None:
+                continue
+
+            side_data[outcome_name]["prices"].append(int(o["price"]))
+            side_data[outcome_name]["points"].append(float(o["point"]))
+            side_data[outcome_name]["books_seen"] += 1
+
+    candidates = []
+
+    for team_name, info in side_data.items():
+        if info["books_seen"] < 1 or not info["points"] or not info["prices"]:
+            continue
+
+        best_odds = max(info["prices"])
+        median_point = median_value(info["points"])
+        avg_price = average_value(info["prices"])
+
+        implied_best = american_to_implied_prob(best_odds)
+        implied_avg = american_to_implied_prob(round(avg_price)) if avg_price is not None else None
+
+        price_edge = 0.0
+        if implied_best is not None and implied_avg is not None:
+            price_edge = round(max((implied_avg - implied_best) * 100.0, 0.0), 2)
+
+        books_seen = int(info["books_seen"])
+        consensus = "Strong" if books_seen >= 4 else ("Fair" if books_seen >= 3 else "Thin")
+
+        line_consistency = 1.0
+        if len(info["points"]) >= 2:
+            spread_range = max(info["points"]) - min(info["points"])
+            line_consistency = max(0.0, 1.0 - min(spread_range / 2.5, 1.0))
+
+        edge = round(
+            max(price_edge + (books_seen * 0.35) + (line_consistency * 1.2), 0.0),
+            2,
+        )
+
+        score = round(
+            79
+            + min(books_seen * 3.0, 12)
+            + min(price_edge * 2.0, 7)
+            + (line_consistency * 6.0)
+            + (3 if consensus == "Strong" else (1.5 if consensus == "Fair" else 0)),
+            1,
+        )
+
+        point_display = f"{median_point:+.1f}".replace("+", "+").replace("-0.0", "0.0")
+
+        candidates.append(
+            {
+                "game": game_label,
+                "market": "spread",
+                "selection": f"{team_name} {point_display}",
+                "odds": format_american(best_odds),
+                "edge": edge,
+                "score": score,
+                "units": 0.0,
+                "tier": "C",
+                "quality_label": "Watch",
+                "status": "Watch",
+                "watch_tier": "",
+                "confidence": "Low",
+                "books_seen": books_seen,
+                "best_price": "Yes",
+                "consensus": consensus,
+                "price_edge": price_edge,
+                "ai_tags": ["live odds", "team market", "spread"],
+            }
+        )
+
+    return candidates
+
+
+def build_total_candidates(game_obj):
+    home_team = normalize_team_name(game_obj.get("home_team", "Home"))
+    away_team = normalize_team_name(game_obj.get("away_team", "Away"))
+    game_label = f"{away_team} vs {home_team}"
+
+    books = game_obj.get("bookmakers", []) or []
+    total_data = {
+        "Over": {"prices": [], "points": [], "books_seen": 0},
+        "Under": {"prices": [], "points": [], "books_seen": 0},
+    }
+
+    for book in books:
+        outcomes = extract_market_outcomes(book, "totals")
+        for o in outcomes:
+            outcome_name = str(o.get("name", "")).title()
+            if outcome_name not in total_data:
+                continue
+            if o.get("price") is None or o.get("point") is None:
+                continue
+
+            total_data[outcome_name]["prices"].append(int(o["price"]))
+            total_data[outcome_name]["points"].append(float(o["point"]))
+            total_data[outcome_name]["books_seen"] += 1
+
+    candidates = []
+
+    for side_name, info in total_data.items():
+        if info["books_seen"] < 1 or not info["points"] or not info["prices"]:
+            continue
+
+        best_odds = max(info["prices"])
+        median_point = median_value(info["points"])
+        avg_price = average_value(info["prices"])
+
+        implied_best = american_to_implied_prob(best_odds)
+        implied_avg = american_to_implied_prob(round(avg_price)) if avg_price is not None else None
+
+        price_edge = 0.0
+        if implied_best is not None and implied_avg is not None:
+            price_edge = round(max((implied_avg - implied_best) * 100.0, 0.0), 2)
+
+        books_seen = int(info["books_seen"])
+        consensus = "Strong" if books_seen >= 4 else ("Fair" if books_seen >= 3 else "Thin")
+
+        total_range = 0.0
+        if len(info["points"]) >= 2:
+            total_range = max(info["points"]) - min(info["points"])
+
+        line_consistency = max(0.0, 1.0 - min(total_range / 3.0, 1.0))
+
+        edge = round(
+            max(price_edge + (books_seen * 0.30) + (line_consistency * 1.0), 0.0),
+            2,
+        )
+
+        score = round(
+            79
+            + min(books_seen * 3.0, 12)
+            + min(price_edge * 2.0, 7)
+            + (line_consistency * 5.0)
+            + (3 if consensus == "Strong" else (1.5 if consensus == "Fair" else 0)),
+            1,
+        )
+
+        candidates.append(
+            {
+                "game": game_label,
+                "market": "total",
+                "selection": f"{side_name} {median_point:.1f}",
+                "odds": format_american(best_odds),
+                "edge": edge,
+                "score": score,
+                "units": 0.0,
+                "tier": "C",
+                "quality_label": "Watch",
+                "status": "Watch",
+                "watch_tier": "",
+                "confidence": "Low",
+                "books_seen": books_seen,
+                "best_price": "Yes",
+                "consensus": consensus,
+                "price_edge": price_edge,
+                "ai_tags": ["live odds", "team market", "total"],
+            }
+        )
+
+    return candidates
+
+
 def generate_ai_plays():
     empty_cols = [
         "game",
@@ -574,265 +896,44 @@ def generate_ai_plays():
         "play_id",
     ]
 
-    if not today_games:
+    live_games = get_live_odds_source()
+
+    if not live_games:
         return pd.DataFrame(columns=empty_cols)
 
-    # --------------------------------------------------
-    # SAFE LOCAL FALLBACK HELPERS
-    # --------------------------------------------------
-    def safe_normalize_team_name(team_name: str):
-        team_name = str(team_name).strip()
-        alias_map = {
-            "ATL": "Hawks",
-            "BOS": "Celtics",
-            "BKN": "Nets",
-            "BRK": "Nets",
-            "CHA": "Hornets",
-            "CHI": "Bulls",
-            "CLE": "Cavaliers",
-            "DAL": "Mavericks",
-            "DEN": "Nuggets",
-            "DET": "Pistons",
-            "GSW": "Warriors",
-            "HOU": "Rockets",
-            "IND": "Pacers",
-            "LAC": "Clippers",
-            "LAL": "Lakers",
-            "MEM": "Grizzlies",
-            "MIA": "Heat",
-            "MIL": "Bucks",
-            "MIN": "Timberwolves",
-            "NOP": "Pelicans",
-            "NO": "Pelicans",
-            "NYK": "Knicks",
-            "OKC": "Thunder",
-            "ORL": "Magic",
-            "PHI": "76ers",
-            "PHX": "Suns",
-            "PHO": "Suns",
-            "POR": "Trail Blazers",
-            "SAC": "Kings",
-            "SAS": "Spurs",
-            "SA": "Spurs",
-            "TOR": "Raptors",
-            "UTA": "Jazz",
-            "UTH": "Jazz",
-            "WAS": "Wizards",
-        }
-        return alias_map.get(team_name.upper(), team_name)
-
-    def safe_team_names_from_game(game: str):
-        parts = str(game).split(" vs ")
-        if len(parts) == 2:
-            away = safe_normalize_team_name(parts[0])
-            home = safe_normalize_team_name(parts[1])
-            return away, home
-        return "Away", "Home"
-
-    def safe_starter_pool_for_team(team_name: str):
-        normalized = safe_normalize_team_name(team_name)
-
-        starters_map = {
-            "Knicks": ["Jalen Brunson", "Donte DiVincenzo", "Josh Hart", "OG Anunoby", "Julius Randle"],
-            "Pelicans": ["CJ McCollum", "Brandon Ingram", "Herb Jones", "Zion Williamson", "Jonas Valanciunas"],
-            "Magic": ["Jalen Suggs", "Franz Wagner", "Paolo Banchero", "Jonathan Isaac", "Wendell Carter Jr."],
-            "Cavaliers": ["Darius Garland", "Donovan Mitchell", "Max Strus", "Evan Mobley", "Jarrett Allen"],
-            "Nuggets": ["Jamal Murray", "Kentavious Caldwell-Pope", "Michael Porter Jr.", "Aaron Gordon", "Nikola Jokic"],
-            "Suns": ["Bradley Beal", "Devin Booker", "Grayson Allen", "Kevin Durant", "Jusuf Nurkic"],
-            "Spurs": ["Tre Jones", "Devin Vassell", "Keldon Johnson", "Jeremy Sochan", "Victor Wembanyama"],
-            "Hornets": ["LaMelo Ball", "Terry Rozier", "Brandon Miller", "Miles Bridges", "Mark Williams"],
-            "Lakers": ["D'Angelo Russell", "Austin Reaves", "LeBron James", "Rui Hachimura", "Anthony Davis"],
-            "Warriors": ["Stephen Curry", "Klay Thompson", "Andrew Wiggins", "Draymond Green", "Jonathan Kuminga"],
-            "Heat": ["Terry Rozier", "Tyler Herro", "Jimmy Butler", "Nikola Jovic", "Bam Adebayo"],
-            "Celtics": ["Jrue Holiday", "Derrick White", "Jaylen Brown", "Jayson Tatum", "Kristaps Porzingis"],
-            "Kings": ["De'Aaron Fox", "Kevin Huerter", "Keegan Murray", "Harrison Barnes", "Domantas Sabonis"],
-        }
-
-        if normalized in starters_map:
-            return starters_map[normalized]
-
-        return [
-            f"{normalized} Starter 1",
-            f"{normalized} Starter 2",
-            f"{normalized} Starter 3",
-            f"{normalized} Starter 4",
-            f"{normalized} Starter 5",
-        ]
-
-    def safe_prop_line_for_type(prop_type: str):
-        default_lines = {
-            "points": [17.5, 19.5, 21.5, 23.5, 25.5, 27.5],
-            "rebounds": [5.5, 6.5, 7.5, 8.5, 9.5, 10.5],
-            "assists": [4.5, 5.5, 6.5, 7.5, 8.5],
-            "pra": [28.5, 31.5, 34.5, 37.5, 40.5],
-        }
-        return random.choice(default_lines.get(prop_type, [10.5, 12.5]))
-
-    def safe_build_prop_selection(player_name: str, prop_type: str):
-        line = safe_prop_line_for_type(prop_type)
-        label_map = {
-            "points": "Points",
-            "rebounds": "Rebounds",
-            "assists": "Assists",
-            "pra": "PRA",
-        }
-        direction = random.choice(["Over", "Under"])
-        return f"{player_name} {direction} {line} {label_map.get(prop_type, prop_type.title())}"
-
-    team_market_templates = [
-        ("moneyline", lambda g: safe_normalize_team_name(g.split(" vs ")[1])),
-        ("moneyline", lambda g: safe_normalize_team_name(g.split(" vs ")[0])),
-        ("total", lambda g: "Over 221.5"),
-        ("total", lambda g: "Under 221.5"),
-        ("spread", lambda g: f"{safe_normalize_team_name(g.split(' vs ')[1])} -4.5"),
-        ("spread", lambda g: f"{safe_normalize_team_name(g.split(' vs ')[0])} +4.5"),
-    ]
-
-    odds_pool = ["-132", "-118", "-110", "-105", "-102", "+100", "+110", "+120", "+135"]
-    consensus_pool = ["Strong", "Fair", "Thin"]
-
     rows = []
-    random.seed(331)
 
-    for game in today_games:
-        away_team, home_team = safe_team_names_from_game(game)
-
-        # ---------------------------
-        # TEAM MARKETS
-        # ---------------------------
-        for market, selection_fn in team_market_templates:
-            edge = round(random.uniform(1.50, 5.60), 2)
-            score = round(random.uniform(79.0, 99.5), 1)
-            books_seen = random.randint(1, 4)
-            odds = random.choice(odds_pool)
-            consensus = random.choices(consensus_pool, weights=[4, 4, 2], k=1)[0]
-            price_edge = round(random.uniform(0.50, 2.80), 2)
-
-            if edge < MIN_WATCH_EDGE:
-                continue
-            if not in_allowed_odds_range(odds, *DEFAULT_ODDS_RANGE):
-                continue
-
-            row = {
-                "game": game,
-                "market": market,
-                "selection": selection_fn(game),
-                "odds": odds,
-                "edge": edge,
-                "score": score,
-                "units": 0.0,
-                "tier": "C",
-                "quality_label": "Watch",
-                "status": "Watch",
-                "watch_tier": "",
-                "confidence": "Low",
-                "books_seen": books_seen,
-                "best_price": "Yes" if price_edge >= 1.25 else "No",
-                "consensus": consensus,
-                "price_edge": price_edge,
-                "ai_tags": ["AI generated", "live slate", "team market"],
-            }
-
-            tc, qs, reasons = compute_true_confidence(row)
-            row["true_confidence"] = tc
-            row["quality_score"] = qs
-            row["decision_reasons"] = reasons
-            row["confidence"] = confidence_bucket_from_true_conf(tc)
-
-            tags = ["AI generated", "live slate", "team market"]
-            for reason in reasons:
-                if reason not in tags:
-                    tags.append(reason)
-            row["ai_tags"] = tags[:6]
-
-            rows.append(row)
-
-        # ---------------------------
-        # PLAYER PROPS
-        # ---------------------------
-        if ENABLE_PLAYER_PROPS:
-            prop_rows_this_game = 0
-
-            for team_name in [away_team, home_team]:
-                players = safe_starter_pool_for_team(team_name)
-
-                if PROPS_ONLY_STARTERS:
-                    players = players[:5]
-
-                for player_name in players:
-                    if prop_rows_this_game >= MAX_PROP_PLAYS_PER_GAME:
-                        break
-
-                    player_plays_added = 0
-                    prop_types_this_player = PROP_TYPES.copy()
-                    random.shuffle(prop_types_this_player)
-
-                    for prop_type in prop_types_this_player:
-                        if prop_rows_this_game >= MAX_PROP_PLAYS_PER_GAME:
-                            break
-                        if player_plays_added >= MAX_PLAYS_PER_PLAYER:
-                            break
-
-                        edge = round(random.uniform(1.60, 5.80), 2)
-                        score = round(random.uniform(79.0, 99.5), 1)
-                        books_seen = random.randint(1, 4)
-                        odds = random.choice(odds_pool)
-                        consensus = random.choices(consensus_pool, weights=[4, 4, 2], k=1)[0]
-                        price_edge = round(random.uniform(0.50, 2.90), 2)
-
-                        if edge < MIN_WATCH_EDGE:
-                            continue
-                        if not in_allowed_odds_range(odds, *PROP_ODDS_RANGE):
-                            continue
-
-                        selection = safe_build_prop_selection(player_name, prop_type)
-
-                        row = {
-                            "game": game,
-                            "market": f"prop_{prop_type}",
-                            "selection": selection,
-                            "odds": odds,
-                            "edge": edge,
-                            "score": score,
-                            "units": 0.0,
-                            "tier": "C",
-                            "quality_label": "Watch",
-                            "status": "Watch",
-                            "watch_tier": "",
-                            "confidence": "Low",
-                            "books_seen": books_seen,
-                            "best_price": "Yes" if price_edge >= 1.25 else "No",
-                            "consensus": consensus,
-                            "price_edge": price_edge,
-                            "ai_tags": ["AI generated", "live slate", "player prop"],
-                        }
-
-                        tc, qs, reasons = compute_true_confidence(row)
-                        row["true_confidence"] = tc
-                        row["quality_score"] = qs
-                        row["decision_reasons"] = reasons
-                        row["confidence"] = confidence_bucket_from_true_conf(tc)
-
-                        tags = ["AI generated", "live slate", "player prop"]
-                        for reason in reasons:
-                            if reason not in tags:
-                                tags.append(reason)
-                        row["ai_tags"] = tags[:6]
-
-                        rows.append(row)
-                        prop_rows_this_game += 1
-                        player_plays_added += 1
+    for game_obj in live_games:
+        try:
+            rows.extend(build_moneyline_candidates(game_obj))
+            rows.extend(build_spread_candidates(game_obj))
+            rows.extend(build_total_candidates(game_obj))
+        except Exception:
+            continue
 
     df = pd.DataFrame(rows)
     if df.empty:
         return pd.DataFrame(columns=empty_cols)
 
+    for idx in df.index:
+        tc, qs, reasons = compute_true_confidence(df.loc[idx])
+        df.loc[idx, "true_confidence"] = tc
+        df.loc[idx, "quality_score"] = qs
+        df.loc[idx, "decision_reasons"] = reasons
+        df.loc[idx, "confidence"] = confidence_bucket_from_true_conf(tc)
+
+        tags = list(df.loc[idx, "ai_tags"]) if isinstance(df.loc[idx, "ai_tags"], list) else []
+        for reason in reasons:
+            if reason not in tags:
+                tags.append(reason)
+        df.at[idx, "ai_tags"] = tags[:6]
+
     df["rank_score"] = (
-        df["true_confidence"] * 0.55
-        + df["edge"] * 7.0
-        + df["price_edge"] * 3.5
-        + df["books_seen"] * 2.0
-        + df["score"] * 0.08
+        df["true_confidence"].astype(float) * 0.55
+        + df["edge"].astype(float) * 7.0
+        + df["price_edge"].astype(float) * 3.5
+        + df["books_seen"].astype(float) * 2.0
+        + df["score"].astype(float) * 0.08
     )
 
     def decide_status(row):
@@ -864,7 +965,7 @@ def generate_ai_plays():
         axis=1,
     )
 
-    df["tier"] = df["true_confidence"].apply(tier_from_true_conf)
+    df["tier"] = df["true_confidence"].astype(float).apply(tier_from_true_conf)
     df["quality_label"] = df["tier"].apply(quality_label_from_tier)
 
     df["units"] = df.apply(
@@ -930,7 +1031,7 @@ def generate_ai_plays():
         watch_local["watch_priority"] = watch_local["watch_tier"].map(watch_priority).fillna(0)
         watch_local = watch_local.sort_values(
             ["watch_priority", "rank_score", "true_confidence"],
-            ascending=[False, False, False]
+            ascending=[False, False, False],
         ).drop(columns=["watch_priority"], errors="ignore")
 
     combined = pd.concat([active_final, watch_local], ignore_index=True)
@@ -938,7 +1039,8 @@ def generate_ai_plays():
     if combined.empty:
         return pd.DataFrame(columns=empty_cols)
 
-    return combined.sort_values(["status", "rank_score"], ascending=[True, False]).reset_index(drop=True)# =========================================================
+    return combined.sort_values(["status", "rank_score"], ascending=[True, False]).reset_index(drop=True)
+# =========================================================
 # PARLAY INTELLIGENCE
 # =========================================================
 def calculate_correlation_score(legs):

@@ -560,54 +560,31 @@ today_games = parse_today_games(st.session_state.get("today_games_text", ""))
 # =========================================================
 # LIVE ODDS FETCH (MANUAL REFRESH ONLY)
 # =========================================================
-def fetch_live_nba_odds(force_refresh=False):
-    import time
+def api_status_label():
+    if st.session_state.get("last_odds_refresh_ok"):
+        return "LIVE", "#10b981", "#ecfdf5", "#065f46"
 
-    now_epoch = time.time()
-    cooldown_seconds = int(st.session_state.get("api_cooldown_seconds", 90))
-    last_pull_epoch = float(st.session_state.get("last_api_pull_epoch", 0.0))
-    seconds_since_last_pull = now_epoch - last_pull_epoch
+    err = str(st.session_state.get("last_refresh_error", "")).lower()
 
-    cached_games = st.session_state.get("last_successful_odds_games", [])
-
-    # ---------------------------------
-    # MISSING API KEY
-    # ---------------------------------
     if not ODDS_API_KEY:
-        if cached_games:
-            st.session_state["odds_api_games"] = cached_games
-            st.session_state["last_odds_refresh_ok"] = True
-            st.session_state["last_refresh_error"] = "Missing ODDS_API_KEY. Using cached odds."
-            st.session_state["last_refresh_count"] = len(cached_games)
-            st.session_state["api_mode"] = "cached"
-            st.session_state["api_status_note"] = "Using cached odds because API key is missing."
-            return cached_games
+        return "NO KEY", "#f59e0b", "#fffbeb", "#92400e"
+    if "401" in err or "unauthorized" in err:
+        return "KEY ERROR", "#ef4444", "#fef2f2", "#991b1b"
+    if "usage" in err or "quota" in err or "credits" in err or "out_of_usage_credits" in err:
+        return "LIMIT HIT", "#f97316", "#fff7ed", "#9a3412"
+    if err:
+        return "OFFLINE", "#64748b", "#f8fafc", "#334155"
 
+    return "IDLE", "#64748b", "#f8fafc", "#334155"
+
+
+def fetch_live_nba_odds():
+    if not ODDS_API_KEY:
         st.session_state["odds_api_games"] = []
         st.session_state["last_odds_refresh_ok"] = False
         st.session_state["last_refresh_error"] = "Missing ODDS_API_KEY in Streamlit secrets."
         st.session_state["last_refresh_count"] = 0
-        st.session_state["api_mode"] = "fallback"
-        st.session_state["api_status_note"] = "No API key found."
         return []
-
-    # ---------------------------------
-    # COOLDOWN PROTECTION
-    # ---------------------------------
-    if (
-        not force_refresh
-        and last_pull_epoch > 0
-        and seconds_since_last_pull < cooldown_seconds
-    ):
-        if cached_games:
-            remaining = int(cooldown_seconds - seconds_since_last_pull)
-            st.session_state["odds_api_games"] = cached_games
-            st.session_state["last_odds_refresh_ok"] = True
-            st.session_state["last_refresh_error"] = ""
-            st.session_state["last_refresh_count"] = len(cached_games)
-            st.session_state["api_mode"] = "cached"
-            st.session_state["api_status_note"] = f"Cooldown active. Reusing cached odds for {remaining}s."
-            return cached_games
 
     params = {
         "apiKey": ODDS_API_KEY,
@@ -626,35 +603,33 @@ def fetch_live_nba_odds(force_refresh=False):
             data = []
 
         st.session_state["odds_api_games"] = data
-        st.session_state["last_successful_odds_games"] = data
         st.session_state["last_odds_refresh_ok"] = True
         st.session_state["last_refresh_error"] = ""
         st.session_state["last_refresh_count"] = len(data)
         st.session_state["last_refresh_time"] = pd.Timestamp.now().strftime("%Y-%m-%d %I:%M:%S %p")
-        st.session_state["last_api_pull_epoch"] = now_epoch
-        st.session_state["api_mode"] = "live"
-        st.session_state["api_status_note"] = "Live odds loaded successfully."
         return data
 
-    except Exception as e:
-        error_text = str(e)
+    except requests.exceptions.HTTPError as e:
+        status_code = getattr(e.response, "status_code", None)
 
-        # OUT OF CREDITS / UNAUTHORIZED / FAILURE -> fallback to cache
-        if cached_games:
-            st.session_state["odds_api_games"] = cached_games
-            st.session_state["last_odds_refresh_ok"] = True
-            st.session_state["last_refresh_error"] = error_text
-            st.session_state["last_refresh_count"] = len(cached_games)
-            st.session_state["api_mode"] = "cached"
-            st.session_state["api_status_note"] = "API failed. Reusing last successful odds snapshot."
-            return cached_games
+        if status_code == 401:
+            friendly_error = "401 Unauthorized — API key invalid, expired, or wrong."
+        elif status_code == 429:
+            friendly_error = "429 Rate limit / quota reached."
+        else:
+            friendly_error = f"HTTP error: {e}"
 
         st.session_state["odds_api_games"] = []
         st.session_state["last_odds_refresh_ok"] = False
-        st.session_state["last_refresh_error"] = error_text
+        st.session_state["last_refresh_error"] = friendly_error
         st.session_state["last_refresh_count"] = 0
-        st.session_state["api_mode"] = "fallback"
-        st.session_state["api_status_note"] = "API failed and no cached odds are available."
+        return []
+
+    except Exception as e:
+        st.session_state["odds_api_games"] = []
+        st.session_state["last_odds_refresh_ok"] = False
+        st.session_state["last_refresh_error"] = str(e)
+        st.session_state["last_refresh_count"] = 0
         return []
 
 
@@ -663,46 +638,51 @@ st.sidebar.markdown("### 📡 Live Odds Control")
 if st.sidebar.button("🔄 Refresh Live Odds"):
     with st.sidebar:
         with st.spinner("Refreshing live odds..."):
-            data = fetch_live_nba_odds(force_refresh=True)
-
-            api_mode = st.session_state.get("api_mode", "idle")
-
-            if api_mode == "live":
-                st.success(f"Loaded {len(data)} live game(s).")
-            elif api_mode == "cached":
-                st.warning(f"Using cached odds snapshot ({len(data)} game(s)).")
+            data = fetch_live_nba_odds()
+            if st.session_state["last_odds_refresh_ok"]:
+                st.success(f"Loaded {len(data)} game(s).")
             else:
                 st.error("Refresh failed.")
+
+status_text, status_dot, status_bg, status_fg = api_status_label()
+
+st.sidebar.markdown(
+    f"""
+    <div style="
+        background:{status_bg};
+        border:1px solid #e5e7eb;
+        border-radius:14px;
+        padding:10px 12px;
+        margin-top:8px;
+        margin-bottom:8px;">
+        <div style="display:flex;align-items:center;gap:8px;font-weight:800;color:{status_fg};">
+            <span style="
+                width:10px;
+                height:10px;
+                border-radius:999px;
+                background:{status_dot};
+                display:inline-block;"></span>
+            API Status: {status_text}
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 if st.session_state.get("last_refresh_time"):
     st.sidebar.caption(f"Last refresh: {st.session_state['last_refresh_time']}")
 
 st.sidebar.caption(f"Games in memory: {len(st.session_state.get('odds_api_games', []))}")
 
-api_mode = st.session_state.get("api_mode", "idle")
-api_note = st.session_state.get("api_status_note", "")
-
-if api_mode == "live":
-    st.sidebar.caption("Mode: Live API")
-elif api_mode == "cached":
-    st.sidebar.caption("Mode: Cached Fallback")
-elif api_mode == "fallback":
-    st.sidebar.caption("Mode: No Data Fallback")
-
-if api_note:
-    st.sidebar.caption(api_note)
-
-if st.session_state.get("last_refresh_error"):
-    error_text = str(st.session_state["last_refresh_error"])
-
-    if "401" in error_text or "Unauthorized" in error_text:
-        st.sidebar.error("API key rejected. Check The Odds API key in Streamlit secrets.")
-    elif "OUT_OF_USAGE_CREDITS" in error_text:
-        st.sidebar.error("The Odds API monthly credits are exhausted.")
-    elif "429" in error_text:
-        st.sidebar.error("Rate limit hit. Wait before refreshing again.")
+err = st.session_state.get("last_refresh_error", "")
+if err:
+    if "401" in err.lower() or "unauthorized" in err.lower():
+        st.sidebar.warning("Your Odds API key is not being accepted right now.")
+    elif "429" in err.lower() or "quota" in err.lower() or "usage" in err.lower() or "credits" in err.lower():
+        st.sidebar.warning("Your Odds API usage limit appears to be reached.")
     else:
-        st.sidebar.caption(f"Error: {error_text}")# =========================================================
+        st.sidebar.caption(f"Error: {err}")
+# =========================================================
 # SMART DECISION LAYER
 # =========================================================
 def books_score(books_seen):
@@ -2075,16 +2055,44 @@ h1, h2, h3 {
 # =========================================================
 # HEADER
 # =========================================================
-st.title("🔥 Sports Betting AI Dashboard V33.1")
-st.caption("Manual Live Odds Refresh • Real Slate Matching Fix • True Confidence Cleanup • Top Plays Cap")
+status_text, status_dot, status_bg, status_fg = api_status_label()
+
+st.title("🔥 Sports Betting AI Dashboard V33.4")
+st.caption("Manual Live Odds Refresh • API Status Badge • Fallback Polish • True Confidence Cleanup")
+
+st.markdown(
+    f"""
+    <div style="
+        display:inline-flex;
+        align-items:center;
+        gap:8px;
+        background:{status_bg};
+        color:{status_fg};
+        border:1px solid #e5e7eb;
+        border-radius:999px;
+        padding:6px 12px;
+        font-weight:800;
+        margin-bottom:10px;">
+        <span style="
+            width:10px;
+            height:10px;
+            border-radius:999px;
+            background:{status_dot};
+            display:inline-block;"></span>
+        API {status_text}
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+if status_text in ["KEY ERROR", "NO KEY", "LIMIT HIT", "OFFLINE"]:
+    st.info("Fallback mode is active. Team-market logic still runs cleanly, but live odds are unavailable until API access is restored.")
 
 if auto_logged_count > 0:
     st.markdown(
         f'<div class="notice-box">Auto-logged {auto_logged_count} new active play(s).</div>',
         unsafe_allow_html=True,
     )
-
-
 # =========================================================
 # SNAPSHOT
 # =========================================================

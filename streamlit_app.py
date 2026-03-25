@@ -1349,7 +1349,6 @@ def render_play_card(row: pd.Series, show_best_badge: bool = False):
     """
 
     components.html(html, height=285 if is_mobile() else 340, scrolling=False)
-
 # =========================================================
 # PARLAY CARD RENDER
 # =========================================================
@@ -1390,7 +1389,6 @@ def render_parlay_card(parlay):
     """
 
     components.html(html, height=260, scrolling=False)
-
 # =========================================================
 # TABLE RENDER HELPERS
 # =========================================================
@@ -1451,7 +1449,6 @@ def render_mobile_or_table(df: pd.DataFrame, best_first: bool = False):
     else:
         render_table_desktop(df)
 
-
 # =========================================================
 # PORTFOLIO LAYER
 # =========================================================
@@ -1493,7 +1490,6 @@ def build_ai_portfolio(best_single, chosen_parlay, parlay_candidates):
             running_units += units
 
     return portfolio
-
 
 # =========================================================
 # DATA PREP (CRITICAL FIX)
@@ -1627,12 +1623,11 @@ h1, h2, h3 {
 """,
     unsafe_allow_html=True,
 )
-
 # =========================================================
 # HEADER
 # =========================================================
 st.title("🔥 Sports Betting AI Dashboard V33.1")
-st.caption("Real Player Fix • Smart Filter Engine • True Confidence Cleanup • Top Plays Cap")
+st.caption("Manual Live Odds Refresh • Real Slate Matching Fix • True Confidence Cleanup • Top Plays Cap")
 
 if auto_logged_count > 0:
     st.markdown(
@@ -1660,7 +1655,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 st.markdown("</div>", unsafe_allow_html=True)
-
 # =========================================================
 # NAVIGATION
 # =========================================================
@@ -1688,6 +1682,8 @@ if nav == "Top Plays":
 
     if not today_games:
         st.warning("Enter today's real games in the sidebar to generate plays.")
+    elif len(st.session_state.get("odds_api_games", [])) == 0:
+        st.warning("Press 'Refresh Live Odds' in the sidebar to load live odds.")
     else:
         top_df = (
             active_df.sort_values(["rank_score", "true_confidence"], ascending=False)
@@ -1709,6 +1705,8 @@ elif nav == "Watchlist":
 
     if not today_games:
         st.warning("Enter today's real games in the sidebar to generate plays.")
+    elif len(st.session_state.get("odds_api_games", [])) == 0:
+        st.warning("Press 'Refresh Live Odds' in the sidebar to load live odds.")
     else:
         wl_df = (
             watch_df.sort_values(["rank_score", "true_confidence"], ascending=False)
@@ -1729,7 +1727,9 @@ elif nav == "AI Slip":
     else:
         st.warning("No live slate entered.")
 
-    if best_row is not None:
+    if len(st.session_state.get("odds_api_games", [])) == 0:
+        st.warning("Press 'Refresh Live Odds' in the sidebar to load live odds.")
+    elif best_row is not None:
         risk_level = "Low" if float(best_row["units"]) <= 0.60 else "Moderate"
 
         st.markdown(
@@ -1795,7 +1795,6 @@ elif nav == "AI Slip":
             )
 
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-
 
 # =========================================================
 # BET LOG
@@ -1868,8 +1867,6 @@ elif nav == "Bet Log":
             st.success("Bet added.")
 
     st.markdown("</div>", unsafe_allow_html=True)
-
-
 # =========================================================
 # ADAPTIVE SETTINGS
 # =========================================================

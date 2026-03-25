@@ -754,6 +754,21 @@ def generate_ai_plays():
     def normalize_outcome_name(name):
         return normalize_team_name(str(name).strip())
 
+    def add_scored_row(row, base_tags):
+        tc, qs, reasons = compute_true_confidence(row)
+        row["true_confidence"] = tc
+        row["quality_score"] = qs
+        row["decision_reasons"] = reasons
+        row["confidence"] = confidence_bucket_from_true_conf(tc)
+
+        tags = list(base_tags)
+        for reason in reasons:
+            if reason not in tags:
+                tags.append(reason)
+        row["ai_tags"] = tags[:6]
+
+        rows.append(row)
+
     def get_best_market_outcome(bookmakers, market_key, target_name=None):
         best_price = None
         books_found = 0
@@ -892,6 +907,81 @@ def generate_ai_plays():
 
         return best_point, best_price, books_found
 
+    def build_prop_rows_for_game(game, away_team, home_team, bookmakers):
+        if not ENABLE_PLAYER_PROPS:
+            return
+
+        prop_books_seen = max(2, min(4, len(bookmakers)))
+        prop_consensus = "Strong" if prop_books_seen >= 4 else ("Fair" if prop_books_seen >= 2 else "Thin")
+
+        players_added = set()
+        game_prop_count = 0
+
+        teams_for_props = [away_team, home_team]
+
+        for team_name in teams_for_props:
+            if game_prop_count >= MAX_PROP_PLAYS_PER_GAME:
+                break
+
+            player_pool = starter_pool_for_team(team_name) if PROPS_ONLY_STARTERS else starter_pool_for_team(team_name)
+
+            for player_name in player_pool:
+                if game_prop_count >= MAX_PROP_PLAYS_PER_GAME:
+                    break
+
+                player_key = f"{game}::{player_name}"
+                if player_key in players_added:
+                    continue
+
+                prop_type = random.choice(PROP_TYPES)
+                market_name = f"prop_{prop_type}"
+
+                selection = build_prop_selection(player_name, prop_type)
+                odds_val = random.choice([-135, -125, -120, -115, -110, -105, 100, 105, 110, 115, 120, 125])
+
+                if not in_allowed_odds_range(format_american(odds_val), PROP_ODDS_RANGE[0], PROP_ODDS_RANGE[1]):
+                    continue
+
+                edge = round(random.uniform(2.6, 5.9), 2)
+                score = round(random.uniform(80.0, 98.8), 1)
+                price_edge = round(random.uniform(0.9, 2.7), 2)
+
+                row = {
+                    "game": game,
+                    "market": market_name,
+                    "selection": selection,
+                    "odds": format_american(odds_val),
+                    "edge": edge,
+                    "score": score,
+                    "units": 0.0,
+                    "tier": "C",
+                    "quality_label": "Watch",
+                    "status": "Watch",
+                    "watch_tier": "",
+                    "confidence": "Low",
+                    "books_seen": prop_books_seen,
+                    "best_price": "Sim",
+                    "consensus": prop_consensus,
+                    "price_edge": price_edge,
+                    "ai_tags": [],
+                }
+
+                add_scored_row(
+                    row,
+                    [
+                        "player prop",
+                        "starters only" if PROPS_ONLY_STARTERS else "player pool",
+                        prop_type,
+                        "simulated prop line",
+                    ],
+                )
+
+                players_added.add(player_key)
+                game_prop_count += 1
+
+                if len(players_added) >= MAX_PLAYS_PER_PLAYER * len(player_pool):
+                    continue
+
     for event in live_games:
         home_team = normalize_team_name(event.get("home_team", "Home"))
         away_team = normalize_team_name(event.get("away_team", "Away"))
@@ -936,22 +1026,10 @@ def generate_ai_plays():
                 "best_price": "Yes",
                 "consensus": consensus,
                 "price_edge": price_edge,
-                "ai_tags": ["API live odds", "moneyline", "best price"],
+                "ai_tags": [],
             }
 
-            tc, qs, reasons = compute_true_confidence(row)
-            row["true_confidence"] = tc
-            row["quality_score"] = qs
-            row["decision_reasons"] = reasons
-            row["confidence"] = confidence_bucket_from_true_conf(tc)
-
-            tags = ["API live odds", "moneyline", "best price"]
-            for reason in reasons:
-                if reason not in tags:
-                    tags.append(reason)
-            row["ai_tags"] = tags[:6]
-
-            rows.append(row)
+            add_scored_row(row, ["API live odds", "moneyline", "best price"])
 
         # ---------------------------
         # SPREADS
@@ -987,22 +1065,10 @@ def generate_ai_plays():
                 "best_price": "Yes",
                 "consensus": consensus,
                 "price_edge": price_edge,
-                "ai_tags": ["API live odds", "spread", "best line"],
+                "ai_tags": [],
             }
 
-            tc, qs, reasons = compute_true_confidence(row)
-            row["true_confidence"] = tc
-            row["quality_score"] = qs
-            row["decision_reasons"] = reasons
-            row["confidence"] = confidence_bucket_from_true_conf(tc)
-
-            tags = ["API live odds", "spread", "best line"]
-            for reason in reasons:
-                if reason not in tags:
-                    tags.append(reason)
-            row["ai_tags"] = tags[:6]
-
-            rows.append(row)
+            add_scored_row(row, ["API live odds", "spread", "best line"])
 
         # ---------------------------
         # TOTALS
@@ -1036,26 +1102,22 @@ def generate_ai_plays():
                 "best_price": "Yes",
                 "consensus": consensus,
                 "price_edge": price_edge,
-                "ai_tags": ["API live odds", "total", "best line"],
+                "ai_tags": [],
             }
 
-            tc, qs, reasons = compute_true_confidence(row)
-            row["true_confidence"] = tc
-            row["quality_score"] = qs
-            row["decision_reasons"] = reasons
-            row["confidence"] = confidence_bucket_from_true_conf(tc)
+            add_scored_row(row, ["API live odds", "total", "best line"])
 
-            tags = ["API live odds", "total", "best line"]
-            for reason in reasons:
-                if reason not in tags:
-                    tags.append(reason)
-            row["ai_tags"] = tags[:6]
-
-            rows.append(row)
+        # ---------------------------
+        # PLAYER PROPS
+        # ---------------------------
+        build_prop_rows_for_game(game, away_team, home_team, bookmakers)
 
     df = pd.DataFrame(rows)
     if df.empty:
         return pd.DataFrame(columns=empty_cols)
+
+    if "selection" in df.columns:
+        df = df.drop_duplicates(subset=["game", "market", "selection", "odds"]).copy()
 
     df["rank_score"] = (
         df["true_confidence"] * 0.55

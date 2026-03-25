@@ -458,17 +458,17 @@ def parse_today_games(games_text: str):
         lowered = cleaned.lower()
 
         if " vs " in lowered:
-            parts = lowered.split(" vs ")
+            parts = cleaned.split(" vs ")
         elif " v " in lowered:
-            parts = lowered.split(" v ")
+            parts = cleaned.split(" v ")
         else:
             continue
 
         if len(parts) != 2:
             continue
 
-        away = parts[0].strip().upper()
-        home = parts[1].strip().upper()
+        away = normalize_team_name(parts[0].strip())
+        home = normalize_team_name(parts[1].strip())
 
         if away and home:
             games.append(f"{away} vs {home}")
@@ -485,7 +485,6 @@ st.sidebar.text_area(
 )
 
 today_games = parse_today_games(st.session_state.get("today_games_text", ""))
-
 # =========================================================
 # SMART DECISION LAYER
 # =========================================================

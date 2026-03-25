@@ -1231,7 +1231,6 @@ def choose_best_parlay(active_df):
         return fallback_candidates[0], sharp_candidates, fallback_candidates
     return None, sharp_candidates, fallback_candidates
 
-
 # =========================================================
 # AUTO-LOG ACTIVE PLAYS
 # =========================================================

@@ -465,7 +465,6 @@ def starter_pool_for_team(team_name: str):
         f"{normalized} Starter 4",
         f"{normalized} Starter 5",
     ]
-
 # =========================================================
 # LIVE SLATE INPUT
 # =========================================================

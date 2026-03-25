@@ -296,77 +296,138 @@ def classify_watch_tier(row):
 # TEAM NORMALIZATION (FULL NBA COVERAGE)
 # =========================================================
 def normalize_team_name(abbrev: str):
+    raw = str(abbrev).strip()
+    key = raw.upper()
+
     mapping = {
         # EAST
         "ATL": "Hawks",
+        "ATLANTA HAWKS": "Hawks",
         "HAWKS": "Hawks",
+
         "BOS": "Celtics",
+        "BOSTON CELTICS": "Celtics",
         "CELTICS": "Celtics",
+
         "BKN": "Nets",
+        "BROOKLYN NETS": "Nets",
         "BROOKLYN": "Nets",
         "NETS": "Nets",
+
         "CHA": "Hornets",
+        "CHARLOTTE HORNETS": "Hornets",
         "HORNETS": "Hornets",
+
         "CHI": "Bulls",
+        "CHICAGO BULLS": "Bulls",
         "BULLS": "Bulls",
+
         "CLE": "Cavaliers",
+        "CLEVELAND CAVALIERS": "Cavaliers",
         "CAVALIERS": "Cavaliers",
+
         "DET": "Pistons",
+        "DETROIT PISTONS": "Pistons",
         "PISTONS": "Pistons",
+
         "IND": "Pacers",
+        "INDIANA PACERS": "Pacers",
         "PACERS": "Pacers",
+
         "MIA": "Heat",
+        "MIAMI HEAT": "Heat",
         "HEAT": "Heat",
+
         "MIL": "Bucks",
+        "MILWAUKEE BUCKS": "Bucks",
         "BUCKS": "Bucks",
+
         "NYK": "Knicks",
+        "NEW YORK KNICKS": "Knicks",
         "KNICKS": "Knicks",
+
         "ORL": "Magic",
+        "ORLANDO MAGIC": "Magic",
         "MAGIC": "Magic",
+
         "PHI": "76ers",
+        "PHILADELPHIA 76ERS": "76ers",
         "76ERS": "76ers",
         "SIXERS": "76ers",
+
         "TOR": "Raptors",
+        "TORONTO RAPTORS": "Raptors",
         "RAPTORS": "Raptors",
+
         "WAS": "Wizards",
+        "WASHINGTON WIZARDS": "Wizards",
         "WIZARDS": "Wizards",
 
         # WEST
         "DAL": "Mavericks",
+        "DALLAS MAVERICKS": "Mavericks",
         "MAVERICKS": "Mavericks",
+
         "DEN": "Nuggets",
+        "DENVER NUGGETS": "Nuggets",
         "NUGGETS": "Nuggets",
+
         "GSW": "Warriors",
+        "GOLDEN STATE WARRIORS": "Warriors",
         "WARRIORS": "Warriors",
+
         "HOU": "Rockets",
+        "HOUSTON ROCKETS": "Rockets",
         "ROCKETS": "Rockets",
+
         "LAC": "Clippers",
+        "LOS ANGELES CLIPPERS": "Clippers",
         "CLIPPERS": "Clippers",
+
         "LAL": "Lakers",
+        "LOS ANGELES LAKERS": "Lakers",
         "LAKERS": "Lakers",
+
         "MEM": "Grizzlies",
+        "MEMPHIS GRIZZLIES": "Grizzlies",
         "GRIZZLIES": "Grizzlies",
+
         "MIN": "Timberwolves",
+        "MINNESOTA TIMBERWOLVES": "Timberwolves",
         "TIMBERWOLVES": "Timberwolves",
         "WOLVES": "Timberwolves",
+
         "NOP": "Pelicans",
+        "NEW ORLEANS PELICANS": "Pelicans",
         "PELICANS": "Pelicans",
+
         "OKC": "Thunder",
+        "OKLAHOMA CITY THUNDER": "Thunder",
         "THUNDER": "Thunder",
+
         "PHX": "Suns",
+        "PHOENIX SUNS": "Suns",
         "SUNS": "Suns",
+
         "POR": "Trail Blazers",
+        "PORTLAND TRAIL BLAZERS": "Trail Blazers",
         "TRAIL BLAZERS": "Trail Blazers",
         "BLAZERS": "Trail Blazers",
+
         "SAC": "Kings",
+        "SACRAMENTO KINGS": "Kings",
         "KINGS": "Kings",
+
         "SAS": "Spurs",
+        "SAN ANTONIO SPURS": "Spurs",
         "SPURS": "Spurs",
+
         "UTA": "Jazz",
+        "UTAH JAZZ": "Jazz",
         "JAZZ": "Jazz",
     }
 
-    return mapping.get(str(abbrev).strip().upper(), str(abbrev).strip().title())
+    return mapping.get(key, raw.title())
 
 
 def team_names_from_game(game: str):
@@ -404,45 +465,6 @@ def starter_pool_for_team(team_name: str):
         f"{normalized} Starter 4",
         f"{normalized} Starter 5",
     ]
-
-
-def prop_line_for_type(prop_type: str):
-    default_lines = {
-        "points": [17.5, 19.5, 21.5, 23.5, 25.5, 27.5],
-        "rebounds": [5.5, 6.5, 7.5, 8.5, 9.5, 10.5],
-        "assists": [4.5, 5.5, 6.5, 7.5, 8.5],
-        "pra": [28.5, 31.5, 34.5, 37.5, 40.5],
-    }
-    return random.choice(default_lines.get(prop_type, [10.5, 12.5]))
-
-
-def build_prop_selection(player_name: str, prop_type: str):
-    line = prop_line_for_type(prop_type)
-    label_map = {
-        "points": "Points",
-        "rebounds": "Rebounds",
-        "assists": "Assists",
-        "pra": "PRA",
-    }
-    direction = random.choice(["Over", "Under"])
-    return f"{player_name} {direction} {line} {label_map.get(prop_type, prop_type.title())}"
-
-
-def is_prop_market(market: str):
-    return str(market).lower().startswith("prop_")
-
-
-def prop_market_label(market: str):
-    m = str(market).lower()
-    if m == "prop_points":
-        return "Player Props • Points"
-    if m == "prop_rebounds":
-        return "Player Props • Rebounds"
-    if m == "prop_assists":
-        return "Player Props • Assists"
-    if m == "prop_pra":
-        return "Player Props • PRA"
-    return str(market).replace("_", " ").title()
 
 # =========================================================
 # LIVE SLATE INPUT

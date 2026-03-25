@@ -546,7 +546,9 @@ if st.session_state.get("last_refresh_time"):
 st.sidebar.caption(f"Games in memory: {len(st.session_state.get('odds_api_games', []))}")
 
 if st.session_state.get("last_refresh_error"):
-    st.sidebar.caption(f"Error: {st.session_state['last_refresh_error']}")# =========================================================
+    st.sidebar.caption(f"Error: {st.session_state['last_refresh_error']}")
+
+# =========================================================
 # SMART DECISION LAYER
 # =========================================================
 def books_score(books_seen):

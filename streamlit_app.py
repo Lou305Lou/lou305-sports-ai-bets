@@ -299,40 +299,74 @@ def normalize_team_name(abbrev: str):
     mapping = {
         # EAST
         "ATL": "Hawks",
+        "HAWKS": "Hawks",
         "BOS": "Celtics",
+        "CELTICS": "Celtics",
         "BKN": "Nets",
+        "BROOKLYN": "Nets",
+        "NETS": "Nets",
         "CHA": "Hornets",
+        "HORNETS": "Hornets",
         "CHI": "Bulls",
+        "BULLS": "Bulls",
         "CLE": "Cavaliers",
+        "CAVALIERS": "Cavaliers",
         "DET": "Pistons",
+        "PISTONS": "Pistons",
         "IND": "Pacers",
+        "PACERS": "Pacers",
         "MIA": "Heat",
+        "HEAT": "Heat",
         "MIL": "Bucks",
+        "BUCKS": "Bucks",
         "NYK": "Knicks",
+        "KNICKS": "Knicks",
         "ORL": "Magic",
+        "MAGIC": "Magic",
         "PHI": "76ers",
+        "76ERS": "76ers",
+        "SIXERS": "76ers",
         "TOR": "Raptors",
+        "RAPTORS": "Raptors",
         "WAS": "Wizards",
+        "WIZARDS": "Wizards",
 
         # WEST
         "DAL": "Mavericks",
+        "MAVERICKS": "Mavericks",
         "DEN": "Nuggets",
+        "NUGGETS": "Nuggets",
         "GSW": "Warriors",
+        "WARRIORS": "Warriors",
         "HOU": "Rockets",
+        "ROCKETS": "Rockets",
         "LAC": "Clippers",
+        "CLIPPERS": "Clippers",
         "LAL": "Lakers",
+        "LAKERS": "Lakers",
         "MEM": "Grizzlies",
+        "GRIZZLIES": "Grizzlies",
         "MIN": "Timberwolves",
+        "TIMBERWOLVES": "Timberwolves",
+        "WOLVES": "Timberwolves",
         "NOP": "Pelicans",
+        "PELICANS": "Pelicans",
         "OKC": "Thunder",
+        "THUNDER": "Thunder",
         "PHX": "Suns",
+        "SUNS": "Suns",
         "POR": "Trail Blazers",
+        "TRAIL BLAZERS": "Trail Blazers",
+        "BLAZERS": "Trail Blazers",
         "SAC": "Kings",
+        "KINGS": "Kings",
         "SAS": "Spurs",
+        "SPURS": "Spurs",
         "UTA": "Jazz",
+        "JAZZ": "Jazz",
     }
 
-    return mapping.get(abbrev.upper(), abbrev.upper())
+    return mapping.get(str(abbrev).strip().upper(), str(abbrev).strip().title())
 
 
 def team_names_from_game(game: str):
@@ -409,7 +443,6 @@ def prop_market_label(market: str):
     if m == "prop_pra":
         return "Player Props • PRA"
     return str(market).replace("_", " ").title()
-
 
 # =========================================================
 # LIVE SLATE INPUT

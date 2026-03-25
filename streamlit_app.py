@@ -774,6 +774,8 @@ def generate_ai_plays():
             best_price, books_found = get_best_market_outcome(bookmakers, "h2h", team_name)
             if best_price is None or books_found == 0:
                 continue
+            if not in_allowed_odds_range(format_american(best_price), DEFAULT_ODDS_RANGE[0], DEFAULT_ODDS_RANGE[1]):
+                continue
 
             edge = round(random.uniform(2.4, 5.8), 2)
             score = round(random.uniform(80.0, 99.5), 1)
@@ -820,6 +822,8 @@ def generate_ai_plays():
         for team_name in [away_team, home_team]:
             best_point, best_price, books_found = get_best_spread_outcome(bookmakers, team_name)
             if best_point is None or best_price is None or books_found == 0:
+                continue
+            if not in_allowed_odds_range(format_american(best_price), DEFAULT_ODDS_RANGE[0], DEFAULT_ODDS_RANGE[1]):
                 continue
 
             edge = round(random.uniform(2.4, 5.8), 2)
@@ -869,6 +873,8 @@ def generate_ai_plays():
         for side in ["Over", "Under"]:
             best_point, best_price, books_found = get_best_total_outcome(bookmakers, side)
             if best_point is None or best_price is None or books_found == 0:
+                continue
+            if not in_allowed_odds_range(format_american(best_price), DEFAULT_ODDS_RANGE[0], DEFAULT_ODDS_RANGE[1]):
                 continue
 
             edge = round(random.uniform(2.4, 5.8), 2)
@@ -1025,8 +1031,14 @@ def generate_ai_plays():
     if combined.empty:
         return pd.DataFrame(columns=empty_cols)
 
-    return combined.sort_values(["status", "rank_score"], ascending=[True, False]).reset_index(drop=True)
+    status_order = {"Active": 0, "Watch": 1}
+    combined["status_sort"] = combined["status"].map(status_order).fillna(9)
 
+    return (
+        combined.sort_values(["status_sort", "rank_score"], ascending=[True, False])
+        .drop(columns=["status_sort"], errors="ignore")
+        .reset_index(drop=True)
+    )
 # =========================================================
 # PARLAY INTELLIGENCE
 # =========================================================

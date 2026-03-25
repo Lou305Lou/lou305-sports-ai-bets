@@ -97,7 +97,6 @@ PROPS_ONLY_STARTERS = True
 PROP_TYPES = ["points", "rebounds", "assists", "pra"]
 PROP_ODDS_RANGE = (-200, 150)
 MAX_PROP_PLAYS_PER_GAME = 8
-MAX_PLAYS_PER_PLAYER = 1
 
 ODDS_API_KEY = st.secrets.get("ODDS_API_KEY", "")
 ODDS_API_URL = "https://api.the-odds-api.com/v4/sports/basketball_nba/odds"

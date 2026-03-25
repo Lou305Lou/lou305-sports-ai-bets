@@ -2199,7 +2199,7 @@ if nav == "Top Plays":
 
     if not today_games:
         st.warning("Enter today's real games in the sidebar to generate plays.")
-    elif len(st.session_state.get("odds_api_games", [])) == 0:
+    elif len(get_effective_odds_games()) == 0:
         st.warning("Press 'Refresh Live Odds' in the sidebar to load live odds.")
     else:
         top_df = (

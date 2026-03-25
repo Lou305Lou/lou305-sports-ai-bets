@@ -28,13 +28,18 @@ if "odds_api_games" not in st.session_state:
     st.session_state["odds_api_games"] = []
 if "last_odds_refresh_ok" not in st.session_state:
     st.session_state["last_odds_refresh_ok"] = False
+if "last_refresh_time" not in st.session_state:
+    st.session_state["last_refresh_time"] = None
+if "last_refresh_error" not in st.session_state:
+    st.session_state["last_refresh_error"] = ""
+if "last_refresh_count" not in st.session_state:
+    st.session_state["last_refresh_count"] = 0
 
 st.sidebar.toggle("📱 Mobile Mode", key="is_mobile")
 
 
 def is_mobile() -> bool:
     return st.session_state.get("is_mobile", True)
-
 
 # =========================================================
 # ENGINE SETTINGS

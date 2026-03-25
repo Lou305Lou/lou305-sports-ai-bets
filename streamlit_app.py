@@ -983,7 +983,7 @@ def generate_ai_plays():
         return pd.DataFrame(columns=empty_cols)
 
     return combined.sort_values(["status", "rank_score"], ascending=[True, False]).reset_index(drop=True)
-Please just provide the corrected code to paste. I don’t want to search through this anymore. It’s getting to be to much. Thank you.
+
 # =========================================================
 # PARLAY INTELLIGENCE
 # =========================================================

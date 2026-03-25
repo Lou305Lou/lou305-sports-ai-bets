@@ -2146,7 +2146,7 @@ st.markdown(
 )
 
 if status_text in ["CACHED", "LIMIT HIT", "OFFLINE", "KEY ERROR", "NO KEY"]:
-    st.info("Fallback mode is active. The app will use cached odds when available so your team-market engine can still run.")
+    st.info("Fallback mode is active. Cached odds will be used when available. If no cached odds exist yet, no live market plays can be generated.")
 
 if auto_logged_count > 0:
     st.markdown(
@@ -2222,7 +2222,7 @@ elif nav == "Watchlist":
 
     if not today_games:
         st.warning("Enter today's real games in the sidebar to generate plays.")
-    elif len(st.session_state.get("odds_api_games", [])) == 0:
+    elif len(get_effective_odds_games()) == 0:
         st.warning("Press 'Refresh Live Odds' in the sidebar to load live odds.")
     else:
         wl_df = (
@@ -2244,9 +2244,9 @@ elif nav == "AI Slip":
     else:
         st.warning("No live slate entered.")
 
-    if len(st.session_state.get("odds_api_games", [])) == 0:
-        st.warning("Press 'Refresh Live Odds' in the sidebar to load live odds.")
-    elif best_row is not None:
+    if len(get_effective_odds_games()) == 0:
+    st.warning("Press 'Refresh Live Odds' in the sidebar to load live odds.")
+elif best_row is not None:
         risk_level = "Low" if float(best_row["units"]) <= 0.60 else "Moderate"
 
         st.markdown(

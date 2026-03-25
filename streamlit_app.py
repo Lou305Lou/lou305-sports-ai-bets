@@ -35,12 +35,23 @@ if "last_refresh_error" not in st.session_state:
 if "last_refresh_count" not in st.session_state:
     st.session_state["last_refresh_count"] = 0
 
+# V33.3 SMART API USAGE STATE
+if "last_successful_odds_games" not in st.session_state:
+    st.session_state["last_successful_odds_games"] = []
+if "last_api_pull_epoch" not in st.session_state:
+    st.session_state["last_api_pull_epoch"] = 0.0
+if "api_cooldown_seconds" not in st.session_state:
+    st.session_state["api_cooldown_seconds"] = 90
+if "api_mode" not in st.session_state:
+    st.session_state["api_mode"] = "idle"   # idle | live | cached | fallback
+if "api_status_note" not in st.session_state:
+    st.session_state["api_status_note"] = ""
+
 st.sidebar.toggle("📱 Mobile Mode", key="is_mobile")
 
 
 def is_mobile() -> bool:
     return st.session_state.get("is_mobile", True)
-
 # =========================================================
 # ENGINE SETTINGS
 # =========================================================
@@ -549,13 +560,54 @@ today_games = parse_today_games(st.session_state.get("today_games_text", ""))
 # =========================================================
 # LIVE ODDS FETCH (MANUAL REFRESH ONLY)
 # =========================================================
-def fetch_live_nba_odds():
+def fetch_live_nba_odds(force_refresh=False):
+    import time
+
+    now_epoch = time.time()
+    cooldown_seconds = int(st.session_state.get("api_cooldown_seconds", 90))
+    last_pull_epoch = float(st.session_state.get("last_api_pull_epoch", 0.0))
+    seconds_since_last_pull = now_epoch - last_pull_epoch
+
+    cached_games = st.session_state.get("last_successful_odds_games", [])
+
+    # ---------------------------------
+    # MISSING API KEY
+    # ---------------------------------
     if not ODDS_API_KEY:
+        if cached_games:
+            st.session_state["odds_api_games"] = cached_games
+            st.session_state["last_odds_refresh_ok"] = True
+            st.session_state["last_refresh_error"] = "Missing ODDS_API_KEY. Using cached odds."
+            st.session_state["last_refresh_count"] = len(cached_games)
+            st.session_state["api_mode"] = "cached"
+            st.session_state["api_status_note"] = "Using cached odds because API key is missing."
+            return cached_games
+
         st.session_state["odds_api_games"] = []
         st.session_state["last_odds_refresh_ok"] = False
         st.session_state["last_refresh_error"] = "Missing ODDS_API_KEY in Streamlit secrets."
         st.session_state["last_refresh_count"] = 0
+        st.session_state["api_mode"] = "fallback"
+        st.session_state["api_status_note"] = "No API key found."
         return []
+
+    # ---------------------------------
+    # COOLDOWN PROTECTION
+    # ---------------------------------
+    if (
+        not force_refresh
+        and last_pull_epoch > 0
+        and seconds_since_last_pull < cooldown_seconds
+    ):
+        if cached_games:
+            remaining = int(cooldown_seconds - seconds_since_last_pull)
+            st.session_state["odds_api_games"] = cached_games
+            st.session_state["last_odds_refresh_ok"] = True
+            st.session_state["last_refresh_error"] = ""
+            st.session_state["last_refresh_count"] = len(cached_games)
+            st.session_state["api_mode"] = "cached"
+            st.session_state["api_status_note"] = f"Cooldown active. Reusing cached odds for {remaining}s."
+            return cached_games
 
     params = {
         "apiKey": ODDS_API_KEY,
@@ -574,17 +626,35 @@ def fetch_live_nba_odds():
             data = []
 
         st.session_state["odds_api_games"] = data
+        st.session_state["last_successful_odds_games"] = data
         st.session_state["last_odds_refresh_ok"] = True
         st.session_state["last_refresh_error"] = ""
         st.session_state["last_refresh_count"] = len(data)
         st.session_state["last_refresh_time"] = pd.Timestamp.now().strftime("%Y-%m-%d %I:%M:%S %p")
+        st.session_state["last_api_pull_epoch"] = now_epoch
+        st.session_state["api_mode"] = "live"
+        st.session_state["api_status_note"] = "Live odds loaded successfully."
         return data
 
     except Exception as e:
+        error_text = str(e)
+
+        # OUT OF CREDITS / UNAUTHORIZED / FAILURE -> fallback to cache
+        if cached_games:
+            st.session_state["odds_api_games"] = cached_games
+            st.session_state["last_odds_refresh_ok"] = True
+            st.session_state["last_refresh_error"] = error_text
+            st.session_state["last_refresh_count"] = len(cached_games)
+            st.session_state["api_mode"] = "cached"
+            st.session_state["api_status_note"] = "API failed. Reusing last successful odds snapshot."
+            return cached_games
+
         st.session_state["odds_api_games"] = []
         st.session_state["last_odds_refresh_ok"] = False
-        st.session_state["last_refresh_error"] = str(e)
+        st.session_state["last_refresh_error"] = error_text
         st.session_state["last_refresh_count"] = 0
+        st.session_state["api_mode"] = "fallback"
+        st.session_state["api_status_note"] = "API failed and no cached odds are available."
         return []
 
 
@@ -593,9 +663,14 @@ st.sidebar.markdown("### 📡 Live Odds Control")
 if st.sidebar.button("🔄 Refresh Live Odds"):
     with st.sidebar:
         with st.spinner("Refreshing live odds..."):
-            data = fetch_live_nba_odds()
-            if st.session_state["last_odds_refresh_ok"]:
-                st.success(f"Loaded {len(data)} game(s).")
+            data = fetch_live_nba_odds(force_refresh=True)
+
+            api_mode = st.session_state.get("api_mode", "idle")
+
+            if api_mode == "live":
+                st.success(f"Loaded {len(data)} live game(s).")
+            elif api_mode == "cached":
+                st.warning(f"Using cached odds snapshot ({len(data)} game(s)).")
             else:
                 st.error("Refresh failed.")
 
@@ -604,10 +679,30 @@ if st.session_state.get("last_refresh_time"):
 
 st.sidebar.caption(f"Games in memory: {len(st.session_state.get('odds_api_games', []))}")
 
-if st.session_state.get("last_refresh_error"):
-    st.sidebar.caption(f"Error: {st.session_state['last_refresh_error']}")
+api_mode = st.session_state.get("api_mode", "idle")
+api_note = st.session_state.get("api_status_note", "")
 
-# =========================================================
+if api_mode == "live":
+    st.sidebar.caption("Mode: Live API")
+elif api_mode == "cached":
+    st.sidebar.caption("Mode: Cached Fallback")
+elif api_mode == "fallback":
+    st.sidebar.caption("Mode: No Data Fallback")
+
+if api_note:
+    st.sidebar.caption(api_note)
+
+if st.session_state.get("last_refresh_error"):
+    error_text = str(st.session_state["last_refresh_error"])
+
+    if "401" in error_text or "Unauthorized" in error_text:
+        st.sidebar.error("API key rejected. Check The Odds API key in Streamlit secrets.")
+    elif "OUT_OF_USAGE_CREDITS" in error_text:
+        st.sidebar.error("The Odds API monthly credits are exhausted.")
+    elif "429" in error_text:
+        st.sidebar.error("Rate limit hit. Wait before refreshing again.")
+    else:
+        st.sidebar.caption(f"Error: {error_text}")# =========================================================
 # SMART DECISION LAYER
 # =========================================================
 def books_score(books_seen):

@@ -477,6 +477,7 @@ def starter_pool_for_team(team_name: str):
         f"{normalized} Starter 4",
         f"{normalized} Starter 5",
     ]
+    
 def prop_line_for_type(prop_type: str):
     default_lines = {
         "points": [17.5, 19.5, 21.5, 23.5, 25.5, 27.5],

@@ -2403,6 +2403,7 @@ try:
             sport=selected_sportsdata_sport,
             game_date=sportsdata_game_date
         )
+        df = recalculate_play_metrics(df)
 except Exception as e:
     st.warning(f"SportsData enrichment skipped: {e}")
 

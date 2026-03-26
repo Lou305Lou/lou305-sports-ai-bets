@@ -2175,47 +2175,56 @@ def choose_best_parlay(active_df):
     return None, sharp_candidates, fallback_candidates
 
 # =========================================================
-# AUTO-LOG ACTIVE PLAYS
+# AUTO-LOG ACTIVE PLAYS (CATEGORY-AWARE)
 # =========================================================
-def auto_log_active_plays(df):
-    if df.empty:
+def auto_log_active_plays(df: pd.DataFrame):
+    if df is None or df.empty:
         return 0
 
-    count_added = 0
-    active_only = df[df["status"] == "Active"].copy()
+    added = 0
 
-    for _, row in active_only.iterrows():
-        play_id = row["play_id"]
-        if play_id in st.session_state["auto_logged_ids"]:
+    for _, row in df.iterrows():
+        if str(row.get("status")) != "Active":
             continue
 
-        log_row = {
-            "play_id": play_id,
-            "game": row["game"],
-            "market": row["market"],
-            "selection": row["selection"],
-            "odds": row["odds"],
-            "edge": row["edge"],
-            "score": row["score"],
-            "units": row["units"],
-            "confidence": row["confidence"],
-            "true_confidence": row["true_confidence"],
-            "tier": row["tier"],
-            "quality_label": row["quality_label"],
-            "status": row["status"],
+        pid = row.get("play_id")
+        if not pid:
+            continue
+
+        # Prevent duplicates across sessions
+        if pid in st.session_state["auto_logged_ids"]:
+            continue
+
+        # Determine category
+        category = "Top Play"
+
+        new_bet = {
+            "play_id": pid,
+            "game": row.get("game"),
+            "market": row.get("market"),
+            "selection": row.get("selection"),
+            "odds": row.get("odds"),
+            "units": row.get("units"),
+            "confidence": row.get("confidence"),
+            "true_confidence": row.get("true_confidence"),
+            "edge": row.get("edge"),
+            "books_seen": row.get("books_seen"),
+            "consensus": row.get("consensus"),
             "result": "Pending",
             "profit": 0.0,
             "mode": TEST_MODE,
+            "log_category": category,
+            "timestamp": datetime.now().isoformat(),
         }
 
-        st.session_state["bet_log"].append(log_row)
-        st.session_state["auto_logged_ids"].add(play_id)
-        count_added += 1
+        st.session_state["bet_log"].append(new_bet)
+        st.session_state["auto_logged_ids"].add(pid)
+        added += 1
 
-    if count_added > 0:
+    if added > 0:
         save_bet_log()
 
-    return count_added
+    return added
 
 # =========================================================
 # PLAY CARD RENDER

@@ -1574,25 +1574,28 @@ def generate_ai_plays():
                 score = round(clamp(base_score + score_boost, 76.0, 99.2), 1)
                 price_edge = round(clamp(base_price_edge + price_boost, 0.5, 3.0), 2)
 
-                row = {
-                    "game": game,
-                    "market": market_name,
-                    "selection": selection,
-                    "odds": format_american(odds_val),
-                    "edge": edge,
-                    "score": score,
-                    "units": 0.0,
-                    "tier": "C",
-                    "quality_label": "Watch",
-                    "status": "Watch",
-                    "watch_tier": "",
-                    "confidence": "Low",
-                    "books_seen": prop_books_seen,
-                    "best_price": "Sim",
-                    "consensus": prop_consensus,
-                    "price_edge": price_edge,
-                    "ai_tags": [],
-                }
+            row = {
+                "game": game,
+                "market": "moneyline",
+                "selection": team_name,
+                "player": "",
+                "team": team_name,
+                "opponent": home_team if team_name == away_team else away_team,
+                "odds": format_american(best_price),
+                "edge": edge,
+                "score": score,
+                "units": 0.0,
+                "tier": "C",
+                "quality_label": "Watch",
+                "status": "Watch",
+                "watch_tier": "",
+                "confidence": "Low",
+                "books_seen": books_found,
+                "best_price": "Yes",
+                "consensus": consensus,
+                "price_edge": price_edge,
+                "ai_tags": [],
+            }
 
                 prop_tags = [
                     "player prop",

@@ -219,6 +219,66 @@ def fetch_team_game_stats_by_date(game_date=None, sport="nba"):
     set_cached_data(key, data)
     return data
 
+# =========================================================
+# LOOKUP BUILDERS
+# =========================================================
+def build_injury_lookup(injuries):
+    lookup = {}
+    try:
+        for row in injuries or []:
+            name = str(row.get("Name", "")).strip().lower()
+            team = str(row.get("Team", "")).strip().upper()
+            status = str(row.get("Status", "")).strip()
+            note = str(row.get("InjuryNotes", "")).strip()
+            if name:
+                lookup[name] = {
+                    "team": team,
+                    "status": status,
+                    "note": note,
+                    "raw": row,
+                }
+    except:
+        pass
+    return lookup
+
+def build_player_lookup(players):
+    lookup = {}
+    try:
+        for row in players or []:
+            name = str(row.get("Name", "")).strip().lower()
+            if name:
+                lookup[name] = row
+    except:
+        pass
+    return lookup
+
+def build_lineup_lookup(lineups):
+    lookup = {}
+    try:
+        for row in lineups or []:
+            team = str(row.get("Team", "") or row.get("TeamName", "")).strip().upper()
+            if not team:
+                continue
+            if team not in lookup:
+                lookup[team] = []
+            for slot in ["PG", "SG", "SF", "PF", "C", "G", "F"]:
+                if row.get(slot):
+                    lookup[team].append(str(row.get(slot)).strip())
+    except:
+        pass
+    return lookup
+
+def build_team_game_stats_lookup(team_stats):
+    lookup = {}
+    try:
+        for row in team_stats or []:
+            team = str(row.get("Team", "")).strip().upper()
+            if team:
+                lookup[team] = row
+    except:
+        pass
+    return lookup
+
 
 # =========================================================
 # ENGINE SETTINGS

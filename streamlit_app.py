@@ -79,7 +79,71 @@ SPORTSDATA_CALL_LIMITS = {
     "injured_players_hours": 8,
     "starting_lineups_hours": 8,
     "team_game_stats_by_date_hours": 12,
-}# =========================================================
+}
+# =========================================================
+# CACHE + DATE HELPERS
+# =========================================================
+def today_str():
+    return datetime.now().strftime("%Y-%m-%d")
+
+def yesterday_str():
+    return (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+
+def cache_key(*parts):
+    return "||".join([str(p) for p in parts])
+
+def get_cached_data(key, max_age_hours=12):
+    try:
+        cache = st.session_state.get("sportsdata_cache", {})
+        stamp_map = st.session_state.get("sportsdata_last_refresh", {})
+        if key not in cache or key not in stamp_map:
+            return None
+        age = datetime.now() - stamp_map[key]
+        if age.total_seconds() > max_age_hours * 3600:
+            return None
+        return cache[key]
+    except:
+        return None
+
+def set_cached_data(key, data):
+    try:
+        st.session_state["sportsdata_cache"][key] = data
+        st.session_state["sportsdata_last_refresh"][key] = datetime.now()
+    except:
+        pass
+
+# =========================================================
+# SPORTS DATA REQUESTS
+# =========================================================
+def sportsdata_headers():
+    return {
+        "Ocp-Apim-Subscription-Key": SPORTSDATA_API_KEY
+    }
+
+def safe_get_json(url, params=None, timeout=20):
+    if not SPORTSDATA_API_KEY:
+        return None
+    try:
+        r = requests.get(url, headers=sportsdata_headers(), params=params, timeout=timeout)
+        if r.status_code != 200:
+            return None
+        return r.json()
+    except:
+        return None
+
+def sportsdata_enabled():
+    return bool(st.session_state.get("sportsdata_enabled", True) and SPORTSDATA_API_KEY)
+
+def normalize_sport_for_sportsdata(sport_label):
+    s = str(sport_label).lower()
+    if "nba" in s or "basketball" in s:
+        return "nba"
+    if "nhl" in s or "hockey" in s:
+        return "nhl"
+    if "mlb" in s or "baseball" in s:
+        return "mlb"
+    return "nba"
+# =========================================================
 # ENGINE SETTINGS
 # =========================================================
 MIN_ACTIVE_EDGE = 4.00

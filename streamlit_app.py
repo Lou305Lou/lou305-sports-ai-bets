@@ -143,6 +143,83 @@ def normalize_sport_for_sportsdata(sport_label):
     if "mlb" in s or "baseball" in s:
         return "mlb"
     return "nba"
+
+# =========================================================
+# SPORTSDATA FEED FUNCTIONS
+# =========================================================
+def fetch_player_details(sport="nba"):
+    sport = normalize_sport_for_sportsdata(sport)
+    key = cache_key("player_details", sport)
+    cached = get_cached_data(key, SPORTSDATA_CALL_LIMITS["player_details_hours"])
+    if cached is not None:
+        return cached
+
+    url = f"{SPORTSDATA_BASES[sport]}/scores/json/Players"
+    data = safe_get_json(url)
+    if data is None:
+        return []
+    set_cached_data(key, data)
+    return data
+
+def fetch_depth_chart(sport="nba"):
+    sport = normalize_sport_for_sportsdata(sport)
+    key = cache_key("depth_chart", sport)
+    cached = get_cached_data(key, SPORTSDATA_CALL_LIMITS["depth_chart_hours"])
+    if cached is not None:
+        return cached
+
+    url = f"{SPORTSDATA_BASES[sport]}/scores/json/DepthCharts"
+    data = safe_get_json(url)
+    if data is None:
+        return []
+    set_cached_data(key, data)
+    return data
+
+def fetch_injured_players(sport="nba"):
+    sport = normalize_sport_for_sportsdata(sport)
+    key = cache_key("injured_players", sport)
+    cached = get_cached_data(key, SPORTSDATA_CALL_LIMITS["injured_players_hours"])
+    if cached is not None:
+        return cached
+
+    url = f"{SPORTSDATA_BASES[sport]}/scores/json/InjuredPlayers"
+    data = safe_get_json(url)
+    if data is None:
+        return []
+    set_cached_data(key, data)
+    return data
+
+def fetch_starting_lineups_by_date(game_date=None, sport="nba"):
+    sport = normalize_sport_for_sportsdata(sport)
+    game_date = game_date or today_str()
+    key = cache_key("starting_lineups", sport, game_date)
+    cached = get_cached_data(key, SPORTSDATA_CALL_LIMITS["starting_lineups_hours"])
+    if cached is not None:
+        return cached
+
+    url = f"{SPORTSDATA_BASES[sport]}/projections/json/StartingLineupsByDate/{game_date}"
+    data = safe_get_json(url)
+    if data is None:
+        return []
+    set_cached_data(key, data)
+    return data
+
+def fetch_team_game_stats_by_date(game_date=None, sport="nba"):
+    sport = normalize_sport_for_sportsdata(sport)
+    game_date = game_date or yesterday_str()
+    key = cache_key("team_game_stats_by_date", sport, game_date)
+    cached = get_cached_data(key, SPORTSDATA_CALL_LIMITS["team_game_stats_by_date_hours"])
+    if cached is not None:
+        return cached
+
+    url = f"{SPORTSDATA_BASES[sport]}/stats/json/TeamGameStatsByDate/{game_date}"
+    data = safe_get_json(url)
+    if data is None:
+        return []
+    set_cached_data(key, data)
+    return data
+
+
 # =========================================================
 # ENGINE SETTINGS
 # =========================================================

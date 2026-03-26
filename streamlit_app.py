@@ -2901,19 +2901,18 @@ elif nav == "Bet Log":
     if len(st.session_state["bet_log"]) == 0:
         st.info("No bets logged yet.")
     else:
-        log_df = pd.DataFrame(st.session_state["bet_log"]).copy()
-
-        for idx in log_df.index:
-            pid = log_df.loc[idx, "play_id"]
+        for i, bet in enumerate(st.session_state["bet_log"]):
+            pid = bet.get("play_id")
             if pid in st.session_state["manual_results"]:
                 result = st.session_state["manual_results"][pid]
-                log_df.loc[idx, "result"] = result
-                log_df.loc[idx, "profit"] = settle_result_pnl(
-                    log_df.loc[idx, "odds"],
-                    log_df.loc[idx, "units"],
+                st.session_state["bet_log"][i]["result"] = result
+                st.session_state["bet_log"][i]["profit"] = settle_result_pnl(
+                    bet.get("odds"),
+                    bet.get("units", 0),
                     result,
                 )
 
+        log_df = pd.DataFrame(st.session_state["bet_log"]).copy()
         st.dataframe(log_df, use_container_width=True, hide_index=True)
 
         st.subheader("Update Results")
@@ -2925,6 +2924,18 @@ elif nav == "Bet Log":
 
         if st.button("Save Result"):
             st.session_state["manual_results"][selected_id] = result_choice
+
+            for i, bet in enumerate(st.session_state["bet_log"]):
+                if bet.get("play_id") == selected_id:
+                    st.session_state["bet_log"][i]["result"] = result_choice
+                    st.session_state["bet_log"][i]["profit"] = settle_result_pnl(
+                        bet.get("odds"),
+                        bet.get("units", 0),
+                        result_choice,
+                    )
+                    break
+
+            save_bet_log()
             st.success("Updated.")
             st.rerun()
 
@@ -2935,7 +2946,7 @@ elif nav == "Bet Log":
 
         with c1:
             game = st.text_input("Game")
-            market = st.selectbox("Market", ["moneyline", "spread", "total", "prop_points", "prop_rebounds", "prop_assists", "prop_pra"])
+            market = st.selectbox("Market", ["moneyline", "spread", "total"])
             units = st.number_input("Units", 0.0, 10.0, 0.5)
 
         with c2:
@@ -2960,6 +2971,7 @@ elif nav == "Bet Log":
             }
 
             st.session_state["bet_log"].append(new)
+            save_bet_log()
             st.success("Bet added.")
 
     st.markdown("</div>", unsafe_allow_html=True)

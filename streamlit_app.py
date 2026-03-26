@@ -2584,24 +2584,6 @@ total_units = active_df["units"].sum() if not active_df.empty else 0.0
 
 
 # =========================================================
-# ADAPTIVE SETTINGS
-# =========================================================
-with st.expander("⚙️ Adaptive Settings", expanded=False):
-    c1, c2 = st.columns(2)
-
-    with c1:
-        st.write(f"Min Active Edge: {MIN_ACTIVE_EDGE}")
-        st.write(f"Min Watch Edge: {MIN_WATCH_EDGE}")
-        st.write(f"Min Active True Conf: {MIN_ACTIVE_TRUE_CONF}")
-        st.write(f"Min Active Books: {MIN_ACTIVE_BOOKS}")
-
-    with c2:
-        st.write(f"Max Top Plays: {TOP_PLAYS_LIMIT}")
-        st.write(f"Max Active Plays: {MAX_ACTIVE_PLAYS}")
-        st.write(f"Max Total Units: {MAX_TOTAL_UNITS}")
-        st.write(f"Min Parlay Odds: +{MIN_PARLAY_ODDS}")
-
-# =========================================================
 # PAGE STYLES
 # =========================================================
 st.markdown(
@@ -2708,6 +2690,7 @@ h1, h2, h3 {
 """,
     unsafe_allow_html=True,
 )
+
 # =========================================================
 # HEADER
 # =========================================================
@@ -2749,6 +2732,7 @@ if auto_logged_count > 0:
         f'<div class="notice-box">Auto-logged {auto_logged_count} new active play(s).</div>',
         unsafe_allow_html=True,
     )
+
 # =========================================================
 # SNAPSHOT
 # =========================================================
@@ -2768,6 +2752,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 st.markdown("</div>", unsafe_allow_html=True)
+
 # =========================================================
 # NAVIGATION
 # =========================================================
@@ -2784,7 +2769,6 @@ nav = st.radio(
 
 st.session_state["nav_choice"] = nav
 st.markdown("</div>", unsafe_allow_html=True)
-
 
 # =========================================================
 # TOP PLAYS
@@ -2992,6 +2976,7 @@ elif nav == "Bet Log":
             st.success("Bet added.")
 
     st.markdown("</div>", unsafe_allow_html=True)
+
 # =========================================================
 # ADAPTIVE SETTINGS
 # =========================================================

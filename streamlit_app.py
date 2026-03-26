@@ -2300,6 +2300,20 @@ def build_ai_portfolio(best_single, chosen_parlay, parlay_candidates):
 # DATA PREP (CRITICAL FIX)
 # =========================================================
 df = generate_ai_plays()
+
+# =========================================================
+# APPLY SPORTSDATA ENRICHMENT
+# =========================================================
+try:
+    if df is not None and len(df) > 0:
+        df = enrich_plays_with_sportsdata(
+            df,
+            sport=selected_sportsdata_sport,
+            game_date=sportsdata_game_date
+        )
+except Exception as e:
+    st.warning(f"SportsData enrichment skipped: {e}")
+
 auto_logged_count = auto_log_active_plays(df)
 
 active_df = df[df["status"] == "Active"].copy().reset_index(drop=True)

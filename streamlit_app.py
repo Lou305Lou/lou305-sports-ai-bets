@@ -316,10 +316,10 @@ def enrich_plays_with_sportsdata(plays_df, sport="nba", game_date=None):
         team = str(row.get("team", "")).strip().upper()
         opp = str(row.get("opponent", "")).strip().upper()
 
-        context_score = 0
-        notes = []
+                context_score = 0
+                notes = []
 
-                injury = injury_lookup.get(player)
+        injury = injury_lookup.get(player)
         if injury:
             status = str(injury.get("status", "")).lower()
             out.at[idx, "injury_flag"] = injury.get("status", "")

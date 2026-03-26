@@ -5,13 +5,41 @@ import hashlib
 import random
 import time
 from itertools import combinations
+from datetime import datetime, timedelta
 
 import pandas as pd
 import requests
 import streamlit as st
 import streamlit.components.v1 as components
 
-st.set_page_config(page_title="Sports Betting AI Dashboard V33.4", layout="wide")
+st.set_page_config(page_title="Sports Betting AI Dashboard V34", layout="wide")
+
+# =========================================================
+# API CONFIG
+# =========================================================
+SPORTSDATA_BASES = {
+    "nba": "https://api.sportsdata.io/v3/nba",
+    "nhl": "https://api.sportsdata.io/v3/nhl",
+    "mlb": "https://api.sportsdata.io/v3/mlb",
+}
+
+def get_sportsdata_key():
+    possible_keys = [
+        "SPORTSDATA_API_KEY",
+        "SPORTSDATAIO_API_KEY",
+        "SPORTS_DATA_API_KEY",
+    ]
+    for key_name in possible_keys:
+        try:
+            value = st.secrets.get(key_name, "")
+            if value:
+                return str(value).strip()
+        except:
+            pass
+    return ""
+
+SPORTSDATA_API_KEY = get_sportsdata_key()
+
 # =========================================================
 # SESSION STATE
 # =========================================================
@@ -27,33 +55,31 @@ if "manual_results" not in st.session_state:
     st.session_state["manual_results"] = {}
 if "odds_api_games" not in st.session_state:
     st.session_state["odds_api_games"] = []
-if "last_odds_refresh_ok" not in st.session_state:
-    st.session_state["last_odds_refresh_ok"] = False
-if "last_refresh_time" not in st.session_state:
-    st.session_state["last_refresh_time"] = None
-if "last_refresh_error" not in st.session_state:
-    st.session_state["last_refresh_error"] = ""
-if "last_refresh_count" not in st.session_state:
-    st.session_state["last_refresh_count"] = 0
+if "sportsdata_cache" not in st.session_state:
+    st.session_state["sportsdata_cache"] = {}
+if "sportsdata_last_refresh" not in st.session_state:
+    st.session_state["sportsdata_last_refresh"] = {}
+if "sportsdata_enabled" not in st.session_state:
+    st.session_state["sportsdata_enabled"] = True
 
-# V33.3 SMART API USAGE STATE
-if "last_successful_odds_games" not in st.session_state:
-    st.session_state["last_successful_odds_games"] = []
-if "last_api_pull_epoch" not in st.session_state:
-    st.session_state["last_api_pull_epoch"] = 0.0
-if "api_cooldown_seconds" not in st.session_state:
-    st.session_state["api_cooldown_seconds"] = 90
-if "api_mode" not in st.session_state:
-    st.session_state["api_mode"] = "idle"   # idle | live | cached | fallback
-if "api_status_note" not in st.session_state:
-    st.session_state["api_status_note"] = ""
-
-st.sidebar.toggle("📱 Mobile Mode", key="is_mobile")
-
-
-def is_mobile() -> bool:
-    return st.session_state.get("is_mobile", True)
 # =========================================================
+# SPORTS DATA FEED CONTROL
+# =========================================================
+SPORTSDATA_FEEDS = {
+    "player_details": True,
+    "depth_chart": True,
+    "injured_players": True,
+    "starting_lineups": True,
+    "team_game_stats_by_date": True,
+}
+
+SPORTSDATA_CALL_LIMITS = {
+    "player_details_hours": 24,
+    "depth_chart_hours": 24,
+    "injured_players_hours": 8,
+    "starting_lineups_hours": 8,
+    "team_game_stats_by_date_hours": 12,
+}# =========================================================
 # ENGINE SETTINGS
 # =========================================================
 MIN_ACTIVE_EDGE = 4.00

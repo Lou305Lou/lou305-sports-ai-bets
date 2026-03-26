@@ -2481,7 +2481,7 @@ def recalculate_play_metrics(df: pd.DataFrame):
     out = out[out["status"] != "Discard"].copy()
 
     if out.empty:
-        return out
+        return out.reset_index(drop=True)
 
     out["watch_tier"] = out.apply(
         lambda r: classify_watch_tier(r) if str(r["status"]) == "Watch" else "",
@@ -2504,7 +2504,80 @@ def recalculate_play_metrics(df: pd.DataFrame):
         + out["score"] * 0.08
     )
 
-    return out.reset_index(drop=True)
+    out["play_id"] = out.apply(
+        lambda r: build_play_id(
+            {
+                "game": r["game"],
+                "market": r["market"],
+                "selection": r["selection"],
+                "odds": r["odds"],
+            }
+        ),
+        axis=1,
+    )
+
+    active_local = (
+        out[out["status"] == "Active"]
+        .sort_values(["rank_score", "true_confidence"], ascending=False)
+        .head(TOP_PLAYS_LIMIT)
+        .copy()
+    )
+
+    watch_local = (
+        out[out["status"] == "Watch"]
+        .sort_values(["rank_score", "true_confidence"], ascending=False)
+        .head(WATCHLIST_LIMIT)
+        .copy()
+    )
+
+    active_rows = []
+    running_units = 0.0
+
+    for _, row in active_local.iterrows():
+        proposed_units = float(row["units"])
+
+        if len(active_rows) >= MAX_ACTIVE_PLAYS:
+            row2 = row.copy()
+            row2["status"] = "Watch"
+            row2["watch_tier"] = classify_watch_tier(row2)
+            row2["units"] = scale_watch_units(row2)
+            watch_local = pd.concat([watch_local, pd.DataFrame([row2])], ignore_index=True)
+            continue
+
+        if running_units + proposed_units > MAX_TOTAL_UNITS:
+            row2 = row.copy()
+            row2["status"] = "Watch"
+            row2["watch_tier"] = classify_watch_tier(row2)
+            row2["units"] = scale_watch_units(row2)
+            watch_local = pd.concat([watch_local, pd.DataFrame([row2])], ignore_index=True)
+            continue
+
+        active_rows.append(row)
+        running_units += proposed_units
+
+    active_final = pd.DataFrame(active_rows) if active_rows else pd.DataFrame(columns=out.columns)
+
+    if not watch_local.empty:
+        watch_priority = {"Near Active": 3, "Monitor": 2, "Weak Watch": 1}
+        watch_local["watch_priority"] = watch_local["watch_tier"].map(watch_priority).fillna(0)
+        watch_local = watch_local.sort_values(
+            ["watch_priority", "rank_score", "true_confidence"],
+            ascending=[False, False, False]
+        ).drop(columns=["watch_priority"], errors="ignore")
+
+    combined = pd.concat([active_final, watch_local], ignore_index=True)
+
+    if combined.empty:
+        return combined.reset_index(drop=True)
+
+    status_order = {"Active": 0, "Watch": 1}
+    combined["status_sort"] = combined["status"].map(status_order).fillna(9)
+
+    return (
+        combined.sort_values(["status_sort", "rank_score"], ascending=[True, False])
+        .drop(columns=["status_sort"], errors="ignore")
+        .reset_index(drop=True)
+    )
 
 
 # =========================================================

@@ -2537,7 +2537,52 @@ def render_mobile_or_table(df: pd.DataFrame, best_first: bool = False):
             render_play_card(row, show_best_badge=(best_first and idx == 0))
     else:
         render_table_desktop(df)
+# =========================================================
+# ROI CALCULATOR (CATEGORY-BASED)
+# =========================================================
+def build_roi_dashboard(log_df: pd.DataFrame):
+    if log_df is None or log_df.empty:
+        return pd.DataFrame()
 
+    df = log_df.copy()
+
+    # Only settled bets
+    df = df[df["result"].isin(["Win", "Loss", "Push"])]
+
+    if df.empty:
+        return pd.DataFrame()
+
+    df["units"] = pd.to_numeric(df.get("units", 0), errors="coerce").fillna(0)
+    df["profit"] = pd.to_numeric(df.get("profit", 0), errors="coerce").fillna(0)
+
+    grouped = []
+
+    for category, g in df.groupby("log_category"):
+        total_bets = len(g)
+        wins = (g["result"] == "Win").sum()
+        losses = (g["result"] == "Loss").sum()
+        pushes = (g["result"] == "Push").sum()
+
+        total_units = g["units"].sum()
+        total_profit = g["profit"].sum()
+
+        roi = (total_profit / total_units * 100) if total_units > 0 else 0
+        win_rate = (wins / (wins + losses) * 100) if (wins + losses) > 0 else 0
+
+        grouped.append({
+            "Category": category,
+            "Bets": total_bets,
+            "Wins": wins,
+            "Losses": losses,
+            "Pushes": pushes,
+            "Win Rate %": round(win_rate, 1),
+            "Units Risked": round(total_units, 2),
+            "Profit": round(total_profit, 2),
+            "ROI %": round(roi, 2),
+        })
+
+    return pd.DataFrame(grouped).sort_values("ROI %", ascending=False)
+    
 # =========================================================
 # PORTFOLIO LAYER
 # =========================================================
@@ -2940,7 +2985,16 @@ elif nav == "AI Slip":
 # =========================================================
 elif nav == "Bet Log":
     st.header("🧾 Bet Log")
+    st.subheader("📊 ROI Dashboard")
 
+log_df_full = pd.DataFrame(st.session_state["bet_log"])
+
+roi_df = build_roi_dashboard(log_df_full)
+
+if roi_df.empty:
+    st.info("No settled bets yet.")
+else:
+    st.dataframe(roi_df, use_container_width=True, hide_index=True)
     if len(st.session_state["bet_log"]) == 0:
         st.info("No bets logged yet.")
     else:

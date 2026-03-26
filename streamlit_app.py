@@ -316,11 +316,10 @@ def enrich_plays_with_sportsdata(plays_df, sport="nba", game_date=None):
         team = str(row.get("team", "")).strip().upper()
         opp = str(row.get("opponent", "")).strip().upper()
 
-                context_score = 0
-                notes = []
+        context_score = 0
+        notes = []
 
                 injury = injury_lookup.get(player)
-        
         if injury:
             status = str(injury.get("status", "")).lower()
             out.at[idx, "injury_flag"] = injury.get("status", "")
@@ -423,6 +422,9 @@ ODDS_BOOKMAKERS = "draftkings,fanduel,betmgm,caesars,espnbet,betrivers"
 # =========================================================
 # HELPERS
 # =========================================================
+def is_mobile():
+    return bool(st.session_state.get("is_mobile", True))
+
 def clamp(value, low, high):
     return max(low, min(high, value))
 

@@ -293,6 +293,8 @@ def enrich_plays_with_sportsdata(plays_df, sport="nba", game_date=None):
             plays_df["lineup_flag"] = ""
         if "context_score" not in plays_df.columns:
             plays_df["context_score"] = 0
+        if "sportsdata_note" not in plays_df.columns:
+            plays_df["sportsdata_note"] = ""
         return plays_df
 
     players = fetch_player_details(sport)
@@ -316,8 +318,8 @@ def enrich_plays_with_sportsdata(plays_df, sport="nba", game_date=None):
         team = str(row.get("team", "")).strip().upper()
         opp = str(row.get("opponent", "")).strip().upper()
 
-                context_score = 0
-                notes = []
+        context_score = 0
+        notes = []
 
         injury = injury_lookup.get(player)
         if injury:
@@ -1207,6 +1209,9 @@ def generate_ai_plays():
         "game",
         "market",
         "selection",
+        "player",
+        "team",
+        "opponent",
         "odds",
         "edge",
         "score",
@@ -1574,28 +1579,28 @@ def generate_ai_plays():
                 score = round(clamp(base_score + score_boost, 76.0, 99.2), 1)
                 price_edge = round(clamp(base_price_edge + price_boost, 0.5, 3.0), 2)
 
-            row = {
-                "game": game,
-                "market": "moneyline",
-                "selection": team_name,
-                "player": "",
-                "team": team_name,
-                "opponent": home_team if team_name == away_team else away_team,
-                "odds": format_american(best_price),
-                "edge": edge,
-                "score": score,
-                "units": 0.0,
-                "tier": "C",
-                "quality_label": "Watch",
-                "status": "Watch",
-                "watch_tier": "",
-                "confidence": "Low",
-                "books_seen": books_found,
-                "best_price": "Yes",
-                "consensus": consensus,
-                "price_edge": price_edge,
-                "ai_tags": [],
-            }
+                row = {
+                    "game": game,
+                    "market": market_name,
+                    "selection": selection,
+                    "player": player_name,
+                    "team": team_name,
+                    "opponent": home_team if team_name == away_team else away_team,
+                    "odds": format_american(odds_val),
+                    "edge": edge,
+                    "score": score,
+                    "units": 0.0,
+                    "tier": "C",
+                    "quality_label": "Watch",
+                    "status": "Watch",
+                    "watch_tier": "",
+                    "confidence": "Low",
+                    "books_seen": prop_books_seen,
+                    "best_price": "Sim",
+                    "consensus": prop_consensus,
+                    "price_edge": price_edge,
+                    "ai_tags": [],
+                }
 
                 prop_tags = [
                     "player prop",
@@ -1640,6 +1645,9 @@ def generate_ai_plays():
                 "game": game,
                 "market": "moneyline",
                 "selection": team_name,
+                "player": "",
+                "team": team_name,
+                "opponent": home_team if team_name == away_team else away_team,
                 "odds": format_american(best_price),
                 "edge": edge,
                 "score": score,
@@ -1675,6 +1683,9 @@ def generate_ai_plays():
                 "game": game,
                 "market": "spread",
                 "selection": f"{team_name} {point_str}",
+                "player": "",
+                "team": team_name,
+                "opponent": home_team if team_name == away_team else away_team,
                 "odds": format_american(best_price),
                 "edge": edge,
                 "score": score,
@@ -1708,6 +1719,9 @@ def generate_ai_plays():
                 "game": game,
                 "market": "total",
                 "selection": f"{side} {best_point:g}",
+                "player": "",
+                "team": "",
+                "opponent": "",
                 "odds": format_american(best_price),
                 "edge": edge,
                 "score": score,
@@ -1853,6 +1867,7 @@ def generate_ai_plays():
         .drop(columns=["status_sort"], errors="ignore")
         .reset_index(drop=True)
     )
+
 # =========================================================
 # PARLAY INTELLIGENCE
 # =========================================================

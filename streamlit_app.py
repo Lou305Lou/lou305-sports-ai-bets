@@ -874,6 +874,32 @@ st.sidebar.text_area(
 
 today_games = parse_today_games(st.session_state.get("today_games_text", ""))
 
+# =========================================================
+# SIDEBAR - SPORTSDATA CONTROLS
+# =========================================================
+st.sidebar.markdown("### 📡 SportsDataIO Controls")
+
+st.session_state["sportsdata_enabled"] = st.sidebar.toggle(
+    "Enable SportsDataIO Context",
+    value=st.session_state.get("sportsdata_enabled", True)
+)
+
+selected_sportsdata_sport = st.sidebar.selectbox(
+    "SportsDataIO Sport",
+    ["nba", "nhl", "mlb"],
+    index=0
+)
+
+sportsdata_game_date = st.sidebar.text_input(
+    "SportsData Game Date (YYYY-MM-DD)",
+    value=today_str()
+)
+
+if SPORTSDATA_API_KEY:
+    st.sidebar.success("SportsDataIO key loaded")
+else:
+    st.sidebar.warning("Missing SportsDataIO API key in Streamlit secrets")
+
 
 # =========================================================
 # LIVE ODDS FETCH (MANUAL REFRESH ONLY)

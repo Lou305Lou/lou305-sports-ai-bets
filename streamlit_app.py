@@ -22,15 +22,70 @@ BET_LOG_FILE = "bet_log.csv"
 def load_bet_log():
     try:
         df = pd.read_csv(BET_LOG_FILE)
-        return df.to_dict("records")
+
+        if df is None or df.empty:
+            return []
+
+        # Ensure required column exists
+        if "play_id" not in df.columns:
+            df["play_id"] = ""
+
+        # Clean values
+        df["play_id"] = df["play_id"].astype(str).str.strip()
+
+        # Remove duplicate logged plays across app restarts
+        # Keep the first occurrence so ROI/history stays stable
+        non_blank_ids = df["play_id"] != ""
+        df_with_ids = df[non_blank_ids].drop_duplicates(subset=["play_id"], keep="first")
+        df_without_ids = df[~non_blank_ids]
+
+        cleaned_df = pd.concat([df_with_ids, df_without_ids], ignore_index=True)
+
+        # Save cleaned version back to disk if duplicates were removed
+        if len(cleaned_df) != len(df):
+            cleaned_df.to_csv(BET_LOG_FILE, index=False)
+
+        return cleaned_df.to_dict("records")
     except:
         return []
 
 def save_bet_log():
     try:
-        pd.DataFrame(st.session_state["bet_log"]).to_csv(BET_LOG_FILE, index=False)
+        log_rows = st.session_state.get("bet_log", [])
+        df = pd.DataFrame(log_rows)
+
+        if df.empty:
+            df.to_csv(BET_LOG_FILE, index=False)
+            return
+
+        if "play_id" not in df.columns:
+            df["play_id"] = ""
+
+        df["play_id"] = df["play_id"].astype(str).str.strip()
+
+        # Prevent duplicate saved play_ids
+        non_blank_ids = df["play_id"] != ""
+        df_with_ids = df[non_blank_ids].drop_duplicates(subset=["play_id"], keep="first")
+        df_without_ids = df[~non_blank_ids]
+
+        cleaned_df = pd.concat([df_with_ids, df_without_ids], ignore_index=True)
+        cleaned_df.to_csv(BET_LOG_FILE, index=False)
+
+        # Keep session state synced with cleaned file
+        st.session_state["bet_log"] = cleaned_df.to_dict("records")
     except:
         pass
+
+def build_logged_id_set(log_rows):
+    ids = set()
+    try:
+        for row in log_rows or []:
+            pid = str(row.get("play_id", "")).strip()
+            if pid:
+                ids.add(pid)
+    except:
+        pass
+    return ids
 
 # =========================================================
 # API CONFIG
@@ -67,10 +122,16 @@ ODDS_BOOKMAKERS = "draftkings,fanduel,betmgm,caesars,espnbet,betrivers"
 # =========================================================
 if "is_mobile" not in st.session_state:
     st.session_state["is_mobile"] = True
+
 if "bet_log" not in st.session_state:
     st.session_state["bet_log"] = load_bet_log()
+
 if "auto_logged_ids" not in st.session_state:
-    st.session_state["auto_logged_ids"] = set()
+    st.session_state["auto_logged_ids"] = build_logged_id_set(st.session_state.get("bet_log", []))
+else:
+    # Re-sync on every app load so duplicates are blocked across restarts
+    st.session_state["auto_logged_ids"] = build_logged_id_set(st.session_state.get("bet_log", []))
+
 if "nav_choice" not in st.session_state:
     st.session_state["nav_choice"] = "Top Plays"
 if "manual_results" not in st.session_state:
@@ -116,7 +177,6 @@ SPORTSDATA_CALL_LIMITS = {
     "starting_lineups_hours": 8,
     "team_game_stats_by_date_hours": 12,
 }
-
 # =========================================================
 # CACHE + DATE HELPERS
 # =========================================================

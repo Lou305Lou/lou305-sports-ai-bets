@@ -2226,6 +2226,90 @@ def auto_log_active_plays(df: pd.DataFrame):
 
     return added
 
+def log_ai_slip_pick(best_row):
+    if best_row is None:
+        return False
+
+    pid = str(best_row.get("play_id", "")).strip()
+    if not pid:
+        return False
+
+    ai_slip_id = f"{pid}__ai_slip"
+
+    existing_ids = {
+        str(r.get("play_id", "")).strip()
+        for r in st.session_state.get("bet_log", [])
+    }
+
+    if ai_slip_id in existing_ids:
+        return False
+
+    new_row = {
+        "play_id": ai_slip_id,
+        "game": best_row.get("game"),
+        "market": best_row.get("market"),
+        "selection": best_row.get("selection"),
+        "odds": best_row.get("odds"),
+        "units": best_row.get("units"),
+        "confidence": best_row.get("confidence"),
+        "true_confidence": best_row.get("true_confidence"),
+        "edge": best_row.get("edge"),
+        "books_seen": best_row.get("books_seen"),
+        "consensus": best_row.get("consensus"),
+        "result": "Pending",
+        "profit": 0.0,
+        "mode": TEST_MODE,
+        "log_category": "AI Slip",
+        "timestamp": datetime.now().isoformat(),
+    }
+
+    st.session_state["bet_log"].append(new_row)
+    save_bet_log()
+    return True
+
+
+def log_ai_parlay_pick(best_parlay):
+    if best_parlay is None:
+        return False
+
+    parlay_key = "|".join(
+        [str(leg.get("selection", "")).strip() for leg in best_parlay.get("legs", [])]
+    )
+    if not parlay_key:
+        return False
+
+    parlay_id = hashlib.md5(f"AI_PARLAY|{parlay_key}|{best_parlay.get('combined_odds')}".encode()).hexdigest()
+
+    existing_ids = {
+        str(r.get("play_id", "")).strip()
+        for r in st.session_state.get("bet_log", [])
+    }
+
+    if parlay_id in existing_ids:
+        return False
+
+    new_row = {
+        "play_id": parlay_id,
+        "game": " | ".join(sorted(set([str(leg.get('game', '')) for leg in best_parlay.get("legs", [])]))),
+        "market": "parlay",
+        "selection": " | ".join([str(leg.get("selection", "")) for leg in best_parlay.get("legs", [])]),
+        "odds": best_parlay.get("combined_odds"),
+        "units": scale_parlay_units(best_parlay),
+        "confidence": "High" if float(best_parlay.get("avg_true_conf", 0)) >= 70 else "Medium",
+        "true_confidence": best_parlay.get("avg_true_conf"),
+        "edge": best_parlay.get("avg_edge"),
+        "books_seen": best_parlay.get("avg_books"),
+        "consensus": best_parlay.get("approval_type"),
+        "result": "Pending",
+        "profit": 0.0,
+        "mode": TEST_MODE,
+        "log_category": "AI Parlay",
+        "timestamp": datetime.now().isoformat(),
+    }
+
+    st.session_state["bet_log"].append(new_row)
+    save_bet_log()
+    return True
 # =========================================================
 # PLAY CARD RENDER
 # =========================================================

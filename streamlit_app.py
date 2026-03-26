@@ -2546,8 +2546,12 @@ def build_roi_dashboard(log_df: pd.DataFrame):
 
     df = log_df.copy()
 
+    # Ensure category exists
+    if "log_category" not in df.columns:
+        df["log_category"] = "Uncategorized"
+
     # Only settled bets
-    df = df[df["result"].isin(["Win", "Loss", "Push"])]
+    df = df[df["result"].isin(["Win", "Loss", "Push"])].copy()
 
     if df.empty:
         return pd.DataFrame()
@@ -2555,7 +2559,7 @@ def build_roi_dashboard(log_df: pd.DataFrame):
     df["units"] = pd.to_numeric(df.get("units", 0), errors="coerce").fillna(0)
     df["profit"] = pd.to_numeric(df.get("profit", 0), errors="coerce").fillna(0)
 
-    grouped = []
+    rows = []
 
     for category, g in df.groupby("log_category"):
         total_bets = len(g)
@@ -2563,25 +2567,28 @@ def build_roi_dashboard(log_df: pd.DataFrame):
         losses = (g["result"] == "Loss").sum()
         pushes = (g["result"] == "Push").sum()
 
-        total_units = g["units"].sum()
-        total_profit = g["profit"].sum()
+        units_risked = float(g["units"].sum())
+        total_profit = float(g["profit"].sum())
 
-        roi = (total_profit / total_units * 100) if total_units > 0 else 0
-        win_rate = (wins / (wins + losses) * 100) if (wins + losses) > 0 else 0
+        roi = (total_profit / units_risked * 100) if units_risked > 0 else 0.0
+        win_rate = (wins / (wins + losses) * 100) if (wins + losses) > 0 else 0.0
 
-        grouped.append({
+        rows.append({
             "Category": category,
             "Bets": total_bets,
             "Wins": wins,
             "Losses": losses,
             "Pushes": pushes,
             "Win Rate %": round(win_rate, 1),
-            "Units Risked": round(total_units, 2),
+            "Units Risked": round(units_risked, 2),
             "Profit": round(total_profit, 2),
             "ROI %": round(roi, 2),
         })
 
-    return pd.DataFrame(grouped).sort_values("ROI %", ascending=False)
+    return pd.DataFrame(rows).sort_values(
+        ["ROI %", "Profit"],
+        ascending=False
+    ).reset_index(drop=True)
     
 # =========================================================
 # PORTFOLIO LAYER
@@ -2985,16 +2992,23 @@ elif nav == "AI Slip":
 # =========================================================
 elif nav == "Bet Log":
     st.header("🧾 Bet Log")
+
+    # ================================
+    # ROI DASHBOARD
+    # ================================
     st.subheader("📊 ROI Dashboard")
 
-log_df_full = pd.DataFrame(st.session_state["bet_log"])
+    log_df_full = pd.DataFrame(st.session_state["bet_log"])
+    roi_df = build_roi_dashboard(log_df_full)
 
-roi_df = build_roi_dashboard(log_df_full)
+    if roi_df.empty:
+        st.info("No settled bets yet.")
+    else:
+        st.dataframe(roi_df, use_container_width=True, hide_index=True)
 
-if roi_df.empty:
-    st.info("No settled bets yet.")
-else:
-    st.dataframe(roi_df, use_container_width=True, hide_index=True)
+    # ================================
+    # BET LOG TABLE
+    # ================================
     if len(st.session_state["bet_log"]) == 0:
         st.info("No bets logged yet.")
     else:
@@ -3014,9 +3028,14 @@ else:
 
         st.subheader("Update Results")
 
-        options = [f"{r['selection']} | {r['game']} | {r['play_id']}" for _, r in log_df.iterrows()]
+        options = [
+            f"{r['selection']} | {r['game']} | {r['play_id']}"
+            for _, r in log_df.iterrows()
+        ]
+
         selected = st.selectbox("Select Bet", options)
         selected_id = selected.split(" | ")[-1]
+
         result_choice = st.selectbox("Result", ["Pending", "Win", "Loss", "Push"])
 
         if st.button("Save Result"):
@@ -3036,6 +3055,9 @@ else:
             st.success("Updated.")
             st.rerun()
 
+    # ================================
+    # MANUAL BET ENTRY
+    # ================================
     st.markdown('<div class="bet-form-wrap">', unsafe_allow_html=True)
 
     with st.form("manual_bet", clear_on_submit=True):
@@ -3055,16 +3077,27 @@ else:
 
         if submit:
             new = {
-                "play_id": build_play_id({"game": game, "market": market, "selection": selection, "odds": odds}),
+                "play_id": build_play_id({
+                    "game": game,
+                    "market": market,
+                    "selection": selection,
+                    "odds": odds
+                }),
                 "game": game,
                 "market": market,
                 "selection": selection,
                 "odds": odds,
                 "units": units,
                 "confidence": confidence,
+                "true_confidence": None,
+                "edge": None,
+                "books_seen": None,
+                "consensus": None,
                 "result": "Pending",
                 "profit": 0.0,
                 "mode": TEST_MODE,
+                "log_category": "Manual",
+                "timestamp": datetime.now().isoformat(),
             }
 
             st.session_state["bet_log"].append(new)
@@ -3072,7 +3105,6 @@ else:
             st.success("Bet added.")
 
     st.markdown("</div>", unsafe_allow_html=True)
-
 # =========================================================
 # ADAPTIVE SETTINGS
 # =========================================================

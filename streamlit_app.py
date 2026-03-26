@@ -909,11 +909,8 @@ st.session_state["sportsdata_enabled"] = st.sidebar.toggle(
     value=st.session_state.get("sportsdata_enabled", True)
 )
 
-selected_sportsdata_sport = st.sidebar.selectbox(
-    "SportsDataIO Sport",
-    ["nba", "nhl", "mlb"],
-    index=0
-)
+selected_sportsdata_sport = "nba"
+st.sidebar.caption("Sport: NBA (locked for V34 real-data mode)")
 
 sportsdata_game_date = st.sidebar.text_input(
     "SportsData Game Date (YYYY-MM-DD)",

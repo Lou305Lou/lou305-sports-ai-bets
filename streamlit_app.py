@@ -861,7 +861,9 @@ def parse_today_games(games_text: str):
 
     return games
 
-
+# =========================================================
+# SIDEBAR CONTROLS
+# =========================================================
 st.sidebar.markdown("### 🗓️ Today's Slate")
 st.sidebar.text_area(
     "Enter today's real games (one per line)",

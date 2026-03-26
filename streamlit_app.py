@@ -2651,11 +2651,17 @@ try:
 except Exception as e:
     st.warning(f"SportsData enrichment skipped: {e}")
 
+# ================================
+# AUTO LOG TOP PLAYS
+# ================================
 auto_logged_count = auto_log_active_plays(df)
 
 active_df = df[df["status"] == "Active"].copy().reset_index(drop=True)
 watch_df = df[df["status"] == "Watch"].copy().reset_index(drop=True)
 
+# ================================
+# BEST SINGLE
+# ================================
 best_row = None
 if not active_df.empty:
     best_row = active_df.sort_values(
@@ -2663,19 +2669,33 @@ if not active_df.empty:
         ascending=False
     ).iloc[0]
 
+# ================================
+# PARLAY ENGINE
+# ================================
 best_parlay, sharp_candidates, fallback_candidates = choose_best_parlay(active_df)
 
-log_ai_slip_pick(best_row)
-log_ai_parlay_pick(best_parlay)
+# ================================
+# SAFE LOGGING (RUN ONCE PER NEW PLAY)
+# ================================
+if best_row is not None:
+    log_ai_slip_pick(best_row)
 
+if best_parlay is not None:
+    log_ai_parlay_pick(best_parlay)
+
+# ================================
+# PORTFOLIO BUILD
+# ================================
 all_portfolio_candidates = [*sharp_candidates, *fallback_candidates]
 portfolio = build_ai_portfolio(best_row, best_parlay, all_portfolio_candidates)
 
+# ================================
+# SNAPSHOT METRICS
+# ================================
 avg_active_edge = active_df["edge"].mean() if not active_df.empty else 0.0
 best_score = best_row["score"] if best_row is not None else "—"
 avg_true_conf = active_df["true_confidence"].mean() if not active_df.empty else 0.0
 total_units = active_df["units"].sum() if not active_df.empty else 0.0
-
 
 # =========================================================
 # PAGE STYLES

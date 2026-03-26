@@ -2541,7 +2541,7 @@ def build_ai_portfolio(best_single, chosen_parlay, parlay_candidates):
             running_units += units
 
     return portfolio
-
+    
 # =========================================================
 # DATA PREP (CRITICAL FIX)
 # =========================================================

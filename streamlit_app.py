@@ -316,10 +316,11 @@ def enrich_plays_with_sportsdata(plays_df, sport="nba", game_date=None):
         team = str(row.get("team", "")).strip().upper()
         opp = str(row.get("opponent", "")).strip().upper()
 
-        context_score = 0
-        notes = []
+                context_score = 0
+                notes = []
 
                 injury = injury_lookup.get(player)
+        
         if injury:
             status = str(injury.get("status", "")).lower()
             out.at[idx, "injury_flag"] = injury.get("status", "")
@@ -2500,8 +2501,8 @@ h1, h2, h3 {
 # =========================================================
 status_text, status_dot, status_bg, status_fg = api_status_label()
 
-st.title("🔥 Sports Betting AI Dashboard V33.4")
-st.caption("Manual Live Odds Refresh • API Status Badge • Cached Fallback • True Confidence Cleanup")
+st.title("🔥 Sports Betting AI Dashboard V34")
+st.caption("Manual Live Odds Refresh • SportsDataIO Context • Cached Fallback • True Confidence Cleanup")
 
 st.markdown(
     f"""

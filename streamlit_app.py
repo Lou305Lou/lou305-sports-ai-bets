@@ -1217,6 +1217,160 @@ def tier_from_true_conf(tc):
 
 
 # =========================================================
+# RECALCULATE AFTER SPORTSDATA (CRITICAL FIX)
+# =========================================================
+def recalculate_play_metrics(df: pd.DataFrame):
+    if df is None or df.empty:
+        return df
+
+    out = df.copy()
+
+    true_conf_list = []
+    quality_score_list = []
+    reasons_list = []
+
+    for _, row in out.iterrows():
+        tc, qs, reasons = compute_true_confidence(row)
+        true_conf_list.append(tc)
+        quality_score_list.append(qs)
+        reasons_list.append(reasons)
+
+    out["true_confidence"] = true_conf_list
+    out["quality_score"] = quality_score_list
+    out["decision_reasons"] = reasons_list
+    out["confidence"] = out["true_confidence"].apply(confidence_bucket_from_true_conf)
+
+    def refresh_tags(row):
+        existing = list(row.get("ai_tags", [])) if isinstance(row.get("ai_tags", []), list) else []
+        reasons = list(row.get("decision_reasons", [])) if isinstance(row.get("decision_reasons", []), list) else []
+        merged = []
+        for item in existing + reasons:
+            if item and item not in merged:
+                merged.append(item)
+        return merged[:6]
+
+    out["ai_tags"] = out.apply(refresh_tags, axis=1)
+
+    def decide_status(row):
+        if (
+            float(row["edge"]) >= MIN_ACTIVE_EDGE
+            and float(row["true_confidence"]) >= MIN_ACTIVE_TRUE_CONF
+            and int(row["books_seen"]) >= MIN_ACTIVE_BOOKS
+            and str(row["consensus"]) in ["Strong", "Fair"]
+        ):
+            return "Active"
+
+        if (
+            float(row["edge"]) >= MIN_WATCH_EDGE
+            and float(row["true_confidence"]) >= MIN_WATCH_TRUE_CONF
+            and int(row["books_seen"]) >= MIN_WATCH_BOOKS
+        ):
+            return "Watch"
+
+        return "Discard"
+
+    out["status"] = out.apply(decide_status, axis=1)
+    out = out[out["status"] != "Discard"].copy()
+
+    if out.empty:
+        return out.reset_index(drop=True)
+
+    out["watch_tier"] = out.apply(
+        lambda r: classify_watch_tier(r) if str(r["status"]) == "Watch" else "",
+        axis=1,
+    )
+
+    out["tier"] = out["true_confidence"].apply(tier_from_true_conf)
+    out["quality_label"] = out["tier"].apply(quality_label_from_tier)
+
+    out["units"] = out.apply(
+        lambda r: scale_single_units(r) if str(r["status"]) == "Active" else scale_watch_units(r),
+        axis=1,
+    )
+
+    out["rank_score"] = (
+        out["true_confidence"] * 0.55
+        + out["edge"] * 7.0
+        + out["price_edge"] * 3.5
+        + out["books_seen"] * 2.0
+        + out["score"] * 0.08
+    )
+
+    out["play_id"] = out.apply(
+        lambda r: build_play_id(
+            {
+                "game": r["game"],
+                "market": r["market"],
+                "selection": r["selection"],
+                "odds": r["odds"],
+            }
+        ),
+        axis=1,
+    )
+
+    active_local = (
+        out[out["status"] == "Active"]
+        .sort_values(["rank_score", "true_confidence"], ascending=False)
+        .head(TOP_PLAYS_LIMIT)
+        .copy()
+    )
+
+    watch_local = (
+        out[out["status"] == "Watch"]
+        .sort_values(["rank_score", "true_confidence"], ascending=False)
+        .head(WATCHLIST_LIMIT)
+        .copy()
+    )
+
+    active_rows = []
+    running_units = 0.0
+
+    for _, row in active_local.iterrows():
+        proposed_units = float(row["units"])
+
+        if len(active_rows) >= MAX_ACTIVE_PLAYS:
+            row2 = row.copy()
+            row2["status"] = "Watch"
+            row2["watch_tier"] = classify_watch_tier(row2)
+            row2["units"] = scale_watch_units(row2)
+            watch_local = pd.concat([watch_local, pd.DataFrame([row2])], ignore_index=True)
+            continue
+
+        if running_units + proposed_units > MAX_TOTAL_UNITS:
+            row2 = row.copy()
+            row2["status"] = "Watch"
+            row2["watch_tier"] = classify_watch_tier(row2)
+            row2["units"] = scale_watch_units(row2)
+            watch_local = pd.concat([watch_local, pd.DataFrame([row2])], ignore_index=True)
+            continue
+
+        active_rows.append(row)
+        running_units += proposed_units
+
+    active_final = pd.DataFrame(active_rows) if active_rows else pd.DataFrame(columns=out.columns)
+
+    if not watch_local.empty:
+        watch_priority = {"Near Active": 3, "Monitor": 2, "Weak Watch": 1}
+        watch_local["watch_priority"] = watch_local["watch_tier"].map(watch_priority).fillna(0)
+        watch_local = watch_local.sort_values(
+            ["watch_priority", "rank_score", "true_confidence"],
+            ascending=[False, False, False]
+        ).drop(columns=["watch_priority"], errors="ignore")
+
+    combined = pd.concat([active_final, watch_local], ignore_index=True)
+
+    if combined.empty:
+        return combined.reset_index(drop=True)
+
+    status_order = {"Active": 0, "Watch": 1}
+    combined["status_sort"] = combined["status"].map(status_order).fillna(9)
+
+    return (
+        combined.sort_values(["status_sort", "rank_score"], ascending=[True, False])
+        .drop(columns=["status_sort"], errors="ignore")
+        .reset_index(drop=True)
+    )
+# =========================================================
 # DATA BUILD
 # =========================================================
 def generate_ai_plays():

@@ -31,6 +31,7 @@ def save_bet_log():
         pd.DataFrame(st.session_state["bet_log"]).to_csv(BET_LOG_FILE, index=False)
     except:
         pass
+
 # =========================================================
 # API CONFIG
 # =========================================================
@@ -57,6 +58,10 @@ def get_sportsdata_key():
 
 SPORTSDATA_API_KEY = get_sportsdata_key()
 
+ODDS_API_KEY = st.secrets.get("ODDS_API_KEY", "")
+ODDS_API_URL = "https://api.the-odds-api.com/v4/sports/basketball_nba/odds"
+ODDS_BOOKMAKERS = "draftkings,fanduel,betmgm,caesars,espnbet,betrivers"
+
 # =========================================================
 # SESSION STATE
 # =========================================================
@@ -72,12 +77,26 @@ if "manual_results" not in st.session_state:
     st.session_state["manual_results"] = {}
 if "odds_api_games" not in st.session_state:
     st.session_state["odds_api_games"] = []
+if "last_successful_odds_games" not in st.session_state:
+    st.session_state["last_successful_odds_games"] = []
 if "sportsdata_cache" not in st.session_state:
     st.session_state["sportsdata_cache"] = {}
 if "sportsdata_last_refresh" not in st.session_state:
     st.session_state["sportsdata_last_refresh"] = {}
 if "sportsdata_enabled" not in st.session_state:
     st.session_state["sportsdata_enabled"] = True
+if "api_mode" not in st.session_state:
+    st.session_state["api_mode"] = "idle"
+if "api_status_note" not in st.session_state:
+    st.session_state["api_status_note"] = ""
+if "last_refresh_error" not in st.session_state:
+    st.session_state["last_refresh_error"] = ""
+if "last_refresh_count" not in st.session_state:
+    st.session_state["last_refresh_count"] = 0
+if "last_api_pull_epoch" not in st.session_state:
+    st.session_state["last_api_pull_epoch"] = 0.0
+if "api_cooldown_seconds" not in st.session_state:
+    st.session_state["api_cooldown_seconds"] = 90.0
 
 # =========================================================
 # SPORTS DATA FEED CONTROL
@@ -97,6 +116,7 @@ SPORTSDATA_CALL_LIMITS = {
     "starting_lineups_hours": 8,
     "team_game_stats_by_date_hours": 12,
 }
+
 # =========================================================
 # CACHE + DATE HELPERS
 # =========================================================
@@ -314,13 +334,11 @@ def enrich_plays_with_sportsdata(plays_df, sport="nba", game_date=None):
             plays_df["sportsdata_note"] = ""
         return plays_df
 
-    players = fetch_player_details(sport)
     injuries = fetch_injured_players(sport)
     lineups = fetch_starting_lineups_by_date(game_date=game_date or today_str(), sport=sport)
     team_stats = fetch_team_game_stats_by_date(game_date=game_date or yesterday_str(), sport=sport)
 
     injury_lookup = build_injury_lookup(injuries)
-    player_lookup = build_player_lookup(players)
     lineup_lookup = build_lineup_lookup(lineups)
     team_stats_lookup = build_team_game_stats_lookup(team_stats)
 
@@ -389,7 +407,6 @@ def enrich_plays_with_sportsdata(plays_df, sport="nba", game_date=None):
 
     return out
 
-
 # =========================================================
 # ENGINE SETTINGS
 # =========================================================
@@ -428,16 +445,13 @@ PARLAY_UNIT_FALLBACK_2 = 0.35
 PARLAY_UNIT_FALLBACK_3 = 0.20
 TEST_DAILY_UNIT_CAP = 4.50
 
-ENABLE_PLAYER_PROPS = False  # REAL-DATA-ONLY MODE
+ENABLE_PLAYER_PROPS = False
 PROPS_ONLY_STARTERS = True
 
 PROP_TYPES = ["points", "rebounds", "assists", "pra"]
 PROP_ODDS_RANGE = (-200, 150)
 MAX_PROP_PLAYS_PER_GAME = 8
 
-ODDS_API_KEY = st.secrets.get("ODDS_API_KEY", "")
-ODDS_API_URL = "https://api.the-odds-api.com/v4/sports/basketball_nba/odds"
-ODDS_BOOKMAKERS = "draftkings,fanduel,betmgm,caesars,espnbet,betrivers"
 # =========================================================
 # HELPERS
 # =========================================================
@@ -447,20 +461,17 @@ def is_mobile():
 def clamp(value, low, high):
     return max(low, min(high, value))
 
-
 def american_to_int(odds_str):
     try:
         return int(str(odds_str).replace("+", "").strip())
     except Exception:
         return None
 
-
 def in_allowed_odds_range(odds_str, min_odds=-200, max_odds=150):
     odds_val = american_to_int(odds_str)
     if odds_val is None:
         return False
     return min_odds <= odds_val <= max_odds
-
 
 def american_to_decimal(odds_str):
     odds_val = american_to_int(odds_str)
@@ -470,7 +481,6 @@ def american_to_decimal(odds_str):
         return 1 + (odds_val / 100.0)
     return 1 + (100.0 / abs(odds_val))
 
-
 def decimal_to_american(decimal_odds):
     if decimal_odds is None or decimal_odds <= 1:
         return None
@@ -478,14 +488,12 @@ def decimal_to_american(decimal_odds):
         return int(round((decimal_odds - 1) * 100))
     return int(round(-100 / (decimal_odds - 1)))
 
-
 def format_american(odds_val):
     if odds_val is None:
         return "N/A"
     if odds_val > 0:
         return f"+{int(odds_val)}"
     return str(int(odds_val))
-
 
 def build_play_id(row_dict):
     raw = "|".join(
@@ -498,7 +506,6 @@ def build_play_id(row_dict):
     )
     return hashlib.md5(raw.encode()).hexdigest()
 
-
 def confidence_bucket_from_true_conf(true_conf):
     tc = float(true_conf)
     if tc >= 75:
@@ -508,7 +515,6 @@ def confidence_bucket_from_true_conf(true_conf):
     if tc >= 65:
         return "Medium"
     return "Low"
-
 
 def confidence_fill_and_color(true_conf):
     tc = float(true_conf)
@@ -521,7 +527,6 @@ def confidence_fill_and_color(true_conf):
         return width, "#f59e0b", "Medium"
     return width, "#ef4444", "Low"
 
-
 def tier_colors(tier: str):
     t = str(tier).upper()
     if t == "A":
@@ -530,7 +535,6 @@ def tier_colors(tier: str):
         return "#dbeafe", "#1d4ed8"
     return "#fef3c7", "#92400e"
 
-
 def quality_label_from_tier(tier: str):
     tier = str(tier).upper()
     if tier == "A":
@@ -538,7 +542,6 @@ def quality_label_from_tier(tier: str):
     if tier == "B":
         return "Strong"
     return "Watch"
-
 
 def american_profit(odds, stake):
     odds_int = american_to_int(odds)
@@ -549,7 +552,6 @@ def american_profit(odds, stake):
         return round(stake * (odds_int / 100.0), 2)
     return round(stake * (100.0 / abs(odds_int)), 2)
 
-
 def settle_result_pnl(odds, units, result):
     result = str(result).strip().lower()
     units = float(units)
@@ -558,7 +560,6 @@ def settle_result_pnl(odds, units, result):
     if result == "loss":
         return round(-units, 2)
     return 0.0
-
 
 def market_family(market):
     m = str(market).lower()
@@ -572,7 +573,6 @@ def market_family(market):
         return "prop"
     return "other"
 
-
 def scale_single_units(row):
     true_conf = float(row.get("true_confidence", 0))
     edge = float(row.get("edge", 0))
@@ -585,7 +585,6 @@ def scale_single_units(row):
     ) / 55.0
 
     return round(clamp(base, SINGLE_UNIT_MIN, SINGLE_UNIT_MAX), 2)
-
 
 def scale_parlay_units(parlay):
     if not parlay:
@@ -615,7 +614,6 @@ def scale_parlay_units(parlay):
 
     return round(clamp(base_units, 0.15, 0.75), 2)
 
-
 def scale_watch_units(row):
     true_conf = float(row.get("true_confidence", 0))
     edge = float(row.get("edge", 0))
@@ -629,7 +627,6 @@ def scale_watch_units(row):
 
     return round(clamp(base, WATCH_UNIT_MIN, WATCH_UNIT_MAX), 2)
 
-
 def classify_watch_tier(row):
     tc = float(row.get("true_confidence", 0))
     edge = float(row.get("edge", 0))
@@ -642,7 +639,6 @@ def classify_watch_tier(row):
         return "Monitor"
     return "Weak Watch"
 
-
 # =========================================================
 # TEAM NORMALIZATION (FULL NBA COVERAGE)
 # =========================================================
@@ -651,142 +647,45 @@ def normalize_team_name(abbrev: str):
     key = raw.upper()
 
     mapping = {
-        # EAST
-        "ATL": "Hawks",
-        "ATLANTA HAWKS": "Hawks",
-        "HAWKS": "Hawks",
-
-        "BOS": "Celtics",
-        "BOSTON CELTICS": "Celtics",
-        "CELTICS": "Celtics",
-
-        "BKN": "Nets",
-        "BROOKLYN NETS": "Nets",
-        "BROOKLYN": "Nets",
-        "NETS": "Nets",
-
-        "CHA": "Hornets",
-        "CHARLOTTE HORNETS": "Hornets",
-        "HORNETS": "Hornets",
-
-        "CHI": "Bulls",
-        "CHICAGO BULLS": "Bulls",
-        "BULLS": "Bulls",
-
-        "CLE": "Cavaliers",
-        "CLEVELAND CAVALIERS": "Cavaliers",
-        "CAVALIERS": "Cavaliers",
-
-        "DET": "Pistons",
-        "DETROIT PISTONS": "Pistons",
-        "PISTONS": "Pistons",
-
-        "IND": "Pacers",
-        "INDIANA PACERS": "Pacers",
-        "PACERS": "Pacers",
-
-        "MIA": "Heat",
-        "MIAMI HEAT": "Heat",
-        "HEAT": "Heat",
-
-        "MIL": "Bucks",
-        "MILWAUKEE BUCKS": "Bucks",
-        "BUCKS": "Bucks",
-
-        "NYK": "Knicks",
-        "NEW YORK KNICKS": "Knicks",
-        "KNICKS": "Knicks",
-
-        "ORL": "Magic",
-        "ORLANDO MAGIC": "Magic",
-        "MAGIC": "Magic",
-
-        "PHI": "76ers",
-        "PHILADELPHIA 76ERS": "76ers",
-        "76ERS": "76ers",
-        "SIXERS": "76ers",
-
-        "TOR": "Raptors",
-        "TORONTO RAPTORS": "Raptors",
-        "RAPTORS": "Raptors",
-
-        "WAS": "Wizards",
-        "WASHINGTON WIZARDS": "Wizards",
-        "WIZARDS": "Wizards",
-
-        # WEST
-        "DAL": "Mavericks",
-        "DALLAS MAVERICKS": "Mavericks",
-        "MAVERICKS": "Mavericks",
-
-        "DEN": "Nuggets",
-        "DENVER NUGGETS": "Nuggets",
-        "NUGGETS": "Nuggets",
-
-        "GSW": "Warriors",
-        "GOLDEN STATE WARRIORS": "Warriors",
-        "WARRIORS": "Warriors",
-
-        "HOU": "Rockets",
-        "HOUSTON ROCKETS": "Rockets",
-        "ROCKETS": "Rockets",
-
-        "LAC": "Clippers",
-        "LOS ANGELES CLIPPERS": "Clippers",
-        "CLIPPERS": "Clippers",
-
-        "LAL": "Lakers",
-        "LOS ANGELES LAKERS": "Lakers",
-        "LAKERS": "Lakers",
-
-        "MEM": "Grizzlies",
-        "MEMPHIS GRIZZLIES": "Grizzlies",
-        "GRIZZLIES": "Grizzlies",
-
-        "MIN": "Timberwolves",
-        "MINNESOTA TIMBERWOLVES": "Timberwolves",
-        "TIMBERWOLVES": "Timberwolves",
-        "WOLVES": "Timberwolves",
-
-        "NOP": "Pelicans",
-        "NEW ORLEANS PELICANS": "Pelicans",
-        "PELICANS": "Pelicans",
-
-        "OKC": "Thunder",
-        "OKLAHOMA CITY THUNDER": "Thunder",
-        "THUNDER": "Thunder",
-
-        "PHX": "Suns",
-        "PHOENIX SUNS": "Suns",
-        "SUNS": "Suns",
-
-        "POR": "Trail Blazers",
-        "PORTLAND TRAIL BLAZERS": "Trail Blazers",
-        "TRAIL BLAZERS": "Trail Blazers",
-        "BLAZERS": "Trail Blazers",
-
-        "SAC": "Kings",
-        "SACRAMENTO KINGS": "Kings",
-        "KINGS": "Kings",
-
-        "SAS": "Spurs",
-        "SAN ANTONIO SPURS": "Spurs",
-        "SPURS": "Spurs",
-
-        "UTA": "Jazz",
-        "UTAH JAZZ": "Jazz",
-        "JAZZ": "Jazz",
+        "ATL": "Hawks", "ATLANTA HAWKS": "Hawks", "HAWKS": "Hawks",
+        "BOS": "Celtics", "BOSTON CELTICS": "Celtics", "CELTICS": "Celtics",
+        "BKN": "Nets", "BROOKLYN NETS": "Nets", "BROOKLYN": "Nets", "NETS": "Nets",
+        "CHA": "Hornets", "CHARLOTTE HORNETS": "Hornets", "HORNETS": "Hornets",
+        "CHI": "Bulls", "CHICAGO BULLS": "Bulls", "BULLS": "Bulls",
+        "CLE": "Cavaliers", "CLEVELAND CAVALIERS": "Cavaliers", "CAVALIERS": "Cavaliers",
+        "DET": "Pistons", "DETROIT PISTONS": "Pistons", "PISTONS": "Pistons",
+        "IND": "Pacers", "INDIANA PACERS": "Pacers", "PACERS": "Pacers",
+        "MIA": "Heat", "MIAMI HEAT": "Heat", "HEAT": "Heat",
+        "MIL": "Bucks", "MILWAUKEE BUCKS": "Bucks", "BUCKS": "Bucks",
+        "NYK": "Knicks", "NEW YORK KNICKS": "Knicks", "KNICKS": "Knicks",
+        "ORL": "Magic", "ORLANDO MAGIC": "Magic", "MAGIC": "Magic",
+        "PHI": "76ers", "PHILADELPHIA 76ERS": "76ers", "76ERS": "76ers", "SIXERS": "76ers",
+        "TOR": "Raptors", "TORONTO RAPTORS": "Raptors", "RAPTORS": "Raptors",
+        "WAS": "Wizards", "WASHINGTON WIZARDS": "Wizards", "WIZARDS": "Wizards",
+        "DAL": "Mavericks", "DALLAS MAVERICKS": "Mavericks", "MAVERICKS": "Mavericks",
+        "DEN": "Nuggets", "DENVER NUGGETS": "Nuggets", "NUGGETS": "Nuggets",
+        "GSW": "Warriors", "GOLDEN STATE WARRIORS": "Warriors", "WARRIORS": "Warriors",
+        "HOU": "Rockets", "HOUSTON ROCKETS": "Rockets", "ROCKETS": "Rockets",
+        "LAC": "Clippers", "LOS ANGELES CLIPPERS": "Clippers", "CLIPPERS": "Clippers",
+        "LAL": "Lakers", "LOS ANGELES LAKERS": "Lakers", "LAKERS": "Lakers",
+        "MEM": "Grizzlies", "MEMPHIS GRIZZLIES": "Grizzlies", "GRIZZLIES": "Grizzlies",
+        "MIN": "Timberwolves", "MINNESOTA TIMBERWOLVES": "Timberwolves", "TIMBERWOLVES": "Timberwolves", "WOLVES": "Timberwolves",
+        "NOP": "Pelicans", "NEW ORLEANS PELICANS": "Pelicans", "PELICANS": "Pelicans",
+        "OKC": "Thunder", "OKLAHOMA CITY THUNDER": "Thunder", "THUNDER": "Thunder",
+        "PHX": "Suns", "PHOENIX SUNS": "Suns", "SUNS": "Suns",
+        "POR": "Trail Blazers", "PORTLAND TRAIL BLAZERS": "Trail Blazers", "TRAIL BLAZERS": "Trail Blazers", "BLAZERS": "Trail Blazers",
+        "SAC": "Kings", "SACRAMENTO KINGS": "Kings", "KINGS": "Kings",
+        "SAS": "Spurs", "SAN ANTONIO SPURS": "Spurs", "SPURS": "Spurs",
+        "UTA": "Jazz", "UTAH JAZZ": "Jazz", "JAZZ": "Jazz",
     }
 
     return mapping.get(key, raw.title())
-
 
 def team_names_from_game(game: str):
     parts = str(game).split(" vs ")
     if len(parts) == 2:
         return normalize_team_name(parts[0]), normalize_team_name(parts[1])
     return "Away", "Home"
-
 
 def starter_pool_for_team(team_name: str):
     normalized = normalize_team_name(team_name)
@@ -816,7 +715,7 @@ def starter_pool_for_team(team_name: str):
         f"{normalized} Starter 4",
         f"{normalized} Starter 5",
     ]
-    
+
 def prop_line_for_type(prop_type: str):
     default_lines = {
         "points": [17.5, 19.5, 21.5, 23.5, 25.5, 27.5],
@@ -825,7 +724,6 @@ def prop_line_for_type(prop_type: str):
         "pra": [28.5, 31.5, 34.5, 37.5, 40.5],
     }
     return random.choice(default_lines.get(prop_type, [10.5, 12.5]))
-
 
 def build_prop_selection(player_name: str, prop_type: str):
     line = prop_line_for_type(prop_type)
@@ -838,10 +736,8 @@ def build_prop_selection(player_name: str, prop_type: str):
     direction = random.choice(["Over", "Under"])
     return f"{player_name} {direction} {line} {label_map.get(prop_type, prop_type.title())}"
 
-
 def is_prop_market(market: str):
     return str(market).lower().startswith("prop_")
-
 
 def prop_market_label(market: str):
     m = str(market).lower()
@@ -922,7 +818,6 @@ if SPORTSDATA_API_KEY:
 else:
     st.sidebar.warning("Missing SportsDataIO API key in Streamlit secrets")
 
-
 # =========================================================
 # LIVE ODDS FETCH (MANUAL REFRESH ONLY)
 # =========================================================
@@ -945,7 +840,6 @@ def api_status_label():
 
     return "IDLE", "#64748b", "#f8fafc", "#334155"
 
-
 def get_effective_odds_games():
     live_games = st.session_state.get("odds_api_games", [])
     if live_games:
@@ -956,7 +850,6 @@ def get_effective_odds_games():
         return cached_games
 
     return []
-
 
 def fetch_live_nba_odds(force=False):
     now_ts = time.time()
@@ -1050,7 +943,6 @@ def fetch_live_nba_odds(force=False):
         st.session_state["api_status_note"] = "Refresh failed and no cached odds are available."
         return []
 
-
 st.sidebar.markdown("### 📡 Live Odds Control")
 
 if st.sidebar.button("🔄 Refresh Live Odds"):
@@ -1069,8 +961,7 @@ status_text, status_dot, status_bg, status_fg = api_status_label()
 
 st.sidebar.markdown(
     f"""
-    
-<div style="
+    <div style="
         background:{status_bg};
         border:1px solid #e5e7eb;
         border-radius:14px;
@@ -1108,6 +999,7 @@ if err:
         st.sidebar.warning("Your Odds API usage limit appears to be reached.")
     else:
         st.sidebar.caption(f"Error: {err}")
+
 # =========================================================
 # SMART DECISION LAYER
 # =========================================================
@@ -1120,7 +1012,6 @@ def books_score(books_seen):
         return 0.56
     return 0.22
 
-
 def consensus_score(consensus):
     consensus = str(consensus).strip().lower()
     if consensus == "strong":
@@ -1129,18 +1020,14 @@ def consensus_score(consensus):
         return 0.66
     return 0.30
 
-
 def edge_score(edge):
     return clamp(edge / 6.0, 0.0, 1.0)
-
 
 def price_edge_score(price_edge):
     return clamp(price_edge / 3.0, 0.0, 1.0)
 
-
 def model_score(score):
     return clamp((float(score) - 78.0) / 22.0, 0.0, 1.0)
-
 
 def detect_traps(row):
     penalties = 0.0
@@ -1168,7 +1055,6 @@ def detect_traps(row):
         trap_flags.append("weak price support")
 
     return clamp(penalties, 0.0, 0.40), trap_flags
-
 
 def compute_true_confidence(row):
     ms = model_score(row["score"])
@@ -1207,14 +1093,12 @@ def compute_true_confidence(row):
 
     return true_confidence, adjusted_quality, reasons
 
-
 def tier_from_true_conf(tc):
     if tc >= 78:
         return "A"
     if tc >= 65:
         return "B"
     return "C"
-
 
 # =========================================================
 # RECALCULATE AFTER SPORTSDATA (CRITICAL FIX)
@@ -1370,6 +1254,7 @@ def recalculate_play_metrics(df: pd.DataFrame):
         .drop(columns=["status_sort"], errors="ignore")
         .reset_index(drop=True)
     )
+
 # =========================================================
 # DATA BUILD
 # =========================================================

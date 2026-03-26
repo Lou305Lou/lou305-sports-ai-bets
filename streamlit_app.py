@@ -2113,6 +2113,9 @@ def auto_log_active_plays(df):
         st.session_state["auto_logged_ids"].add(play_id)
         count_added += 1
 
+    if count_added > 0:
+        save_bet_log()
+
     return count_added
 
 # =========================================================

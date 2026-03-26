@@ -319,26 +319,29 @@ def enrich_plays_with_sportsdata(plays_df, sport="nba", game_date=None):
         context_score = 0
         notes = []
 
-        injury = injury_lookup.get(player)
+                injury = injury_lookup.get(player)
         if injury:
             status = str(injury.get("status", "")).lower()
             out.at[idx, "injury_flag"] = injury.get("status", "")
             notes.append(f"Injury: {injury.get('status', '')}")
+
             if any(tag in status for tag in ["out", "doubtful", "injured"]):
-                context_score -= 35
-            elif any(tag in status for tag in ["questionable", "probable", "day-to-day"]):
-                context_score -= 15
+                context_score -= 45
+            elif "questionable" in status:
+                context_score -= 25
+            elif any(tag in status for tag in ["probable", "day-to-day"]):
+                context_score -= 10
 
         if team in lineup_lookup:
-            player_display = str(row.get("player", "")).strip()
             starters = [str(x).strip().lower() for x in lineup_lookup.get(team, [])]
             if player and player in starters:
                 out.at[idx, "lineup_flag"] = "Starting"
                 notes.append("Confirmed/Projected Starter")
-                context_score += 10
-            else:
+                context_score += 12
+            elif player:
                 out.at[idx, "lineup_flag"] = "Not in listed lineup"
-                context_score -= 5
+                notes.append("Not in projected starting lineup")
+                context_score -= 12
 
         if team in team_stats_lookup:
             team_row = team_stats_lookup[team]

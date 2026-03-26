@@ -2612,6 +2612,10 @@ if not active_df.empty:
     ).iloc[0]
 
 best_parlay, sharp_candidates, fallback_candidates = choose_best_parlay(active_df)
+
+log_ai_slip_pick(best_row)
+log_ai_parlay_pick(best_parlay)
+
 all_portfolio_candidates = [*sharp_candidates, *fallback_candidates]
 portfolio = build_ai_portfolio(best_row, best_parlay, all_portfolio_candidates)
 

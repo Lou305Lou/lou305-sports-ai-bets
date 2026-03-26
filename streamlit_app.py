@@ -2114,6 +2114,48 @@ def render_play_card(row: pd.Series, show_best_badge: bool = False):
         padding:3px 7px;font-size:10px;line-height:1;display:inline-block;margin-right:5px;margin-bottom:4px;white-space:nowrap;">{tag}</span>
         """
 
+    injury_flag = str(row.get("injury_flag", "")).strip()
+    lineup_flag = str(row.get("lineup_flag", "")).strip()
+    sportsdata_note = str(row.get("sportsdata_note", "")).strip()
+    context_score = row.get("context_score", 0)
+
+    injury_html = ""
+    if injury_flag:
+        injury_html = f"""
+        <span style="background:#7f1d1d;color:#fecaca;padding:4px 8px;border-radius:999px;font-size:10px;font-weight:800;">
+            Injury: {injury_flag}
+        </span>
+        """
+
+    lineup_html = ""
+    if lineup_flag:
+        lineup_bg = "#14532d" if lineup_flag == "Starting" else "#3f3f46"
+        lineup_fg = "#dcfce7" if lineup_flag == "Starting" else "#e4e4e7"
+        lineup_html = f"""
+        <span style="background:{lineup_bg};color:{lineup_fg};padding:4px 8px;border-radius:999px;font-size:10px;font-weight:800;">
+            {lineup_flag}
+        </span>
+        """
+
+    context_html = ""
+    try:
+        context_val = float(context_score)
+        context_color = "#22c55e" if context_val > 0 else ("#ef4444" if context_val < 0 else "#94a3b8")
+        context_html = f"""
+        <div><div style="color:#91a0b7;font-size:10px;">Context</div><div style="color:{context_color};font-weight:700;">{context_val:+.1f}</div></div>
+        """
+    except:
+        pass
+
+    note_html = ""
+    if sportsdata_note:
+        note_html = f"""
+        <div style="margin-top:8px;padding:8px 10px;background:#111827;border:1px solid #243047;border-radius:12px;
+        color:#d1d5db;font-size:11px;line-height:1.35;">
+            <strong style="color:#93c5fd;">SportsData:</strong> {sportsdata_note}
+        </div>
+        """
+
     html = f"""
     <html><head><meta name="viewport" content="width=device-width, initial-scale=1" /></head>
     <body style="margin:0;background:transparent;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
@@ -2125,6 +2167,8 @@ def render_play_card(row: pd.Series, show_best_badge: bool = False):
             <span style="background:{status_bg};color:{status_fg};padding:5px 9px;border-radius:999px;font-size:10px;font-weight:800;">{row['status']}</span>
             <span style="background:{watch_bg};color:{watch_fg};padding:5px 9px;border-radius:999px;font-size:10px;font-weight:800;display:{watch_display};">{watch_tier}</span>
             <span style="background:#efe2ff;color:#6b21a8;padding:4px 8px;border-radius:999px;font-size:9px;font-weight:800;display:{best_display};">🏆 Best Bet</span>
+            {injury_html}
+            {lineup_html}
         </div>
 
         <div style="font-size:21px;font-weight:800;margin-bottom:5px;">{row['selection']}</div>
@@ -2139,6 +2183,7 @@ def render_play_card(row: pd.Series, show_best_badge: bool = False):
             <div><div style="color:#91a0b7;font-size:10px;">Books</div><div style="font-weight:700;">{row['books_seen']}</div></div>
             <div><div style="color:#91a0b7;font-size:10px;">True Conf</div><div style="font-weight:700;">{row['true_confidence']:.1f}</div></div>
             <div><div style="color:#91a0b7;font-size:10px;">Quality</div><div style="font-weight:700;">{row['quality_label']}</div></div>
+            {context_html}
         </div>
 
         <div style="height:1px;background:#283550;margin:6px 0;"></div>
@@ -2149,11 +2194,12 @@ def render_play_card(row: pd.Series, show_best_badge: bool = False):
         </div>
 
         <div style="margin-top:6px;">{tags_html}</div>
+        {note_html}
 
     </div></body></html>
     """
 
-    components.html(html, height=285 if is_mobile() else 340, scrolling=False)
+    components.html(html, height=360 if is_mobile() else 420, scrolling=False)
 # =========================================================
 # PARLAY CARD RENDER
 # =========================================================

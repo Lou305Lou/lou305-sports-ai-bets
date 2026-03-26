@@ -37,7 +37,7 @@ def load_bet_log():
         # Keep the first occurrence so ROI/history stays stable
         non_blank_ids = df["play_id"] != ""
         df_with_ids = df[non_blank_ids].drop_duplicates(subset=["play_id"], keep="first")
-        df_without_ids = df[~non_blank_ids]
+        df_without_ids = df[~non_blank_ids].copy()
 
         cleaned_df = pd.concat([df_with_ids, df_without_ids], ignore_index=True)
 
@@ -46,8 +46,12 @@ def load_bet_log():
             cleaned_df.to_csv(BET_LOG_FILE, index=False)
 
         return cleaned_df.to_dict("records")
-    except:
+
+    except FileNotFoundError:
         return []
+    except Exception:
+        return []
+
 
 def save_bet_log():
     try:
@@ -58,23 +62,27 @@ def save_bet_log():
             df.to_csv(BET_LOG_FILE, index=False)
             return
 
+        # Ensure required column exists
         if "play_id" not in df.columns:
             df["play_id"] = ""
 
+        # Clean values
         df["play_id"] = df["play_id"].astype(str).str.strip()
 
         # Prevent duplicate saved play_ids
         non_blank_ids = df["play_id"] != ""
         df_with_ids = df[non_blank_ids].drop_duplicates(subset=["play_id"], keep="first")
-        df_without_ids = df[~non_blank_ids]
+        df_without_ids = df[~non_blank_ids].copy()
 
         cleaned_df = pd.concat([df_with_ids, df_without_ids], ignore_index=True)
         cleaned_df.to_csv(BET_LOG_FILE, index=False)
 
         # Keep session state synced with cleaned file
         st.session_state["bet_log"] = cleaned_df.to_dict("records")
-    except:
+
+    except Exception:
         pass
+
 
 def build_logged_id_set(log_rows):
     ids = set()
@@ -83,10 +91,9 @@ def build_logged_id_set(log_rows):
             pid = str(row.get("play_id", "")).strip()
             if pid:
                 ids.add(pid)
-    except:
+    except Exception:
         pass
     return ids
-
 # =========================================================
 # API CONFIG
 # =========================================================

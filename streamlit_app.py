@@ -279,6 +279,94 @@ def build_team_game_stats_lookup(team_stats):
         pass
     return lookup
 
+# =========================================================
+# REAL DATA ENRICHMENT
+# =========================================================
+def enrich_plays_with_sportsdata(plays_df, sport="nba", game_date=None):
+    if plays_df is None or len(plays_df) == 0:
+        return plays_df
+
+    if not sportsdata_enabled():
+        if "injury_flag" not in plays_df.columns:
+            plays_df["injury_flag"] = ""
+        if "lineup_flag" not in plays_df.columns:
+            plays_df["lineup_flag"] = ""
+        if "context_score" not in plays_df.columns:
+            plays_df["context_score"] = 0
+        return plays_df
+
+    players = fetch_player_details(sport)
+    injuries = fetch_injured_players(sport)
+    lineups = fetch_starting_lineups_by_date(game_date=game_date or today_str(), sport=sport)
+    team_stats = fetch_team_game_stats_by_date(game_date=game_date or yesterday_str(), sport=sport)
+
+    injury_lookup = build_injury_lookup(injuries)
+    player_lookup = build_player_lookup(players)
+    lineup_lookup = build_lineup_lookup(lineups)
+    team_stats_lookup = build_team_game_stats_lookup(team_stats)
+
+    out = plays_df.copy()
+    out["injury_flag"] = ""
+    out["lineup_flag"] = ""
+    out["context_score"] = 0
+    out["sportsdata_note"] = ""
+
+    for idx, row in out.iterrows():
+        player = str(row.get("player", "")).strip().lower()
+        team = str(row.get("team", "")).strip().upper()
+        opp = str(row.get("opponent", "")).strip().upper()
+
+        context_score = 0
+        notes = []
+
+        injury = injury_lookup.get(player)
+        if injury:
+            status = str(injury.get("status", "")).lower()
+            out.at[idx, "injury_flag"] = injury.get("status", "")
+            notes.append(f"Injury: {injury.get('status', '')}")
+            if any(tag in status for tag in ["out", "doubtful", "injured"]):
+                context_score -= 35
+            elif any(tag in status for tag in ["questionable", "probable", "day-to-day"]):
+                context_score -= 15
+
+        if team in lineup_lookup:
+            player_display = str(row.get("player", "")).strip()
+            starters = [str(x).strip().lower() for x in lineup_lookup.get(team, [])]
+            if player and player in starters:
+                out.at[idx, "lineup_flag"] = "Starting"
+                notes.append("Confirmed/Projected Starter")
+                context_score += 10
+            else:
+                out.at[idx, "lineup_flag"] = "Not in listed lineup"
+                context_score -= 5
+
+        if team in team_stats_lookup:
+            team_row = team_stats_lookup[team]
+            try:
+                pts = float(team_row.get("Points", 0))
+                context_score += min(8, max(0, (pts - 100) / 3))
+            except:
+                pass
+
+        if opp in team_stats_lookup:
+            opp_row = team_stats_lookup[opp]
+            try:
+                opp_pts_allowed = float(opp_row.get("PointsAllowed", 0))
+                context_score += min(8, max(0, (opp_pts_allowed - 100) / 3))
+            except:
+                pass
+
+        out.at[idx, "context_score"] = round(context_score, 1)
+        out.at[idx, "sportsdata_note"] = " | ".join(notes)
+
+        if "score" in out.columns:
+            try:
+                out.at[idx, "score"] = round(float(row.get("score", 0)) + context_score, 1)
+            except:
+                pass
+
+    return out
+
 
 # =========================================================
 # ENGINE SETTINGS

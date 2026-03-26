@@ -1055,7 +1055,8 @@ status_text, status_dot, status_bg, status_fg = api_status_label()
 
 st.sidebar.markdown(
     f"""
-    <div style="
+    
+<div style="
         background:{status_bg};
         border:1px solid #e5e7eb;
         border-radius:14px;

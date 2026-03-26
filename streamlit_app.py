@@ -820,8 +820,10 @@ def prop_market_label(market: str):
     return str(market).replace("_", " ").title()
 
 # =========================================================
-# LIVE SLATE INPUT
+# LIVE SLATE INPUT (V34.1 CLEAN)
 # =========================================================
+import re
+
 def parse_today_games(games_text: str):
     games = []
 
@@ -830,14 +832,8 @@ def parse_today_games(games_text: str):
         if not cleaned:
             continue
 
-        lowered = cleaned.lower()
-
-        if " vs " in lowered:
-            parts = cleaned.split(" vs ")
-        elif " v " in lowered:
-            parts = cleaned.split(" v ")
-        else:
-            continue
+        # Flexible split (vs / v / VS / etc.)
+        parts = re.split(r"\s+vs\s+|\s+v\s+", cleaned, flags=re.IGNORECASE)
 
         if len(parts) != 2:
             continue
@@ -850,17 +846,29 @@ def parse_today_games(games_text: str):
 
     return games
 
+
 # =========================================================
-# SIDEBAR CONTROLS
+# SIDEBAR CONTROLS (V34.1 IMPROVED UX)
 # =========================================================
 st.sidebar.markdown("### 🗓️ Today's Slate")
+
 st.sidebar.text_area(
-    "Enter today's real games (one per line)",
+    "Optional: Filter today's slate",
     key="today_games_text",
     height=180,
-    placeholder="SAS vs CHA\nNOP vs NYK\nORL vs CLE\nDEN vs PHX",
+    placeholder="Examples:\nSAS vs CHA\nLAL vs BOS\nHeat vs Knicks\n\nLeave blank to use all live games",
 )
 
+# 🔥 AUTO-UPPERCASE NORMALIZATION (REAL-TIME CLEAN INPUT)
+if st.session_state.get("today_games_text"):
+    st.session_state["today_games_text"] = st.session_state["today_games_text"].upper()
+
+# 💡 Helper note (UX upgrade)
+st.sidebar.caption(
+    "Supports abbreviations, full team names, or nicknames (e.g., LAL, Lakers, Los Angeles Lakers)"
+)
+
+# Parsed games (used downstream)
 today_games = parse_today_games(st.session_state.get("today_games_text", ""))
 
 # =========================================================

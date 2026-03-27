@@ -1829,16 +1829,16 @@ def generate_ai_plays():
                 "ai_tags": [],
             }
             add_scored_row(row, ["API live odds", "spread", "best line"])
-        for side in ["Over", "Under"]:
+                for side in ["Over", "Under"]:
             best_point, best_price, books_found = get_best_total_outcome(bookmakers, side)
             if best_point is None or best_price is None or books_found == 0:
                 continue
             if not in_allowed_odds_range(format_american(best_price), DEFAULT_ODDS_RANGE[0], DEFAULT_ODDS_RANGE[1]):
                 continue
 
-            edge = round(max(0.0, (books_found - 1) * 1.15), 2)
-            score = round(min(99.0, 72.0 + (books_found * 4.5) + (abs(best_price) < 140) * 4.0), 1)
-            price_edge = round(min(3.0, max(0.5, books_found * 0.55)), 2)
+            edge = round(min(6.0, 1.4 + (books_found * 0.95)), 2)
+            score = round(min(99.0, 74.0 + (books_found * 3.8) + ((abs(best_price) < 140) * 3.5)), 1)
+            price_edge = round(min(3.0, max(0.75, 0.65 + (books_found * 0.40))), 2)
             consensus = "Strong" if books_found >= 4 else ("Fair" if books_found >= 2 else "Thin")
 
             row = {

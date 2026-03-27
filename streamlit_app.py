@@ -1076,6 +1076,17 @@ if err:
 # =========================================================
 # SMART DECISION LAYER
 # =========================================================
+def american_odds_to_implied_prob_pct(odds):
+    odds_val = american_to_int(odds)
+    if odds_val is None:
+        return 50.0
+
+    if odds_val > 0:
+        return round((100 / (odds_val + 100)) * 100, 2)
+
+    return round((abs(odds_val) / (abs(odds_val) + 100)) * 100, 2)
+
+
 def books_score(books_seen):
     if books_seen >= 4:
         return 1.00
@@ -1085,6 +1096,7 @@ def books_score(books_seen):
         return 0.56
     return 0.22
 
+
 def consensus_score(consensus):
     consensus = str(consensus).strip().lower()
     if consensus == "strong":
@@ -1093,14 +1105,83 @@ def consensus_score(consensus):
         return 0.66
     return 0.30
 
+
 def edge_score(edge):
-    return clamp(edge / 6.0, 0.0, 1.0)
+    return clamp(edge / 10.0, 0.0, 1.0)
+
 
 def price_edge_score(price_edge):
     return clamp(price_edge / 3.0, 0.0, 1.0)
 
+
 def model_score(score):
     return clamp((float(score) - 78.0) / 22.0, 0.0, 1.0)
+
+
+def estimate_true_probability_pct(row):
+    score = float(row.get("score", 0))
+    books_seen = int(row.get("books_seen", 1))
+    consensus = str(row.get("consensus", "Thin"))
+    price_edge = float(row.get("price_edge", 0))
+    context_score = float(row.get("context_score", 0))
+    market = str(row.get("market", "")).lower()
+    odds = row.get("odds")
+
+    ms = model_score(score)            # 0 to 1
+    bs = books_score(books_seen)       # 0 to 1
+    cs = consensus_score(consensus)    # 0 to 1
+    ps = price_edge_score(price_edge)  # 0 to 1
+
+    # Core probability model
+    true_prob = (
+        38.0
+        + (ms * 20.0)
+        + (bs * 8.0)
+        + (cs * 10.0)
+        + (ps * 12.0)
+        + clamp(context_score, -20, 20) * 0.35
+    )
+
+    # Market-specific adjustments
+    if market == "moneyline":
+        true_prob += 1.0
+    elif market == "spread":
+        true_prob += 0.5
+    elif market == "total":
+        true_prob += 0.0
+    elif market.startswith("prop_"):
+        # Keep props a bit more conservative until real props data is live
+        true_prob -= 2.5
+
+    implied_prob = american_odds_to_implied_prob_pct(odds)
+    true_prob = clamp(true_prob, 30.0, 82.0)
+    edge = round(true_prob - implied_prob, 2)
+
+    return round(true_prob, 1), round(implied_prob, 2), edge
+
+
+def apply_true_probability_columns(df: pd.DataFrame):
+    if df is None or df.empty:
+        return df
+
+    out = df.copy()
+
+    true_probs = []
+    implied_probs = []
+    edges = []
+
+    for _, row in out.iterrows():
+        tp, ip, ed = estimate_true_probability_pct(row)
+        true_probs.append(tp)
+        implied_probs.append(ip)
+        edges.append(ed)
+
+    out["true_prob"] = true_probs
+    out["implied_prob"] = implied_probs
+    out["edge"] = edges
+
+    return out
+
 
 def detect_traps(row):
     penalties = 0.0
@@ -1110,24 +1191,37 @@ def detect_traps(row):
     books_seen = int(row["books_seen"])
     consensus = str(row["consensus"])
     price_edge = float(row["price_edge"])
+    implied_prob = float(row.get("implied_prob", 50))
+    true_prob = float(row.get("true_prob", 50))
 
-    if edge < 3.0:
-        penalties += 0.12
-        trap_flags.append("weak edge")
+    if edge < 2.0:
+        penalties += 0.16
+        trap_flags.append("weak value edge")
+    elif edge < 4.0:
+        penalties += 0.08
+        trap_flags.append("thin value edge")
+
     if books_seen <= 1:
         penalties += 0.18
         trap_flags.append("single-book risk")
     elif books_seen == 2:
         penalties += 0.08
         trap_flags.append("limited book support")
+
     if consensus == "Thin":
         penalties += 0.14
         trap_flags.append("thin consensus")
+
     if price_edge < 1.0:
         penalties += 0.08
         trap_flags.append("weak price support")
 
-    return clamp(penalties, 0.0, 0.40), trap_flags
+    if implied_prob >= 65 and true_prob < implied_prob + 2.0:
+        penalties += 0.08
+        trap_flags.append("expensive favorite risk")
+
+    return clamp(penalties, 0.0, 0.45), trap_flags
+
 
 def compute_true_confidence(row):
     ms = model_score(row["score"])
@@ -1139,11 +1233,11 @@ def compute_true_confidence(row):
     penalty, trap_flags = detect_traps(row)
 
     raw_quality = (
-        ms * 0.30
-        + es * 0.28
+        ms * 0.28
+        + es * 0.32
         + ps * 0.12
-        + bs * 0.15
-        + cs * 0.15
+        + bs * 0.14
+        + cs * 0.14
     )
 
     adjusted_quality = clamp(raw_quality - penalty, 0.0, 1.0)
@@ -1161,10 +1255,13 @@ def compute_true_confidence(row):
     if float(row["score"]) >= 88:
         reasons.append("strong model score")
     if float(row["edge"]) >= 4.0:
-        reasons.append("sharp edge")
+        reasons.append("true probability edge")
+    if float(row.get("true_prob", 0)) >= 60:
+        reasons.append("high true probability")
     reasons.extend(trap_flags)
 
     return true_confidence, adjusted_quality, reasons
+
 
 def tier_from_true_conf(tc):
     if tc >= 78:
@@ -1181,6 +1278,9 @@ def recalculate_play_metrics(df: pd.DataFrame):
         return df
 
     out = df.copy()
+
+    # Rebuild true probability + edge AFTER context/score adjustments
+    out = apply_true_probability_columns(out)
 
     true_conf_list = []
     quality_score_list = []
@@ -1340,6 +1440,8 @@ def generate_ai_plays():
         "team",
         "opponent",
         "odds",
+        "implied_prob",
+        "true_prob",
         "edge",
         "score",
         "units",
@@ -1371,6 +1473,9 @@ def generate_ai_plays():
         return normalize_team_name(str(name).strip())
 
     def add_scored_row(row, base_tags):
+        row["implied_prob"] = american_odds_to_implied_prob_pct(row.get("odds"))
+        row["true_prob"], row["implied_prob"], row["edge"] = estimate_true_probability_pct(row)
+
         tc, qs, reasons = compute_true_confidence(row)
         row["true_confidence"] = tc
         row["quality_score"] = qs
@@ -1602,62 +1707,51 @@ def generate_ai_plays():
 
         if total_tier == "very_high":
             if prop_type in ["points", "pra", "assists"]:
-                edge_boost += 0.90
                 score_boost += 4.0
                 price_boost += 0.30
                 tags.append("very high total boost")
             elif prop_type == "rebounds":
-                edge_boost += 0.25
                 score_boost += 1.0
                 tags.append("high pace support")
         elif total_tier == "high":
             if prop_type in ["points", "pra"]:
-                edge_boost += 0.60
                 score_boost += 2.5
                 price_boost += 0.18
                 tags.append("high total boost")
             elif prop_type == "assists":
-                edge_boost += 0.40
                 score_boost += 1.8
                 tags.append("offense environment boost")
         elif total_tier == "low":
             if prop_type in ["points", "pra"]:
-                edge_boost -= 0.45
                 score_boost -= 2.2
                 tags.append("low total drag")
             elif prop_type == "rebounds":
-                edge_boost += 0.20
                 score_boost += 0.8
                 tags.append("rebound environment")
 
         if tight_game:
             if prop_type in ["points", "pra", "assists"]:
-                edge_boost += 0.40
                 score_boost += 1.8
                 tags.append("tight game boost")
 
         if blowout_risk == "high":
             if is_favorite and is_star and prop_type in ["points", "pra", "assists"]:
-                edge_boost -= 0.55
                 score_boost -= 2.8
                 tags.append("blowout risk")
             elif (not is_favorite) and prop_type in ["assists", "pra"]:
-                edge_boost -= 0.20
                 score_boost -= 1.0
                 tags.append("game script risk")
         elif blowout_risk == "moderate":
             if is_favorite and is_star and prop_type in ["points", "pra"]:
-                edge_boost -= 0.20
                 score_boost -= 1.0
                 tags.append("moderate blowout risk")
 
         if is_star and (tight_game or total_tier in ["high", "very_high"]):
             if prop_type in ["points", "pra"]:
-                edge_boost += 0.35
                 score_boost += 1.5
                 tags.append("star usage boost")
 
-        return edge_boost, score_boost, price_boost, tags
+        return score_boost, price_boost, tags
 
     def build_prop_rows_for_game(game, away_team, home_team, bookmakers):
         if not ENABLE_PLAYER_PROPS:
@@ -1694,15 +1788,13 @@ def generate_ai_plays():
                 if not in_allowed_odds_range(format_american(odds_val), PROP_ODDS_RANGE[0], PROP_ODDS_RANGE[1]):
                     continue
 
-                base_edge = random.uniform(2.6, 5.3)
                 base_score = random.uniform(80.0, 96.8)
                 base_price_edge = random.uniform(0.9, 2.4)
 
-                edge_boost, score_boost, price_boost, context_tags = context_adjust_prop(
+                score_boost, price_boost, context_tags = context_adjust_prop(
                     team_name, player_name, prop_type, context
                 )
 
-                edge = round(clamp(base_edge + edge_boost, 1.8, 6.2), 2)
                 score = round(clamp(base_score + score_boost, 76.0, 99.2), 1)
                 price_edge = round(clamp(base_price_edge + price_boost, 0.5, 3.0), 2)
 
@@ -1714,7 +1806,9 @@ def generate_ai_plays():
                     "team": team_name,
                     "opponent": home_team if team_name == away_team else away_team,
                     "odds": format_american(odds_val),
-                    "edge": edge,
+                    "implied_prob": 0.0,
+                    "true_prob": 0.0,
+                    "edge": 0.0,
                     "score": score,
                     "units": 0.0,
                     "tier": "C",
@@ -1763,7 +1857,6 @@ def generate_ai_plays():
             if not in_allowed_odds_range(format_american(best_price), DEFAULT_ODDS_RANGE[0], DEFAULT_ODDS_RANGE[1]):
                 continue
 
-            edge = round(min(6.0, 1.4 + (books_found * 0.95)), 2)
             score = round(min(99.0, 74.0 + (books_found * 3.8) + ((abs(best_price) < 140) * 3.5)), 1)
             price_edge = round(min(3.0, max(0.75, 0.65 + (books_found * 0.40))), 2)
             consensus = "Strong" if books_found >= 4 else ("Fair" if books_found >= 2 else "Thin")
@@ -1776,7 +1869,9 @@ def generate_ai_plays():
                 "team": team_name,
                 "opponent": home_team if team_name == away_team else away_team,
                 "odds": format_american(best_price),
-                "edge": edge,
+                "implied_prob": 0.0,
+                "true_prob": 0.0,
+                "edge": 0.0,
                 "score": score,
                 "units": 0.0,
                 "tier": "C",
@@ -1799,7 +1894,6 @@ def generate_ai_plays():
             if not in_allowed_odds_range(format_american(best_price), DEFAULT_ODDS_RANGE[0], DEFAULT_ODDS_RANGE[1]):
                 continue
 
-            edge = round(min(6.0, 1.4 + (books_found * 0.95)), 2)
             score = round(min(99.0, 74.0 + (books_found * 3.8) + ((abs(best_price) < 140) * 3.5)), 1)
             price_edge = round(min(3.0, max(0.75, 0.65 + (books_found * 0.40))), 2)
             consensus = "Strong" if books_found >= 4 else ("Fair" if books_found >= 2 else "Thin")
@@ -1814,7 +1908,9 @@ def generate_ai_plays():
                 "team": team_name,
                 "opponent": home_team if team_name == away_team else away_team,
                 "odds": format_american(best_price),
-                "edge": edge,
+                "implied_prob": 0.0,
+                "true_prob": 0.0,
+                "edge": 0.0,
                 "score": score,
                 "units": 0.0,
                 "tier": "C",
@@ -1837,7 +1933,6 @@ def generate_ai_plays():
             if not in_allowed_odds_range(format_american(best_price), DEFAULT_ODDS_RANGE[0], DEFAULT_ODDS_RANGE[1]):
                 continue
 
-            edge = round(min(6.0, 1.4 + (books_found * 0.95)), 2)
             score = round(min(99.0, 74.0 + (books_found * 3.8) + ((abs(best_price) < 140) * 3.5)), 1)
             price_edge = round(min(3.0, max(0.75, 0.65 + (books_found * 0.40))), 2)
             consensus = "Strong" if books_found >= 4 else ("Fair" if books_found >= 2 else "Thin")
@@ -1850,7 +1945,9 @@ def generate_ai_plays():
                 "team": "",
                 "opponent": "",
                 "odds": format_american(best_price),
-                "edge": edge,
+                "implied_prob": 0.0,
+                "true_prob": 0.0,
+                "edge": 0.0,
                 "score": score,
                 "units": 0.0,
                 "tier": "C",
@@ -1874,6 +1971,8 @@ def generate_ai_plays():
 
     if "selection" in df.columns:
         df = df.drop_duplicates(subset=["game", "market", "selection", "odds"]).copy()
+
+    df = apply_true_probability_columns(df)
 
     df["rank_score"] = (
         df["true_confidence"] * 0.55

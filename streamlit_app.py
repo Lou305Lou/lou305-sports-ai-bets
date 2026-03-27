@@ -1087,6 +1087,32 @@ else:
 # =========================================================
 # LIVE ODDS FETCH (MANUAL REFRESH ONLY)
 # =========================================================
+def reset_daily_api_counter_if_needed():
+    current_day = today_str()
+    saved_day = str(st.session_state.get("daily_api_call_date", "")).strip()
+
+    if saved_day != current_day:
+        st.session_state["daily_api_call_date"] = current_day
+        st.session_state["daily_api_call_count"] = 0
+
+
+def get_daily_api_calls_used():
+    reset_daily_api_counter_if_needed()
+    return int(st.session_state.get("daily_api_call_count", 0))
+
+
+def get_daily_api_calls_remaining():
+    reset_daily_api_counter_if_needed()
+    limit_val = int(st.session_state.get("daily_api_call_limit", 10))
+    used_val = int(st.session_state.get("daily_api_call_count", 0))
+    return max(0, limit_val - used_val)
+
+
+def increment_daily_api_call_count():
+    reset_daily_api_counter_if_needed()
+    st.session_state["daily_api_call_count"] = int(st.session_state.get("daily_api_call_count", 0)) + 1
+
+
 def api_status_label():
     mode = st.session_state.get("api_mode", "idle")
     err = str(st.session_state.get("last_refresh_error", "")).lower()
@@ -1095,8 +1121,8 @@ def api_status_label():
         return "LIVE", "#10b981", "#ecfdf5", "#065f46"
     if mode == "cached":
         return "CACHED", "#0ea5e9", "#eff6ff", "#075985"
-    if mode == "cooldown":
-        return "COOLDOWN", "#8b5cf6", "#f5f3ff", "#6d28d9"
+    if mode == "daily_limit":
+        return "DAILY LIMIT", "#7c3aed", "#f5f3ff", "#5b21b6"
     if not ODDS_API_KEY:
         return "NO KEY", "#f59e0b", "#fffbeb", "#92400e"
     if "401" in err or "unauthorized" in err:
@@ -1122,9 +1148,6 @@ def get_effective_odds_games():
 
 
 def fetch_live_nba_odds(force=False):
-    now_ts = time.time()
-    cooldown = float(st.session_state.get("api_cooldown_seconds", 90))
-    last_pull = float(st.session_state.get("last_api_pull_epoch", 0.0))
     cached_games = st.session_state.get("last_successful_odds_games", [])
 
     if not ODDS_API_KEY:
@@ -1136,18 +1159,26 @@ def fetch_live_nba_odds(force=False):
         st.session_state["api_status_note"] = "No API key found."
         return cached_games if cached_games else []
 
-    # IMPORTANT:
-    # Even manual refresh should still respect cooldown unless there is no cached data yet.
-    # This prevents accidental API burn during testing.
-    if cached_games and (now_ts - last_pull < cooldown):
-        remaining = max(1, int(cooldown - (now_ts - last_pull)))
-        st.session_state["odds_api_games"] = cached_games
-        st.session_state["last_odds_refresh_ok"] = True
-        st.session_state["last_refresh_error"] = ""
-        st.session_state["last_refresh_count"] = len(cached_games)
-        st.session_state["api_mode"] = "cooldown"
-        st.session_state["api_status_note"] = f"Cooldown active. Using cached odds ({remaining}s remaining)."
-        return cached_games
+    reset_daily_api_counter_if_needed()
+
+    calls_remaining = get_daily_api_calls_remaining()
+    calls_used = get_daily_api_calls_used()
+    daily_limit = int(st.session_state.get("daily_api_call_limit", 10))
+
+    if calls_remaining <= 0:
+        st.session_state["last_odds_refresh_ok"] = bool(cached_games)
+        st.session_state["last_refresh_count"] = len(cached_games) if cached_games else 0
+        st.session_state["api_mode"] = "daily_limit"
+        st.session_state["api_status_note"] = f"Daily live-odds limit reached ({calls_used}/{daily_limit})."
+
+        if cached_games:
+            st.session_state["odds_api_games"] = cached_games
+            st.session_state["last_refresh_error"] = ""
+            return cached_games
+
+        st.session_state["odds_api_games"] = []
+        st.session_state["last_refresh_error"] = "Daily live-odds limit reached and no cached odds are available."
+        return []
 
     params = {
         "apiKey": ODDS_API_KEY,
@@ -1165,15 +1196,19 @@ def fetch_live_nba_odds(force=False):
         if not isinstance(data, list):
             data = []
 
+        increment_daily_api_call_count()
+        calls_used = get_daily_api_calls_used()
+        calls_remaining = get_daily_api_calls_remaining()
+
         st.session_state["odds_api_games"] = data
         st.session_state["last_successful_odds_games"] = data
         st.session_state["last_odds_refresh_ok"] = True
         st.session_state["last_refresh_error"] = ""
         st.session_state["last_refresh_count"] = len(data)
         st.session_state["last_refresh_time"] = pd.Timestamp.now().strftime("%Y-%m-%d %I:%M:%S %p")
-        st.session_state["last_api_pull_epoch"] = now_ts
+        st.session_state["last_api_pull_epoch"] = time.time()
         st.session_state["api_mode"] = "live"
-        st.session_state["api_status_note"] = "Live odds loaded successfully."
+        st.session_state["api_status_note"] = f"Live odds loaded successfully. Calls used today: {calls_used}/{daily_limit} ({calls_remaining} remaining)."
         return data
 
     except requests.exceptions.HTTPError as e:
@@ -1220,17 +1255,23 @@ def fetch_live_nba_odds(force=False):
 
 st.sidebar.markdown("### 📡 Live Odds Control")
 
+calls_used_today = get_daily_api_calls_used()
+daily_limit = int(st.session_state.get("daily_api_call_limit", 10))
+calls_remaining_today = get_daily_api_calls_remaining()
+
+st.sidebar.caption(f"Daily calls used: {calls_used_today}/{daily_limit}")
+st.sidebar.caption(f"Daily calls remaining: {calls_remaining_today}")
+
 if st.sidebar.button("🔄 Refresh Live Odds"):
     with st.sidebar:
         with st.spinner("Refreshing live odds..."):
             data = fetch_live_nba_odds(force=True)
-
             current_mode = st.session_state.get("api_mode")
 
             if current_mode == "live" and len(data) > 0:
                 st.success(f"Loaded {len(data)} live game(s).")
-            elif current_mode == "cooldown" and len(data) > 0:
-                st.info(f"Cooldown active. Using {len(data)} cached game(s).")
+            elif current_mode == "daily_limit" and len(data) > 0:
+                st.info(f"Daily limit reached. Using {len(data)} cached game(s).")
             elif current_mode == "cached" and len(data) > 0:
                 st.warning(f"Using {len(data)} cached game(s).")
             else:

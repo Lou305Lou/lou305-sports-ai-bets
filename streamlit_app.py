@@ -1089,6 +1089,8 @@ def api_status_label():
         return "LIVE", "#10b981", "#ecfdf5", "#065f46"
     if mode == "cached":
         return "CACHED", "#0ea5e9", "#eff6ff", "#075985"
+    if mode == "cooldown":
+        return "COOLDOWN", "#8b5cf6", "#f5f3ff", "#6d28d9"
     if not ODDS_API_KEY:
         return "NO KEY", "#f59e0b", "#fffbeb", "#92400e"
     if "401" in err or "unauthorized" in err:
@@ -1100,6 +1102,7 @@ def api_status_label():
 
     return "IDLE", "#64748b", "#f8fafc", "#334155"
 
+
 def get_effective_odds_games():
     live_games = st.session_state.get("odds_api_games", [])
     if live_games:
@@ -1110,6 +1113,7 @@ def get_effective_odds_games():
         return cached_games
 
     return []
+
 
 def fetch_live_nba_odds(force=False):
     now_ts = time.time()
@@ -1126,13 +1130,17 @@ def fetch_live_nba_odds(force=False):
         st.session_state["api_status_note"] = "No API key found."
         return cached_games if cached_games else []
 
-    if (not force) and cached_games and (now_ts - last_pull < cooldown):
+    # IMPORTANT:
+    # Even manual refresh should still respect cooldown unless there is no cached data yet.
+    # This prevents accidental API burn during testing.
+    if cached_games and (now_ts - last_pull < cooldown):
+        remaining = max(1, int(cooldown - (now_ts - last_pull)))
         st.session_state["odds_api_games"] = cached_games
         st.session_state["last_odds_refresh_ok"] = True
         st.session_state["last_refresh_error"] = ""
         st.session_state["last_refresh_count"] = len(cached_games)
-        st.session_state["api_mode"] = "cached"
-        st.session_state["api_status_note"] = "Using cached odds to reduce API calls."
+        st.session_state["api_mode"] = "cooldown"
+        st.session_state["api_status_note"] = f"Cooldown active. Using cached odds ({remaining}s remaining)."
         return cached_games
 
     params = {
@@ -1203,17 +1211,22 @@ def fetch_live_nba_odds(force=False):
         st.session_state["api_status_note"] = "Refresh failed and no cached odds are available."
         return []
 
+
 st.sidebar.markdown("### 📡 Live Odds Control")
 
 if st.sidebar.button("🔄 Refresh Live Odds"):
     with st.sidebar:
         with st.spinner("Refreshing live odds..."):
             data = fetch_live_nba_odds(force=True)
-            if st.session_state.get("api_mode") in ["live", "cached"] and len(data) > 0:
-                if st.session_state.get("api_mode") == "live":
-                    st.success(f"Loaded {len(data)} live game(s).")
-                else:
-                    st.warning(f"Using {len(data)} cached game(s).")
+
+            current_mode = st.session_state.get("api_mode")
+
+            if current_mode == "live" and len(data) > 0:
+                st.success(f"Loaded {len(data)} live game(s).")
+            elif current_mode == "cooldown" and len(data) > 0:
+                st.info(f"Cooldown active. Using {len(data)} cached game(s).")
+            elif current_mode == "cached" and len(data) > 0:
+                st.warning(f"Using {len(data)} cached game(s).")
             else:
                 st.error("Refresh failed.")
 

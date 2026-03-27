@@ -3181,12 +3181,74 @@ elif nav == "AI Slip":
 # =========================================================
 # BET LOG
 # =========================================================
+def normalize_result_value(result_value):
+    value = str(result_value).strip().title()
+    if value in ["Pending", "Win", "Loss", "Push"]:
+        return value
+    return "Pending"
+
+
+def update_logged_bet_result(play_id, result_value):
+    result_value = normalize_result_value(result_value)
+    updated = False
+
+    for i, bet in enumerate(st.session_state.get("bet_log", [])):
+        if str(bet.get("play_id", "")).strip() != str(play_id).strip():
+            continue
+
+        units = bet.get("units", 0)
+        odds = bet.get("odds", "")
+
+        st.session_state["bet_log"][i]["result"] = result_value
+        st.session_state["bet_log"][i]["profit"] = settle_result_pnl(odds, units, result_value)
+        updated = True
+        break
+
+    if updated:
+        save_bet_log()
+
+    return updated
+
+
+def sync_manual_results_into_bet_log():
+    manual_results = st.session_state.get("manual_results", {})
+    if not manual_results:
+        return
+
+    changed = False
+
+    for i, bet in enumerate(st.session_state.get("bet_log", [])):
+        pid = str(bet.get("play_id", "")).strip()
+        if not pid or pid not in manual_results:
+            continue
+
+        result_value = normalize_result_value(manual_results.get(pid, "Pending"))
+        current_result = normalize_result_value(bet.get("result", "Pending"))
+        current_profit = float(bet.get("profit", 0.0) or 0.0)
+
+        new_profit = settle_result_pnl(
+            bet.get("odds", ""),
+            bet.get("units", 0),
+            result_value,
+        )
+
+        if current_result != result_value or round(current_profit, 2) != round(new_profit, 2):
+            st.session_state["bet_log"][i]["result"] = result_value
+            st.session_state["bet_log"][i]["profit"] = new_profit
+            changed = True
+
+    if changed:
+        save_bet_log()
+
+
 elif nav == "Bet Log":
     st.header("🧾 Bet Log")
 
+    sync_manual_results_into_bet_log()
+
     st.subheader("📊 ROI Dashboard")
 
-    log_df_full = pd.DataFrame(st.session_state["bet_log"])
+    log_df_full = pd.DataFrame(st.session_state.get("bet_log", []))
     roi_df = build_roi_dashboard(log_df_full)
 
     if roi_df.empty:
@@ -3194,51 +3256,63 @@ elif nav == "Bet Log":
     else:
         st.dataframe(roi_df, use_container_width=True, hide_index=True)
 
-    if len(st.session_state["bet_log"]) == 0:
+    if len(st.session_state.get("bet_log", [])) == 0:
         st.info("No bets logged yet.")
     else:
-        for i, bet in enumerate(st.session_state["bet_log"]):
-            pid = bet.get("play_id")
-            if pid in st.session_state["manual_results"]:
-                result = st.session_state["manual_results"][pid]
-                st.session_state["bet_log"][i]["result"] = result
-                st.session_state["bet_log"][i]["profit"] = settle_result_pnl(
-                    bet.get("odds"),
-                    bet.get("units", 0),
-                    result,
-                )
-
         log_df = pd.DataFrame(st.session_state["bet_log"]).copy()
+
+        if "units" in log_df.columns:
+            log_df["units"] = pd.to_numeric(log_df["units"], errors="coerce").fillna(0).round(2)
+        if "profit" in log_df.columns:
+            log_df["profit"] = pd.to_numeric(log_df["profit"], errors="coerce").fillna(0).round(2)
+        if "implied_prob" in log_df.columns:
+            log_df["implied_prob"] = pd.to_numeric(log_df["implied_prob"], errors="coerce").round(2)
+        if "true_prob" in log_df.columns:
+            log_df["true_prob"] = pd.to_numeric(log_df["true_prob"], errors="coerce").round(2)
+        if "true_confidence" in log_df.columns:
+            log_df["true_confidence"] = pd.to_numeric(log_df["true_confidence"], errors="coerce").round(1)
+        if "edge" in log_df.columns:
+            log_df["edge"] = pd.to_numeric(log_df["edge"], errors="coerce").round(2)
+
         st.dataframe(log_df, use_container_width=True, hide_index=True)
 
         st.subheader("Update Results")
 
-        options = [
-            f"{r['selection']} | {r['game']} | {r['play_id']}"
-            for _, r in log_df.iterrows()
-        ]
+        selectable_rows = []
+        for _, r in log_df.iterrows():
+            pid = str(r.get("play_id", "")).strip()
+            selection = str(r.get("selection", ""))
+            game = str(r.get("game", ""))
+            if pid:
+                selectable_rows.append(f"{selection} | {game} | {pid}")
 
-        selected = st.selectbox("Select Bet", options)
-        selected_id = selected.split(" | ")[-1]
+        if selectable_rows:
+            selected = st.selectbox("Select Bet", selectable_rows)
+            selected_id = selected.split(" | ")[-1].strip()
 
-        result_choice = st.selectbox("Result", ["Pending", "Win", "Loss", "Push"])
-
-        if st.button("Save Result"):
-            st.session_state["manual_results"][selected_id] = result_choice
-
-            for i, bet in enumerate(st.session_state["bet_log"]):
-                if bet.get("play_id") == selected_id:
-                    st.session_state["bet_log"][i]["result"] = result_choice
-                    st.session_state["bet_log"][i]["profit"] = settle_result_pnl(
-                        bet.get("odds"),
-                        bet.get("units", 0),
-                        result_choice,
-                    )
+            existing_result = "Pending"
+            for bet in st.session_state.get("bet_log", []):
+                if str(bet.get("play_id", "")).strip() == selected_id:
+                    existing_result = normalize_result_value(bet.get("result", "Pending"))
                     break
 
-            save_bet_log()
-            st.success("Updated.")
-            st.rerun()
+            result_choice = st.selectbox(
+                "Result",
+                ["Pending", "Win", "Loss", "Push"],
+                index=["Pending", "Win", "Loss", "Push"].index(existing_result),
+            )
+
+            if st.button("Save Result"):
+                st.session_state["manual_results"][selected_id] = result_choice
+                updated = update_logged_bet_result(selected_id, result_choice)
+
+                if updated:
+                    st.success("Updated.")
+                    st.rerun()
+                else:
+                    st.warning("Could not update that bet.")
+        else:
+            st.info("No selectable bets found.")
 
     # ================================
     # MANUAL BET ENTRY
@@ -3251,7 +3325,7 @@ elif nav == "Bet Log":
         with c1:
             game = st.text_input("Game")
             market = st.selectbox("Market", ["moneyline", "spread", "total"])
-            units = st.number_input("Units", 0.0, 10.0, 0.5)
+            units = st.number_input("Units", min_value=0.0, max_value=10.0, value=0.5, step=0.25)
 
         with c2:
             selection = st.text_input("Selection")
@@ -3261,35 +3335,58 @@ elif nav == "Bet Log":
         submit = st.form_submit_button("Add Bet")
 
         if submit:
-            new = {
-                "play_id": build_play_id({
-                    "game": game,
-                    "market": market,
-                    "selection": selection,
-                    "odds": odds
-                }),
-                "game": game,
-                "market": market,
-                "selection": selection,
-                "odds": odds,
-                "implied_prob": None,
-                "true_prob": None,
-                "units": units,
-                "confidence": confidence,
-                "true_confidence": None,
-                "edge": None,
-                "books_seen": None,
-                "consensus": None,
-                "result": "Pending",
-                "profit": 0.0,
-                "mode": TEST_MODE,
-                "log_category": "Manual",
-                "timestamp": datetime.now().isoformat(),
-            }
+            game_clean = str(game).strip()
+            market_clean = str(market).strip().lower()
+            selection_clean = str(selection).strip()
+            odds_clean = str(odds).strip()
 
-            st.session_state["bet_log"].append(new)
-            save_bet_log()
-            st.success("Bet added.")
+            if not game_clean or not selection_clean or not odds_clean:
+                st.warning("Game, selection, and odds are required.")
+            elif american_to_int(odds_clean) is None:
+                st.warning("Odds must be valid American odds like -110 or +125.")
+            else:
+                new_play_id = build_play_id(
+                    {
+                        "game": game_clean,
+                        "market": market_clean,
+                        "selection": selection_clean,
+                        "odds": odds_clean,
+                    }
+                )
+
+                existing_ids = {
+                    str(r.get("play_id", "")).strip()
+                    for r in st.session_state.get("bet_log", [])
+                }
+
+                if new_play_id in existing_ids:
+                    st.warning("That bet already exists in the log.")
+                else:
+                    new = {
+                        "play_id": new_play_id,
+                        "game": game_clean,
+                        "market": market_clean,
+                        "selection": selection_clean,
+                        "odds": odds_clean,
+                        "implied_prob": None,
+                        "true_prob": None,
+                        "units": round(float(units), 2),
+                        "confidence": confidence,
+                        "true_confidence": None,
+                        "edge": None,
+                        "books_seen": None,
+                        "consensus": None,
+                        "result": "Pending",
+                        "profit": 0.0,
+                        "mode": TEST_MODE,
+                        "log_category": "Manual",
+                        "timestamp": datetime.now().isoformat(),
+                    }
+
+                    st.session_state["bet_log"].append(new)
+                    save_bet_log()
+                    st.success("Bet added.")
+                    st.rerun()
 
     st.markdown("</div>", unsafe_allow_html=True)
     

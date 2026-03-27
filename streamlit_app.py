@@ -1505,8 +1505,10 @@ def generate_ai_plays():
         return normalize_team_name(str(name).strip())
 
     def add_scored_row(row, base_tags):
-        row["implied_prob"] = american_odds_to_implied_prob_pct(row.get("odds"))
-        row["true_prob"], row["implied_prob"], row["edge"] = estimate_true_probability_pct(row)
+        tp, ip, ed = estimate_true_probability_pct(row)
+        row["true_prob"] = tp
+        row["implied_prob"] = ip
+        row["edge"] = ed
 
         tc, qs, reasons = compute_true_confidence(row)
         row["true_confidence"] = tc
@@ -1718,7 +1720,6 @@ def generate_ai_plays():
         }
 
     def context_adjust_prop(team_name, player_name, prop_type, context):
-        edge_boost = 0.0
         score_boost = 0.0
         price_boost = 0.0
         tags = []
@@ -1761,10 +1762,9 @@ def generate_ai_plays():
                 score_boost += 0.8
                 tags.append("rebound environment")
 
-        if tight_game:
-            if prop_type in ["points", "pra", "assists"]:
-                score_boost += 1.8
-                tags.append("tight game boost")
+        if tight_game and prop_type in ["points", "pra", "assists"]:
+            score_boost += 1.8
+            tags.append("tight game boost")
 
         if blowout_risk == "high":
             if is_favorite and is_star and prop_type in ["points", "pra", "assists"]:
@@ -1778,10 +1778,9 @@ def generate_ai_plays():
                 score_boost -= 1.0
                 tags.append("moderate blowout risk")
 
-        if is_star and (tight_game or total_tier in ["high", "very_high"]):
-            if prop_type in ["points", "pra"]:
-                score_boost += 1.5
-                tags.append("star usage boost")
+        if is_star and (tight_game or total_tier in ["high", "very_high"]) and prop_type in ["points", "pra"]:
+            score_boost += 1.5
+            tags.append("star usage boost")
 
         return score_boost, price_boost, tags
 
@@ -2003,8 +2002,6 @@ def generate_ai_plays():
 
     if "selection" in df.columns:
         df = df.drop_duplicates(subset=["game", "market", "selection", "odds"]).copy()
-
-    df = apply_true_probability_columns(df)
 
     df["rank_score"] = (
         df["true_confidence"] * 0.55

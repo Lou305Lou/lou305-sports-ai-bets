@@ -2781,31 +2781,44 @@ def render_mobile_or_table(df: pd.DataFrame, best_first: bool = False):
             render_play_card(row, show_best_badge=(best_first and idx == 0))
     else:
         render_table_desktop(df)
-# =========================================================
-# ROI CALCULATOR (CATEGORY-BASED)
-# =========================================================
 def build_roi_dashboard(log_df: pd.DataFrame):
     if log_df is None or log_df.empty:
         return pd.DataFrame()
 
     df = log_df.copy()
 
-    # Ensure category exists
     if "log_category" not in df.columns:
         df["log_category"] = "Uncategorized"
 
     # Only settled bets
     df = df[df["result"].isin(["Win", "Loss", "Push"])].copy()
-
     if df.empty:
         return pd.DataFrame()
 
-    df["units"] = pd.to_numeric(df.get("units", 0), errors="coerce").fillna(0)
-    df["profit"] = pd.to_numeric(df.get("profit", 0), errors="coerce").fillna(0)
+    df["units"] = pd.to_numeric(df.get("units", 0), errors="coerce").fillna(0.0)
+    df["profit"] = pd.to_numeric(df.get("profit", 0), errors="coerce").fillna(0.0)
+
+    expanded_rows = []
+
+    for _, row in df.iterrows():
+        categories = normalize_log_categories(row.get("log_category", ""))
+
+        if not categories:
+            categories = ["Uncategorized"]
+
+        for category in categories:
+            row_copy = row.copy()
+            row_copy["category_bucket"] = category
+            expanded_rows.append(row_copy)
+
+    if not expanded_rows:
+        return pd.DataFrame()
+
+    expanded_df = pd.DataFrame(expanded_rows)
 
     rows = []
 
-    for category, g in df.groupby("log_category"):
+    for category, g in expanded_df.groupby("category_bucket"):
         total_bets = len(g)
         wins = (g["result"] == "Win").sum()
         losses = (g["result"] == "Loss").sum()
@@ -2814,25 +2827,28 @@ def build_roi_dashboard(log_df: pd.DataFrame):
         units_risked = float(g["units"].sum())
         total_profit = float(g["profit"].sum())
 
-        roi = (total_profit / units_risked * 100) if units_risked > 0 else 0.0
-        win_rate = (wins / (wins + losses) * 100) if (wins + losses) > 0 else 0.0
+        roi = (total_profit / units_risked * 100.0) if units_risked > 0 else 0.0
+        win_rate = (wins / (wins + losses) * 100.0) if (wins + losses) > 0 else 0.0
 
-        rows.append({
-            "Category": category,
-            "Bets": total_bets,
-            "Wins": wins,
-            "Losses": losses,
-            "Pushes": pushes,
-            "Win Rate %": round(win_rate, 1),
-            "Units Risked": round(units_risked, 2),
-            "Profit": round(total_profit, 2),
-            "ROI %": round(roi, 2),
-        })
+        rows.append(
+            {
+                "Category": category,
+                "Bets": total_bets,
+                "Wins": int(wins),
+                "Losses": int(losses),
+                "Pushes": int(pushes),
+                "Win Rate %": round(win_rate, 1),
+                "Units Risked": round(units_risked, 2),
+                "Profit": round(total_profit, 2),
+                "ROI %": round(roi, 2),
+            }
+        )
 
-    return pd.DataFrame(rows).sort_values(
-        ["ROI %", "Profit"],
-        ascending=False
-    ).reset_index(drop=True)
+    return (
+        pd.DataFrame(rows)
+        .sort_values(["ROI %", "Profit", "Bets"], ascending=False)
+        .reset_index(drop=True)
+    )
     
 # =========================================================
 # PORTFOLIO LAYER

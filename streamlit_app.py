@@ -3349,7 +3349,9 @@ effective_learning = get_learning_settings()
 effective_active_edge = get_effective_min_active_edge()
 effective_watch_edge = get_effective_min_watch_edge()
 effective_active_true_conf = get_effective_min_active_true_conf()
-effective_watch_true_conf = get_effective_min_watch_true_conf()# =========================================================
+effective_watch_true_conf = get_effective_min_watch_true_conf()
+
+# =========================================================
 # PAGE STYLES
 # =========================================================
 st.markdown(

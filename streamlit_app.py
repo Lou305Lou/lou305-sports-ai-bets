@@ -271,9 +271,15 @@ if "last_refresh_count" not in st.session_state:
 if "last_api_pull_epoch" not in st.session_state:
     st.session_state["last_api_pull_epoch"] = 0.0
 
-# Manual-refresh protection / call-limit control
-if "api_cooldown_seconds" not in st.session_state:
-    st.session_state["api_cooldown_seconds"] = 90.0
+# DAILY CALL LIMIT CONTROL
+if "daily_api_call_limit" not in st.session_state:
+    st.session_state["daily_api_call_limit"] = 10
+
+if "daily_api_call_count" not in st.session_state:
+    st.session_state["daily_api_call_count"] = 0
+
+if "daily_api_call_date" not in st.session_state:
+    st.session_state["daily_api_call_date"] = today_str()
 
 if "last_odds_refresh_ok" not in st.session_state:
     st.session_state["last_odds_refresh_ok"] = False

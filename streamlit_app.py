@@ -2383,6 +2383,7 @@ def auto_log_active_plays(df: pd.DataFrame):
         return 0
 
     added = 0
+    changed = False
 
     for _, row in df.iterrows():
         if str(row.get("status")) != "Active":
@@ -2396,9 +2397,17 @@ def auto_log_active_plays(df: pd.DataFrame):
 
         if existing_idx is not None:
             existing_row = st.session_state["bet_log"][existing_idx]
+            before_category = str(existing_row.get("log_category", "")).strip()
+
             updated_row = add_category_to_logged_bet(existing_row, "Top Play")
+            after_category = str(updated_row.get("log_category", "")).strip()
+
             st.session_state["bet_log"][existing_idx] = updated_row
             st.session_state["auto_logged_ids"].add(pid)
+
+            if before_category != after_category:
+                changed = True
+
             continue
 
         new_bet = {
@@ -2425,12 +2434,12 @@ def auto_log_active_plays(df: pd.DataFrame):
         st.session_state["bet_log"].append(new_bet)
         st.session_state["auto_logged_ids"].add(pid)
         added += 1
+        changed = True
 
-    if added > 0:
+    if changed:
         save_bet_log()
 
     return added
-
 
 def log_ai_slip_pick(best_row):
     if best_row is None:

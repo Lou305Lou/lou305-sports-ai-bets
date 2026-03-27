@@ -2317,6 +2317,67 @@ def choose_best_parlay(active_df):
 # =========================================================
 # AUTO-LOG ACTIVE PLAYS (CATEGORY-AWARE)
 # =========================================================
+def normalize_log_categories(value):
+    if isinstance(value, list):
+        cleaned = []
+        for item in value:
+            label = str(item).strip()
+            if label and label not in cleaned:
+                cleaned.append(label)
+        return cleaned
+
+    raw = str(value).strip()
+    if not raw:
+        return []
+
+    parts = [p.strip() for p in raw.split("|")]
+    cleaned = []
+    for part in parts:
+        if part and part not in cleaned:
+            cleaned.append(part)
+    return cleaned
+
+
+def format_log_categories_for_storage(categories):
+    cleaned = normalize_log_categories(categories)
+    return " | ".join(cleaned)
+
+
+def add_category_to_logged_bet(existing_row, new_category):
+    categories = normalize_log_categories(existing_row.get("log_category", ""))
+    if new_category not in categories:
+        categories.append(new_category)
+    existing_row["log_category"] = format_log_categories_for_storage(categories)
+    return existing_row
+
+
+def find_logged_bet_index_by_exact_play_id(play_id):
+    target = str(play_id).strip()
+    if not target:
+        return None
+
+    for i, row in enumerate(st.session_state.get("bet_log", [])):
+        if str(row.get("play_id", "")).strip() == target:
+            return i
+
+    return None
+
+
+def find_logged_bet_index_by_base_play_id(play_id):
+    target = str(play_id).strip()
+    if not target:
+        return None
+
+    for i, row in enumerate(st.session_state.get("bet_log", [])):
+        row_pid = str(row.get("play_id", "")).strip()
+        if row_pid == target:
+            return i
+        if row_pid.startswith(f"{target}__"):
+            return i
+
+    return None
+
+
 def auto_log_active_plays(df: pd.DataFrame):
     if df is None or df.empty:
         return 0
@@ -2327,11 +2388,17 @@ def auto_log_active_plays(df: pd.DataFrame):
         if str(row.get("status")) != "Active":
             continue
 
-        pid = row.get("play_id")
+        pid = str(row.get("play_id", "")).strip()
         if not pid:
             continue
 
-        if pid in st.session_state["auto_logged_ids"]:
+        existing_idx = find_logged_bet_index_by_exact_play_id(pid)
+
+        if existing_idx is not None:
+            existing_row = st.session_state["bet_log"][existing_idx]
+            updated_row = add_category_to_logged_bet(existing_row, "Top Play")
+            st.session_state["bet_log"][existing_idx] = updated_row
+            st.session_state["auto_logged_ids"].add(pid)
             continue
 
         new_bet = {
@@ -2373,18 +2440,16 @@ def log_ai_slip_pick(best_row):
     if not pid:
         return False
 
-    existing_rows = st.session_state.get("bet_log", [])
+    existing_idx = find_logged_bet_index_by_base_play_id(pid)
 
-    for row in existing_rows:
-        if str(row.get("play_id")) == pid and str(row.get("log_category")) == "Top Play":
-            return False
+    if existing_idx is not None:
+        existing_row = st.session_state["bet_log"][existing_idx]
+        updated_row = add_category_to_logged_bet(existing_row, "AI Slip")
+        st.session_state["bet_log"][existing_idx] = updated_row
+        save_bet_log()
+        return False
 
     ai_slip_id = f"{pid}__ai_slip"
-
-    existing_ids = {str(r.get("play_id")) for r in existing_rows}
-
-    if ai_slip_id in existing_ids:
-        return False
 
     new_row = {
         "play_id": ai_slip_id,
@@ -2427,12 +2492,12 @@ def log_ai_parlay_pick(best_parlay):
         f"AI_PARLAY|{parlay_key}|{best_parlay.get('combined_odds')}".encode()
     ).hexdigest()
 
-    existing_ids = {
-        str(r.get("play_id"))
-        for r in st.session_state.get("bet_log", [])
-    }
-
-    if parlay_id in existing_ids:
+    existing_idx = find_logged_bet_index_by_exact_play_id(parlay_id)
+    if existing_idx is not None:
+        existing_row = st.session_state["bet_log"][existing_idx]
+        updated_row = add_category_to_logged_bet(existing_row, "AI Parlay")
+        st.session_state["bet_log"][existing_idx] = updated_row
+        save_bet_log()
         return False
 
     new_row = {

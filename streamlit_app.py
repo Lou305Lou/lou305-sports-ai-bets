@@ -3300,7 +3300,7 @@ elif nav == "Bet Log":
         submit = st.form_submit_button("Add Bet")
 
         if submit:
-            new = {
+             new = {
                 "play_id": build_play_id({
                     "game": game,
                     "market": market,
@@ -3311,6 +3311,8 @@ elif nav == "Bet Log":
                 "market": market,
                 "selection": selection,
                 "odds": odds,
+                "implied_prob": None,
+                "true_prob": None,
                 "units": units,
                 "confidence": confidence,
                 "true_confidence": None,

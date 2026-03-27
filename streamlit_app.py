@@ -3086,54 +3086,6 @@ elif nav == "Bet Log":
             st.success("Updated.")
             st.rerun()
 
-    st.markdown('<div class="bet-form-wrap">', unsafe_allow_html=True)
-
-    with st.form("manual_bet", clear_on_submit=True):
-        c1, c2 = st.columns(2)
-
-        with c1:
-            game = st.text_input("Game")
-            market = st.selectbox("Market", ["moneyline", "spread", "total"])
-            units = st.number_input("Units", 0.0, 10.0, 0.5)
-
-        with c2:
-            selection = st.text_input("Selection")
-            odds = st.text_input("Odds")
-            confidence = st.selectbox("Confidence", ["Low", "Medium", "High", "Elite"])
-
-        submit = st.form_submit_button("Add Bet")
-
-        if submit:
-            new = {
-                "play_id": build_play_id({
-                    "game": game,
-                    "market": market,
-                    "selection": selection,
-                    "odds": odds
-                }),
-                "game": game,
-                "market": market,
-                "selection": selection,
-                "odds": odds,
-                "units": units,
-                "confidence": confidence,
-                "true_confidence": None,
-                "edge": None,
-                "books_seen": None,
-                "consensus": None,
-                "result": "Pending",
-                "profit": 0.0,
-                "mode": TEST_MODE,
-                "log_category": "Manual",
-                "timestamp": datetime.now().isoformat(),
-            }
-
-            st.session_state["bet_log"].append(new)
-            save_bet_log()
-            st.success("Bet added.")
-
-    st.markdown("</div>", unsafe_allow_html=True)
-
     # ================================
     # MANUAL BET ENTRY
     # ================================

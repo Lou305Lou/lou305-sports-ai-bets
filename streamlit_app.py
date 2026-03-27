@@ -823,8 +823,6 @@ def prop_market_label(market: str):
 # =========================================================
 # LIVE SLATE INPUT (V34.1 CLEAN)
 # =========================================================
-import re
-
 def parse_today_games(games_text: str):
     games = []
 
@@ -860,16 +858,14 @@ st.sidebar.text_area(
     placeholder="Examples:\nSAS vs CHA\nLAL vs BOS\nHeat vs Knicks\n\nLeave blank to use all live games",
 )
 
-# 🔥 AUTO-UPPERCASE NORMALIZATION (REAL-TIME CLEAN INPUT)
+# AUTO-UPPERCASE NORMALIZATION
 if st.session_state.get("today_games_text"):
     st.session_state["today_games_text"] = st.session_state["today_games_text"].upper()
 
-# 💡 Helper note (UX upgrade)
 st.sidebar.caption(
     "Supports abbreviations, full team names, or nicknames (e.g., LAL, Lakers, Los Angeles Lakers)"
 )
 
-# Parsed games (used downstream)
 today_games = parse_today_games(st.session_state.get("today_games_text", ""))
 
 # =========================================================
@@ -1767,10 +1763,10 @@ def generate_ai_plays():
             if not in_allowed_odds_range(format_american(best_price), DEFAULT_ODDS_RANGE[0], DEFAULT_ODDS_RANGE[1]):
                 continue
 
-            edge = round(random.uniform(2.4, 5.8), 2)
-            score = round(random.uniform(80.0, 99.5), 1)
+            edge = round(max(0.0, (books_found - 1) * 1.15), 2)
+            score = round(min(99.0, 72.0 + (books_found * 4.5) + (abs(best_price) < 140) * 4.0), 1)
+            price_edge = round(min(3.0, max(0.5, books_found * 0.55)), 2)
             consensus = "Strong" if books_found >= 4 else ("Fair" if books_found >= 2 else "Thin")
-            price_edge = round(random.uniform(0.8, 2.8), 2)
 
             row = {
                 "game": game,
@@ -1803,10 +1799,10 @@ def generate_ai_plays():
             if not in_allowed_odds_range(format_american(best_price), DEFAULT_ODDS_RANGE[0], DEFAULT_ODDS_RANGE[1]):
                 continue
 
-            edge = round(random.uniform(2.4, 5.8), 2)
-            score = round(random.uniform(80.0, 99.5), 1)
+            edge = round(max(0.0, (books_found - 1) * 1.15), 2)
+            score = round(min(99.0, 72.0 + (books_found * 4.5) + (abs(best_price) < 140) * 4.0), 1)
+            price_edge = round(min(3.0, max(0.5, books_found * 0.55)), 2)
             consensus = "Strong" if books_found >= 4 else ("Fair" if books_found >= 2 else "Thin")
-            price_edge = round(random.uniform(0.8, 2.8), 2)
 
             point_str = f"+{best_point:g}" if best_point > 0 else f"{best_point:g}"
 
@@ -1841,10 +1837,10 @@ def generate_ai_plays():
             if not in_allowed_odds_range(format_american(best_price), DEFAULT_ODDS_RANGE[0], DEFAULT_ODDS_RANGE[1]):
                 continue
 
-            edge = round(random.uniform(2.4, 5.8), 2)
-            score = round(random.uniform(80.0, 99.5), 1)
+            edge = round(max(0.0, (books_found - 1) * 1.15), 2)
+            score = round(min(99.0, 72.0 + (books_found * 4.5) + (abs(best_price) < 140) * 4.0), 1)
+            price_edge = round(min(3.0, max(0.5, books_found * 0.55)), 2)
             consensus = "Strong" if books_found >= 4 else ("Fair" if books_found >= 2 else "Thin")
-            price_edge = round(random.uniform(0.8, 2.8), 2)
 
             row = {
                 "game": game,
@@ -1998,7 +1994,6 @@ def generate_ai_plays():
         .drop(columns=["status_sort"], errors="ignore")
         .reset_index(drop=True)
     )
-
 # =========================================================
 # PARLAY INTELLIGENCE
 # =========================================================
@@ -2208,12 +2203,8 @@ def auto_log_active_plays(df: pd.DataFrame):
         if not pid:
             continue
 
-        # Prevent duplicates across sessions
         if pid in st.session_state["auto_logged_ids"]:
             continue
-
-        # Determine category
-        category = "Top Play"
 
         new_bet = {
             "play_id": pid,
@@ -2230,7 +2221,7 @@ def auto_log_active_plays(df: pd.DataFrame):
             "result": "Pending",
             "profit": 0.0,
             "mode": TEST_MODE,
-            "log_category": category,
+            "log_category": "Top Play",
             "timestamp": datetime.now().isoformat(),
         }
 
@@ -2243,6 +2234,7 @@ def auto_log_active_plays(df: pd.DataFrame):
 
     return added
 
+
 def log_ai_slip_pick(best_row):
     if best_row is None:
         return False
@@ -2251,11 +2243,21 @@ def log_ai_slip_pick(best_row):
     if not pid:
         return False
 
+    existing_rows = st.session_state.get("bet_log", [])
+
+    # Prevent double-staking if already logged as Top Play
+    for row in existing_rows:
+        existing_pid = str(row.get("play_id", "")).strip()
+        existing_category = str(row.get("log_category", "")).strip()
+
+        if existing_pid == pid and existing_category == "Top Play":
+            return False
+
     ai_slip_id = f"{pid}__ai_slip"
 
     existing_ids = {
         str(r.get("play_id", "")).strip()
-        for r in st.session_state.get("bet_log", [])
+        for r in existing_rows
     }
 
     if ai_slip_id in existing_ids:
@@ -2295,7 +2297,9 @@ def log_ai_parlay_pick(best_parlay):
     if not parlay_key:
         return False
 
-    parlay_id = hashlib.md5(f"AI_PARLAY|{parlay_key}|{best_parlay.get('combined_odds')}".encode()).hexdigest()
+    parlay_id = hashlib.md5(
+        f"AI_PARLAY|{parlay_key}|{best_parlay.get('combined_odds')}".encode()
+    ).hexdigest()
 
     existing_ids = {
         str(r.get("play_id", "")).strip()
@@ -2307,7 +2311,7 @@ def log_ai_parlay_pick(best_parlay):
 
     new_row = {
         "play_id": parlay_id,
-        "game": " | ".join(sorted(set([str(leg.get('game', '')) for leg in best_parlay.get("legs", [])]))),
+        "game": " | ".join(sorted(set([str(leg.get("game", "")) for leg in best_parlay.get("legs", [])]))),
         "market": "parlay",
         "selection": " | ".join([str(leg.get("selection", "")) for leg in best_parlay.get("legs", [])]),
         "odds": best_parlay.get("combined_odds"),
@@ -2902,10 +2906,11 @@ st.session_state["nav_choice"] = nav
 st.markdown("</div>", unsafe_allow_html=True)
 
 # =========================================================
-# TOP PLAYS (AUTO SLATE READY - V34.1 FIX)
+# TOP PLAYS
 # =========================================================
-elif nav_choice == "Top Plays":
-    st.markdown("### ⭐ Top Plays")
+if nav == "Top Plays":
+    st.header("🎯 Top Plays")
+    st.caption("Up to 10 qualified plays only. No filler.")
 
     if len(get_effective_odds_games()) == 0:
         st.warning("Press 'Refresh Live Odds' in the sidebar to load live odds.")
@@ -2922,10 +2927,11 @@ elif nav_choice == "Top Plays":
             render_mobile_or_table(top_df, best_first=True)
 
 # =========================================================
-# WATCHLIST (AUTO SLATE READY - V34.1 FIX)
+# WATCHLIST
 # =========================================================
-elif nav_choice == "Watchlist":
-    st.markdown("### 👀 Watchlist")
+elif nav == "Watchlist":
+    st.header("👀 Watchlist")
+    st.caption("Near-qualified plays only.")
 
     if len(get_effective_odds_games()) == 0:
         st.warning("Press 'Refresh Live Odds' in the sidebar to load live odds.")
@@ -2939,58 +2945,84 @@ elif nav_choice == "Watchlist":
         render_mobile_or_table(wl_df)
 
 # =========================================================
-# AI SLIP LOGGER (NO DOUBLE STAKE - V34.1 FIX)
+# AI SLIP + PARLAY INTELLIGENCE
 # =========================================================
-def log_ai_slip_pick(best_row):
-    if best_row is None:
-        return False
+elif nav == "AI Slip":
+    st.header("🧠 AI Slip")
 
-    pid = str(best_row.get("play_id", "")).strip()
-    if not pid:
-        return False
+    if today_games:
+        st.caption("Filtered Slate: " + " | ".join(today_games))
+    else:
+        st.caption("Using all live games returned by the API.")
 
-    existing_rows = st.session_state.get("bet_log", [])
+    if len(get_effective_odds_games()) == 0:
+        st.warning("Press 'Refresh Live Odds' in the sidebar to load live odds.")
+    elif best_row is not None:
+        risk_level = "Low" if float(best_row["units"]) <= 0.60 else "Moderate"
 
-    # 🚫 Prevent double stake if already logged as Top Play
-    for row in existing_rows:
-        existing_pid = str(row.get("play_id", "")).strip()
-        existing_category = str(row.get("log_category", "")).strip()
+        st.markdown(
+            f"""
+            <div class="slip-card">
+                <div class="slip-kicker">🔥 AI Recommended Single</div>
+                <div class="slip-title">{best_row['selection']}</div>
+                <div class="slip-meta">{best_row['game']} • {prop_market_label(best_row['market']) if is_prop_market(best_row['market']) else str(best_row['market']).title()}</div>
+                <div class="slip-meta"><strong>Confidence:</strong> {best_row['confidence']}</div>
+                <div class="slip-meta"><strong>True Confidence:</strong> {best_row['true_confidence']:.1f}</div>
+                <div class="slip-meta"><strong>Quality Label:</strong> {best_row['quality_label']}</div>
+                <div class="slip-meta"><strong>Odds:</strong> {best_row['odds']}</div>
+                <div class="slip-meta"><strong>Type:</strong> Single best bet</div>
+                <div class="slip-meta"><strong>Risk Level:</strong> {risk_level}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
-        if existing_pid == pid and existing_category == "Top Play":
-            return False
+        render_play_card(best_row, show_best_badge=True)
+    else:
+        st.info("No active AI single available.")
 
-    ai_slip_id = f"{pid}__ai_slip"
+    st.subheader("🎯 AI Parlay Intelligence")
 
-    existing_ids = {
-        str(r.get("play_id", "")).strip()
-        for r in existing_rows
-    }
+    if best_parlay is None:
+        st.info("Not enough qualifying legs.")
+    else:
+        render_parlay_card(best_parlay)
 
-    if ai_slip_id in existing_ids:
-        return False
+    with st.expander("Show top parlay candidates", expanded=False):
+        render_parlay_table(sharp_candidates, "Sharp Approved")
+        render_parlay_table(fallback_candidates, "Fallback")
 
-    new_row = {
-        "play_id": ai_slip_id,
-        "game": best_row.get("game"),
-        "market": best_row.get("market"),
-        "selection": best_row.get("selection"),
-        "odds": best_row.get("odds"),
-        "units": best_row.get("units"),
-        "confidence": best_row.get("confidence"),
-        "true_confidence": best_row.get("true_confidence"),
-        "edge": best_row.get("edge"),
-        "books_seen": best_row.get("books_seen"),
-        "consensus": best_row.get("consensus"),
-        "result": "Pending",
-        "profit": 0.0,
-        "mode": TEST_MODE,
-        "log_category": "AI Slip",
-        "timestamp": datetime.now().isoformat(),
-    }
+    st.subheader("🧠 AI Portfolio Allocation")
 
-    st.session_state["bet_log"].append(new_row)
-    save_bet_log()
-    return True
+    if not portfolio:
+        st.info("No portfolio available.")
+    else:
+        rows = []
+
+        for item in portfolio:
+            data = item["data"]
+
+            if item["type"] == "Single":
+                summary = f"{data['selection']} ({data['game']})"
+                odds = data["odds"]
+                conf = data["true_confidence"]
+            else:
+                summary = " | ".join([leg["selection"] for leg in data["legs"]])
+                odds = data["combined_odds"]
+                conf = data["avg_true_conf"]
+
+            rows.append(
+                {
+                    "Label": item["label"],
+                    "Type": item["type"],
+                    "Units": item["units"],
+                    "Odds": odds,
+                    "Confidence": conf,
+                    "Summary": summary,
+                }
+            )
+
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
 # =========================================================
 # BET LOG
@@ -2998,9 +3030,6 @@ def log_ai_slip_pick(best_row):
 elif nav == "Bet Log":
     st.header("🧾 Bet Log")
 
-    # ================================
-    # ROI DASHBOARD
-    # ================================
     st.subheader("📊 ROI Dashboard")
 
     log_df_full = pd.DataFrame(st.session_state["bet_log"])
@@ -3011,9 +3040,6 @@ elif nav == "Bet Log":
     else:
         st.dataframe(roi_df, use_container_width=True, hide_index=True)
 
-    # ================================
-    # BET LOG TABLE
-    # ================================
     if len(st.session_state["bet_log"]) == 0:
         st.info("No bets logged yet.")
     else:
@@ -3059,6 +3085,54 @@ elif nav == "Bet Log":
             save_bet_log()
             st.success("Updated.")
             st.rerun()
+
+    st.markdown('<div class="bet-form-wrap">', unsafe_allow_html=True)
+
+    with st.form("manual_bet", clear_on_submit=True):
+        c1, c2 = st.columns(2)
+
+        with c1:
+            game = st.text_input("Game")
+            market = st.selectbox("Market", ["moneyline", "spread", "total"])
+            units = st.number_input("Units", 0.0, 10.0, 0.5)
+
+        with c2:
+            selection = st.text_input("Selection")
+            odds = st.text_input("Odds")
+            confidence = st.selectbox("Confidence", ["Low", "Medium", "High", "Elite"])
+
+        submit = st.form_submit_button("Add Bet")
+
+        if submit:
+            new = {
+                "play_id": build_play_id({
+                    "game": game,
+                    "market": market,
+                    "selection": selection,
+                    "odds": odds
+                }),
+                "game": game,
+                "market": market,
+                "selection": selection,
+                "odds": odds,
+                "units": units,
+                "confidence": confidence,
+                "true_confidence": None,
+                "edge": None,
+                "books_seen": None,
+                "consensus": None,
+                "result": "Pending",
+                "profit": 0.0,
+                "mode": TEST_MODE,
+                "log_category": "Manual",
+                "timestamp": datetime.now().isoformat(),
+            }
+
+            st.session_state["bet_log"].append(new)
+            save_bet_log()
+            st.success("Bet added.")
+
+    st.markdown("</div>", unsafe_allow_html=True)
 
     # ================================
     # MANUAL BET ENTRY

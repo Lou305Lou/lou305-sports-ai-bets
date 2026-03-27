@@ -64,13 +64,25 @@ def _merge_duplicate_play_id_rows(df: pd.DataFrame) -> pd.DataFrame:
     if id_rows.empty:
         return pd.concat([id_rows, blank_rows], ignore_index=True)
 
+    def _base_play_id(pid):
+        pid = str(pid).strip()
+        if "__" in pid:
+            return pid.split("__")[0].strip()
+        return pid
+
+    id_rows["_base_play_id"] = id_rows["play_id"].apply(_base_play_id)
+
     merged_rows = []
 
-    for _, group in id_rows.groupby("play_id", sort=False):
+    for _, group in id_rows.groupby("_base_play_id", sort=False):
         group = group.copy()
-        base_row = group.iloc[0].copy()
 
-        # Merge categories across duplicates
+        exact_rows = group[~group["play_id"].astype(str).str.contains("__", na=False)].copy()
+        if not exact_rows.empty:
+            base_row = exact_rows.iloc[0].copy()
+        else:
+            base_row = group.iloc[0].copy()
+
         merged_categories = []
         for raw_cat in group["log_category"].tolist():
             for part in str(raw_cat).split("|"):
@@ -80,7 +92,6 @@ def _merge_duplicate_play_id_rows(df: pd.DataFrame) -> pd.DataFrame:
 
         base_row["log_category"] = " | ".join(merged_categories)
 
-        # Preserve a settled result if any duplicate has one
         if "result" in group.columns:
             settled_mask = group["result"].astype(str).isin(["Win", "Loss", "Push"])
             settled_group = group[settled_mask].copy()
@@ -89,15 +100,20 @@ def _merge_duplicate_play_id_rows(df: pd.DataFrame) -> pd.DataFrame:
                 settled_row = settled_group.iloc[-1]
                 base_row["result"] = settled_row.get("result", base_row.get("result", "Pending"))
 
-                if "profit" in group.columns:
-                    base_row["profit"] = settled_row.get("profit", base_row.get("profit", 0.0))
+        if "profit" in group.columns and "result" in group.columns and "odds" in base_row.index and "units" in base_row.index:
+            result_value = str(base_row.get("result", "Pending")).strip()
+            odds_value = base_row.get("odds", "")
+            units_value = base_row.get("units", 0)
+            base_row["profit"] = settle_result_pnl(odds_value, units_value, result_value)
 
-        # Prefer the latest timestamp if available
         if "timestamp" in group.columns:
             non_blank_timestamps = group["timestamp"].astype(str).str.strip()
             non_blank_timestamps = non_blank_timestamps[non_blank_timestamps != ""]
             if not non_blank_timestamps.empty:
                 base_row["timestamp"] = non_blank_timestamps.iloc[-1]
+
+        if "_base_play_id" in base_row.index:
+            base_row = base_row.drop(labels=["_base_play_id"])
 
         merged_rows.append(base_row)
 
@@ -116,7 +132,6 @@ def load_bet_log():
 
         cleaned_df = _merge_duplicate_play_id_rows(df)
 
-        # Save cleaned version back to disk if duplicates/categories were normalized
         if not cleaned_df.equals(df):
             cleaned_df.to_csv(BET_LOG_FILE, index=False)
 
@@ -140,7 +155,6 @@ def save_bet_log():
         cleaned_df = _merge_duplicate_play_id_rows(df)
         cleaned_df.to_csv(BET_LOG_FILE, index=False)
 
-        # Keep session state synced with cleaned file
         st.session_state["bet_log"] = cleaned_df.to_dict("records")
 
     except Exception:
@@ -152,12 +166,16 @@ def build_logged_id_set(log_rows):
     try:
         for row in log_rows or []:
             pid = str(row.get("play_id", "")).strip()
-            if pid:
-                ids.add(pid)
+            if not pid:
+                continue
+
+            ids.add(pid)
+
+            if "__" in pid:
+                ids.add(pid.split("__")[0].strip())
     except Exception:
         pass
     return ids
-
 
 # =========================================================
 # API CONFIG
@@ -1607,13 +1625,19 @@ def generate_ai_plays():
         "game",
         "market",
         "selection",
+        "player",
+        "team",
+        "opponent",
         "odds",
+        "implied_prob",
+        "true_prob",
         "edge",
         "score",
         "units",
         "tier",
         "quality_label",
         "status",
+        "watch_tier",
         "confidence",
         "books_seen",
         "best_price",
@@ -1627,54 +1651,523 @@ def generate_ai_plays():
         "play_id",
     ]
 
-    if not today_games:
+    live_games = get_effective_odds_games()
+    if not live_games:
         return pd.DataFrame(columns=empty_cols)
 
+    allowed_games = set(today_games) if today_games else None
     rows = []
 
-    team_market_templates = [
-        ("moneyline", lambda g: g.split(" vs ")[1]),
-        ("moneyline", lambda g: g.split(" vs ")[0]),
-        ("total", lambda g: "Over 221.5"),
-        ("total", lambda g: "Under 221.5"),
-    ]
+    def normalize_outcome_name(name):
+        return normalize_team_name(str(name).strip())
 
-    for game in today_games:
-        for market, selector_fn in team_market_templates:
-            selection = selector_fn(game)
+    def add_scored_row(row, base_tags):
+        tp, ip, ed = estimate_true_probability_pct(row)
+        row["true_prob"] = tp
+        row["implied_prob"] = ip
+        row["edge"] = ed
 
-            odds = random.choice([-150, -120, -110, +100, +110, +120])
+        tc, qs, reasons = compute_true_confidence(row)
+        row["true_confidence"] = tc
+        row["quality_score"] = qs
+        row["decision_reasons"] = reasons
+        row["confidence"] = confidence_bucket_from_true_conf(tc)
 
-            implied_prob = convert_american_to_probability(odds)
-            true_prob = implied_prob + random.uniform(-0.05, 0.08)
+        tags = list(base_tags)
+        for reason in reasons:
+            if reason not in tags:
+                tags.append(reason)
+        row["ai_tags"] = tags[:6]
 
-            edge = (true_prob - implied_prob) * 100
+        rows.append(row)
 
-            true_conf = true_prob * 100
+    def get_best_market_outcome(bookmakers, market_key, target_name=None):
+        best_price = None
+        books_found = 0
 
-            books_seen = random.randint(1, 5)
+        for book in bookmakers:
+            markets = book.get("markets", [])
+            for market in markets:
+                if market.get("key") != market_key:
+                    continue
 
-            consensus = random.choice(["Weak", "Fair", "Strong"])
+                matched_this_book = False
 
-            rows.append({
+                for outcome in market.get("outcomes", []):
+                    outcome_name = str(outcome.get("name", "")).strip()
+                    normalized_outcome_name = normalize_outcome_name(outcome_name)
+
+                    if target_name is not None and normalized_outcome_name != target_name:
+                        continue
+
+                    price = outcome.get("price")
+                    if price is None:
+                        continue
+
+                    try:
+                        price = int(price)
+                    except Exception:
+                        continue
+
+                    if not matched_this_book:
+                        books_found += 1
+                        matched_this_book = True
+
+                    if best_price is None or price > best_price:
+                        best_price = price
+
+        return best_price, books_found
+
+    def get_best_spread_outcome(bookmakers, target_name):
+        best_price = None
+        best_point = None
+        books_found = 0
+
+        for book in bookmakers:
+            markets = book.get("markets", [])
+            for market in markets:
+                if market.get("key") != "spreads":
+                    continue
+
+                matched_this_book = False
+
+                for outcome in market.get("outcomes", []):
+                    outcome_name = str(outcome.get("name", "")).strip()
+                    normalized_outcome_name = normalize_outcome_name(outcome_name)
+
+                    if normalized_outcome_name != target_name:
+                        continue
+
+                    price = outcome.get("price")
+                    point = outcome.get("point")
+
+                    if price is None or point is None:
+                        continue
+
+                    try:
+                        price = int(price)
+                        point = float(point)
+                    except Exception:
+                        continue
+
+                    if not matched_this_book:
+                        books_found += 1
+                        matched_this_book = True
+
+                    if best_point is None:
+                        best_point = point
+                        best_price = price
+                    else:
+                        if point > best_point:
+                            best_point = point
+                            best_price = price
+                        elif point == best_point and price > best_price:
+                            best_price = price
+
+        return best_point, best_price, books_found
+
+    def get_best_total_outcome(bookmakers, over_under_name):
+        best_price = None
+        best_point = None
+        books_found = 0
+
+        for book in bookmakers:
+            markets = book.get("markets", [])
+            for market in markets:
+                if market.get("key") != "totals":
+                    continue
+
+                matched_this_book = False
+
+                for outcome in market.get("outcomes", []):
+                    outcome_name = str(outcome.get("name", "")).strip()
+                    if outcome_name != over_under_name:
+                        continue
+
+                    price = outcome.get("price")
+                    point = outcome.get("point")
+
+                    if price is None or point is None:
+                        continue
+
+                    try:
+                        price = int(price)
+                        point = float(point)
+                    except Exception:
+                        continue
+
+                    if not matched_this_book:
+                        books_found += 1
+                        matched_this_book = True
+
+                    if best_point is None:
+                        best_point = point
+                        best_price = price
+                    else:
+                        if over_under_name == "Over":
+                            if point < best_point:
+                                best_point = point
+                                best_price = price
+                            elif point == best_point and price > best_price:
+                                best_price = price
+                        else:
+                            if point > best_point:
+                                best_point = point
+                                best_price = price
+                            elif point == best_point and price > best_price:
+                                best_price = price
+
+        return best_point, best_price, books_found
+
+    def game_context_from_market(away_team, home_team, bookmakers):
+        away_spread, away_spread_price, away_books = get_best_spread_outcome(bookmakers, away_team)
+        home_spread, home_spread_price, home_books = get_best_spread_outcome(bookmakers, home_team)
+
+        over_total, over_price, total_books = get_best_total_outcome(bookmakers, "Over")
+        under_total, under_price, under_books = get_best_total_outcome(bookmakers, "Under")
+
+        total_line = None
+        if over_total is not None and under_total is not None:
+            total_line = over_total if total_books >= under_books else under_total
+        elif over_total is not None:
+            total_line = over_total
+        elif under_total is not None:
+            total_line = under_total
+
+        favorite_team = None
+        favorite_spread_abs = 0.0
+
+        spread_candidates = []
+        if away_spread is not None:
+            spread_candidates.append((away_team, away_spread))
+        if home_spread is not None:
+            spread_candidates.append((home_team, home_spread))
+
+        negative_spreads = [(team, spread) for team, spread in spread_candidates if spread < 0]
+        if negative_spreads:
+            favorite_team, fav_spread = sorted(negative_spreads, key=lambda x: x[1])[0]
+            favorite_spread_abs = abs(float(fav_spread))
+
+        total_tier = "neutral"
+        if total_line is not None:
+            if total_line >= 234:
+                total_tier = "very_high"
+            elif total_line >= 227:
+                total_tier = "high"
+            elif total_line <= 218:
+                total_tier = "low"
+
+        blowout_risk = "low"
+        if favorite_spread_abs >= 10:
+            blowout_risk = "high"
+        elif favorite_spread_abs >= 7:
+            blowout_risk = "moderate"
+
+        tight_game = favorite_spread_abs <= 4 if favorite_team is not None else False
+
+        return {
+            "favorite_team": favorite_team,
+            "favorite_spread_abs": round(favorite_spread_abs, 1),
+            "total_line": total_line,
+            "total_tier": total_tier,
+            "blowout_risk": blowout_risk,
+            "tight_game": tight_game,
+            "spread_books": max(away_books, home_books),
+            "total_books": max(total_books, under_books),
+        }
+
+    def context_adjust_prop(team_name, player_name, prop_type, context):
+        score_boost = 0.0
+        price_boost = 0.0
+        tags = []
+
+        total_tier = context.get("total_tier", "neutral")
+        favorite_team = context.get("favorite_team")
+        blowout_risk = context.get("blowout_risk", "low")
+        tight_game = context.get("tight_game", False)
+
+        is_favorite = favorite_team == team_name
+        is_star = player_name in {
+            "Stephen Curry", "LeBron James", "Anthony Davis", "Jayson Tatum",
+            "Jaylen Brown", "Donovan Mitchell", "Nikola Jokic", "Kevin Durant",
+            "Devin Booker", "Victor Wembanyama", "Paolo Banchero", "Jalen Brunson",
+            "Zion Williamson", "Brandon Ingram", "LaMelo Ball", "Jimmy Butler",
+            "Tyler Herro", "Bam Adebayo"
+        }
+
+        if total_tier == "very_high":
+            if prop_type in ["points", "pra", "assists"]:
+                score_boost += 4.0
+                price_boost += 0.30
+                tags.append("very high total boost")
+            elif prop_type == "rebounds":
+                score_boost += 1.0
+                tags.append("high pace support")
+        elif total_tier == "high":
+            if prop_type in ["points", "pra"]:
+                score_boost += 2.5
+                price_boost += 0.18
+                tags.append("high total boost")
+            elif prop_type == "assists":
+                score_boost += 1.8
+                tags.append("offense environment boost")
+        elif total_tier == "low":
+            if prop_type in ["points", "pra"]:
+                score_boost -= 2.2
+                tags.append("low total drag")
+            elif prop_type == "rebounds":
+                score_boost += 0.8
+                tags.append("rebound environment")
+
+        if tight_game and prop_type in ["points", "pra", "assists"]:
+            score_boost += 1.8
+            tags.append("tight game boost")
+
+        if blowout_risk == "high":
+            if is_favorite and is_star and prop_type in ["points", "pra", "assists"]:
+                score_boost -= 2.8
+                tags.append("blowout risk")
+            elif (not is_favorite) and prop_type in ["assists", "pra"]:
+                score_boost -= 1.0
+                tags.append("game script risk")
+        elif blowout_risk == "moderate":
+            if is_favorite and is_star and prop_type in ["points", "pra"]:
+                score_boost -= 1.0
+                tags.append("moderate blowout risk")
+
+        if is_star and (tight_game or total_tier in ["high", "very_high"]) and prop_type in ["points", "pra"]:
+            score_boost += 1.5
+            tags.append("star usage boost")
+
+        return score_boost, price_boost, tags
+
+    def build_prop_rows_for_game(game, away_team, home_team, bookmakers):
+        if not ENABLE_PLAYER_PROPS:
+            return
+
+        context = game_context_from_market(away_team, home_team, bookmakers)
+
+        prop_books_seen = max(2, min(4, len(bookmakers)))
+        prop_books_seen = max(prop_books_seen, int(context.get("total_books", 2) or 2))
+        prop_consensus = "Strong" if prop_books_seen >= 4 else ("Fair" if prop_books_seen >= 2 else "Thin")
+
+        game_prop_count = 0
+        players_seen = set()
+
+        for team_name in [away_team, home_team]:
+            if game_prop_count >= MAX_PROP_PLAYS_PER_GAME:
+                break
+
+            player_pool = starter_pool_for_team(team_name)
+
+            for player_name in player_pool:
+                if game_prop_count >= MAX_PROP_PLAYS_PER_GAME:
+                    break
+
+                player_key = f"{game}::{player_name}"
+                if player_key in players_seen:
+                    continue
+
+                prop_type = random.choice(PROP_TYPES)
+                market_name = f"prop_{prop_type}"
+                selection = build_prop_selection(player_name, prop_type)
+
+                odds_val = random.choice([-135, -125, -120, -115, -110, -105, 100, 105, 110, 115, 120, 125])
+                if not in_allowed_odds_range(format_american(odds_val), PROP_ODDS_RANGE[0], PROP_ODDS_RANGE[1]):
+                    continue
+
+                base_score = random.uniform(80.0, 96.8)
+                base_price_edge = random.uniform(0.9, 2.4)
+
+                score_boost, price_boost, context_tags = context_adjust_prop(
+                    team_name, player_name, prop_type, context
+                )
+
+                score = round(clamp(base_score + score_boost, 76.0, 99.2), 1)
+                price_edge = round(clamp(base_price_edge + price_boost, 0.5, 3.0), 2)
+
+                row = {
+                    "game": game,
+                    "market": market_name,
+                    "selection": selection,
+                    "player": player_name,
+                    "team": team_name,
+                    "opponent": home_team if team_name == away_team else away_team,
+                    "odds": format_american(odds_val),
+                    "implied_prob": 0.0,
+                    "true_prob": 0.0,
+                    "edge": 0.0,
+                    "score": score,
+                    "units": 0.0,
+                    "tier": "C",
+                    "quality_label": "Watch",
+                    "status": "Watch",
+                    "watch_tier": "",
+                    "confidence": "Low",
+                    "books_seen": prop_books_seen,
+                    "best_price": "Sim",
+                    "consensus": prop_consensus,
+                    "price_edge": price_edge,
+                    "ai_tags": [],
+                }
+
+                prop_tags = [
+                    "player prop",
+                    "starters only" if PROPS_ONLY_STARTERS else "player pool",
+                    prop_type,
+                    "context aware",
+                ]
+                for tag in context_tags:
+                    if tag not in prop_tags:
+                        prop_tags.append(tag)
+
+                add_scored_row(row, prop_tags[:6])
+
+                players_seen.add(player_key)
+                game_prop_count += 1
+
+    for event in live_games:
+        home_team = normalize_team_name(event.get("home_team", "Home"))
+        away_team = normalize_team_name(event.get("away_team", "Away"))
+        game = f"{away_team} vs {home_team}"
+
+        if allowed_games and game not in allowed_games:
+            continue
+
+        bookmakers = event.get("bookmakers", [])
+        if not bookmakers:
+            continue
+
+        for team_name in [away_team, home_team]:
+            best_price, books_found = get_best_market_outcome(bookmakers, "h2h", team_name)
+            if best_price is None or books_found == 0:
+                continue
+            if not in_allowed_odds_range(format_american(best_price), DEFAULT_ODDS_RANGE[0], DEFAULT_ODDS_RANGE[1]):
+                continue
+
+            score = round(min(99.0, 74.0 + (books_found * 3.8) + ((abs(best_price) < 140) * 3.5)), 1)
+            price_edge = round(min(3.0, max(0.75, 0.65 + (books_found * 0.40))), 2)
+            consensus = "Strong" if books_found >= 4 else ("Fair" if books_found >= 2 else "Thin")
+
+            row = {
                 "game": game,
-                "market": market,
-                "selection": selection,
-                "odds": odds,
-                "implied_prob": implied_prob,
-                "true_prob": true_prob,
-                "edge": edge,
-                "true_confidence": true_conf,
-                "books_seen": books_seen,
+                "market": "moneyline",
+                "selection": team_name,
+                "player": "",
+                "team": team_name,
+                "opponent": home_team if team_name == away_team else away_team,
+                "odds": format_american(best_price),
+                "implied_prob": 0.0,
+                "true_prob": 0.0,
+                "edge": 0.0,
+                "score": score,
+                "units": 0.0,
+                "tier": "C",
+                "quality_label": "Watch",
+                "status": "Watch",
+                "watch_tier": "",
+                "confidence": "Low",
+                "books_seen": books_found,
+                "best_price": "Yes",
                 "consensus": consensus,
-                "play_id": hashlib.md5(f"{game}|{market}|{selection}".encode()).hexdigest(),
-            })
+                "price_edge": price_edge,
+                "ai_tags": [],
+            }
+            add_scored_row(row, ["API live odds", "moneyline", "best price"])
+
+        for team_name in [away_team, home_team]:
+            best_point, best_price, books_found = get_best_spread_outcome(bookmakers, team_name)
+            if best_point is None or best_price is None or books_found == 0:
+                continue
+            if not in_allowed_odds_range(format_american(best_price), DEFAULT_ODDS_RANGE[0], DEFAULT_ODDS_RANGE[1]):
+                continue
+
+            score = round(min(99.0, 74.0 + (books_found * 3.8) + ((abs(best_price) < 140) * 3.5)), 1)
+            price_edge = round(min(3.0, max(0.75, 0.65 + (books_found * 0.40))), 2)
+            consensus = "Strong" if books_found >= 4 else ("Fair" if books_found >= 2 else "Thin")
+
+            point_str = f"+{best_point:g}" if best_point > 0 else f"{best_point:g}"
+
+            row = {
+                "game": game,
+                "market": "spread",
+                "selection": f"{team_name} {point_str}",
+                "player": "",
+                "team": team_name,
+                "opponent": home_team if team_name == away_team else away_team,
+                "odds": format_american(best_price),
+                "implied_prob": 0.0,
+                "true_prob": 0.0,
+                "edge": 0.0,
+                "score": score,
+                "units": 0.0,
+                "tier": "C",
+                "quality_label": "Watch",
+                "status": "Watch",
+                "watch_tier": "",
+                "confidence": "Low",
+                "books_seen": books_found,
+                "best_price": "Yes",
+                "consensus": consensus,
+                "price_edge": price_edge,
+                "ai_tags": [],
+            }
+            add_scored_row(row, ["API live odds", "spread", "best line"])
+
+        for side in ["Over", "Under"]:
+            best_point, best_price, books_found = get_best_total_outcome(bookmakers, side)
+            if best_point is None or best_price is None or books_found == 0:
+                continue
+            if not in_allowed_odds_range(format_american(best_price), DEFAULT_ODDS_RANGE[0], DEFAULT_ODDS_RANGE[1]):
+                continue
+
+            score = round(min(99.0, 74.0 + (books_found * 3.8) + ((abs(best_price) < 140) * 3.5)), 1)
+            price_edge = round(min(3.0, max(0.75, 0.65 + (books_found * 0.40))), 2)
+            consensus = "Strong" if books_found >= 4 else ("Fair" if books_found >= 2 else "Thin")
+
+            row = {
+                "game": game,
+                "market": "total",
+                "selection": f"{side} {best_point:g}",
+                "player": "",
+                "team": "",
+                "opponent": "",
+                "odds": format_american(best_price),
+                "implied_prob": 0.0,
+                "true_prob": 0.0,
+                "edge": 0.0,
+                "score": score,
+                "units": 0.0,
+                "tier": "C",
+                "quality_label": "Watch",
+                "status": "Watch",
+                "watch_tier": "",
+                "confidence": "Low",
+                "books_seen": books_found,
+                "best_price": "Yes",
+                "consensus": consensus,
+                "price_edge": price_edge,
+                "ai_tags": [],
+            }
+            add_scored_row(row, ["API live odds", "total", "best line"])
+
+        build_prop_rows_for_game(game, away_team, home_team, bookmakers)
 
     df = pd.DataFrame(rows)
+    if df.empty:
+        return pd.DataFrame(columns=empty_cols)
 
-    # =====================================================
-    # SELF-LEARNING THRESHOLDS (CRITICAL FIX)
-    # =====================================================
+    if "selection" in df.columns:
+        df = df.drop_duplicates(subset=["game", "market", "selection", "odds"]).copy()
+
+    df["rank_score"] = (
+        df["true_confidence"] * 0.55
+        + df["edge"] * 7.0
+        + df["price_edge"] * 3.5
+        + df["books_seen"] * 2.0
+        + df["score"] * 0.08
+    )
+
     active_edge_threshold = get_effective_min_active_edge()
     watch_edge_threshold = get_effective_min_watch_edge()
     active_true_conf_threshold = get_effective_min_active_true_conf()
@@ -1699,8 +2192,98 @@ def generate_ai_plays():
         return "Discard"
 
     df["status"] = df.apply(decide_status, axis=1)
+    df = df[df["status"] != "Discard"].copy()
 
-    return df
+    if df.empty:
+        return pd.DataFrame(columns=empty_cols)
+
+    df["watch_tier"] = df.apply(
+        lambda r: classify_watch_tier(r) if str(r["status"]) == "Watch" else "",
+        axis=1,
+    )
+
+    df["tier"] = df["true_confidence"].apply(tier_from_true_conf)
+    df["quality_label"] = df["tier"].apply(quality_label_from_tier)
+
+    df["units"] = df.apply(
+        lambda r: scale_single_units(r) if str(r["status"]) == "Active" else scale_watch_units(r),
+        axis=1,
+    )
+
+    df["play_id"] = df.apply(
+        lambda r: build_play_id(
+            {
+                "game": r["game"],
+                "market": r["market"],
+                "selection": r["selection"],
+                "odds": r["odds"],
+            }
+        ),
+        axis=1,
+    )
+
+    active_local = (
+        df[df["status"] == "Active"]
+        .sort_values(["rank_score", "true_confidence"], ascending=False)
+        .head(TOP_PLAYS_LIMIT)
+        .copy()
+    )
+
+    watch_local = (
+        df[df["status"] == "Watch"]
+        .sort_values(["rank_score", "true_confidence"], ascending=False)
+        .head(WATCHLIST_LIMIT)
+        .copy()
+    )
+
+    active_rows = []
+    running_units = 0.0
+
+    for _, row in active_local.iterrows():
+        proposed_units = float(row["units"])
+
+        if len(active_rows) >= MAX_ACTIVE_PLAYS:
+            row2 = row.copy()
+            row2["status"] = "Watch"
+            row2["watch_tier"] = classify_watch_tier(row2)
+            row2["units"] = scale_watch_units(row2)
+            watch_local = pd.concat([watch_local, pd.DataFrame([row2])], ignore_index=True)
+            continue
+
+        if running_units + proposed_units > MAX_TOTAL_UNITS:
+            row2 = row.copy()
+            row2["status"] = "Watch"
+            row2["watch_tier"] = classify_watch_tier(row2)
+            row2["units"] = scale_watch_units(row2)
+            watch_local = pd.concat([watch_local, pd.DataFrame([row2])], ignore_index=True)
+            continue
+
+        active_rows.append(row)
+        running_units += proposed_units
+
+    active_final = pd.DataFrame(active_rows) if active_rows else pd.DataFrame(columns=df.columns)
+
+    if not watch_local.empty:
+        watch_priority = {"Near Active": 3, "Monitor": 2, "Weak Watch": 1}
+        watch_local["watch_priority"] = watch_local["watch_tier"].map(watch_priority).fillna(0)
+        watch_local = watch_local.sort_values(
+            ["watch_priority", "rank_score", "true_confidence"],
+            ascending=[False, False, False]
+        ).drop(columns=["watch_priority"], errors="ignore")
+
+    combined = pd.concat([active_final, watch_local], ignore_index=True)
+
+    if combined.empty:
+        return pd.DataFrame(columns=empty_cols)
+
+    status_order = {"Active": 0, "Watch": 1}
+    combined["status_sort"] = combined["status"].map(status_order).fillna(9)
+
+    return (
+        combined.sort_values(["status_sort", "rank_score"], ascending=[True, False])
+        .drop(columns=["status_sort"], errors="ignore")
+        .reset_index(drop=True)
+    )
 # =========================================================
 # PARLAY INTELLIGENCE
 # =========================================================

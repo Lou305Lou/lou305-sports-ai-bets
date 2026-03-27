@@ -262,6 +262,14 @@ if "last_api_pull_epoch" not in st.session_state:
     st.session_state["last_api_pull_epoch"] = 0.0
 if "api_cooldown_seconds" not in st.session_state:
     st.session_state["api_cooldown_seconds"] = 90.0
+if "last_odds_refresh_ok" not in st.session_state:
+    st.session_state["last_odds_refresh_ok"] = False
+if "last_refresh_time" not in st.session_state:
+    st.session_state["last_refresh_time"] = ""
+if "learning_state" not in st.session_state:
+    st.session_state["learning_state"] = {}
+if "learning_settings" not in st.session_state:
+    st.session_state["learning_settings"] = default_learning_settings()
 
 # =========================================================
 # SPORTS DATA FEED CONTROL
@@ -3896,13 +3904,18 @@ elif nav == "Bet Log":
                     }
                 )
 
-                existing_ids = {
-                    str(r.get("play_id", "")).strip()
-                    for r in st.session_state.get("bet_log", [])
-                }
+                duplicate_family_found = False
+                for existing_row in st.session_state.get("bet_log", []):
+                    existing_pid = str(existing_row.get("play_id", "")).strip()
+                    if not existing_pid:
+                        continue
 
-                if new_play_id in existing_ids:
-                    st.warning("That bet already exists in the log.")
+                    if get_base_play_id(existing_pid) == new_play_id or existing_pid == new_play_id:
+                        duplicate_family_found = True
+                        break
+
+                if duplicate_family_found:
+                    st.warning("That bet already exists in the log or is already part of the same play family.")
                 else:
                     new = {
                         "play_id": new_play_id,

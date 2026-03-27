@@ -2426,15 +2426,10 @@ def find_logged_bet_index_by_exact_play_id(play_id):
     return None
 
 
-def find_logged_bet_index_by_base_play_id(play_id):
+def find_logged_bet_index_by_suffix_play_id(play_id):
     target = str(play_id).strip()
     if not target:
         return None
-
-    # Prefer exact match first
-    exact_idx = find_logged_bet_index_by_exact_play_id(target)
-    if exact_idx is not None:
-        return exact_idx
 
     for i, row in enumerate(st.session_state.get("bet_log", [])):
         row_pid = str(row.get("play_id", "")).strip()
@@ -2442,6 +2437,18 @@ def find_logged_bet_index_by_base_play_id(play_id):
             return i
 
     return None
+
+
+def find_logged_bet_index_by_base_play_id(play_id):
+    target = str(play_id).strip()
+    if not target:
+        return None
+
+    exact_idx = find_logged_bet_index_by_exact_play_id(target)
+    if exact_idx is not None:
+        return exact_idx
+
+    return find_logged_bet_index_by_suffix_play_id(target)
 
 
 def auto_log_active_plays(df: pd.DataFrame):
@@ -2459,23 +2466,24 @@ def auto_log_active_plays(df: pd.DataFrame):
         if not pid:
             continue
 
-        # Use base-play match so older __ai_slip rows do not create duplicates
-        existing_idx = find_logged_bet_index_by_base_play_id(pid)
+        exact_idx = find_logged_bet_index_by_exact_play_id(pid)
 
-        if existing_idx is not None:
-            existing_row = st.session_state["bet_log"][existing_idx]
+        if exact_idx is not None:
+            existing_row = st.session_state["bet_log"][exact_idx]
             before_category = str(existing_row.get("log_category", "")).strip()
 
             updated_row = add_category_to_logged_bet(existing_row, "Top Play")
             after_category = str(updated_row.get("log_category", "")).strip()
 
-            st.session_state["bet_log"][existing_idx] = updated_row
+            st.session_state["bet_log"][exact_idx] = updated_row
             st.session_state["auto_logged_ids"].add(pid)
 
             if before_category != after_category:
                 changed = True
 
             continue
+
+        suffix_idx = find_logged_bet_index_by_suffix_play_id(pid)
 
         new_bet = {
             "play_id": pid,
@@ -2498,6 +2506,21 @@ def auto_log_active_plays(df: pd.DataFrame):
             "timestamp": datetime.now().isoformat(),
         }
 
+        if suffix_idx is not None:
+            suffix_row = st.session_state["bet_log"][suffix_idx]
+            suffix_categories = normalize_log_categories(suffix_row.get("log_category", ""))
+            merged_categories = ["Top Play"]
+
+            for cat in suffix_categories:
+                if cat not in merged_categories:
+                    merged_categories.append(cat)
+
+            new_bet["log_category"] = format_log_categories_for_storage(merged_categories)
+
+            suffix_result = normalize_result_value(suffix_row.get("result", "Pending"))
+            new_bet["result"] = suffix_result
+            new_bet["profit"] = settle_result_pnl(new_bet["odds"], new_bet["units"], suffix_result)
+
         st.session_state["bet_log"].append(new_bet)
         st.session_state["auto_logged_ids"].add(pid)
         added += 1
@@ -2517,12 +2540,19 @@ def log_ai_slip_pick(best_row):
     if not pid:
         return False
 
-    existing_idx = find_logged_bet_index_by_base_play_id(pid)
-
-    if existing_idx is not None:
-        existing_row = st.session_state["bet_log"][existing_idx]
+    exact_idx = find_logged_bet_index_by_exact_play_id(pid)
+    if exact_idx is not None:
+        existing_row = st.session_state["bet_log"][exact_idx]
         updated_row = add_category_to_logged_bet(existing_row, "AI Slip")
-        st.session_state["bet_log"][existing_idx] = updated_row
+        st.session_state["bet_log"][exact_idx] = updated_row
+        save_bet_log()
+        return False
+
+    suffix_idx = find_logged_bet_index_by_suffix_play_id(pid)
+    if suffix_idx is not None:
+        existing_row = st.session_state["bet_log"][suffix_idx]
+        updated_row = add_category_to_logged_bet(existing_row, "AI Slip")
+        st.session_state["bet_log"][suffix_idx] = updated_row
         save_bet_log()
         return False
 

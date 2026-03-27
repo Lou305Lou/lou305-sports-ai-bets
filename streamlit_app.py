@@ -3211,7 +3211,10 @@ elif nav == "Bet Log":
             st.success("Updated.")
             st.rerun()
 
-    
+    # ================================
+    # MANUAL BET ENTRY
+    # ================================
+    st.markdown('<div class="bet-form-wrap">', unsafe_allow_html=True)
 
     with st.form("manual_bet", clear_on_submit=True):
         c1, c2 = st.columns(2)
@@ -3260,7 +3263,6 @@ elif nav == "Bet Log":
             st.success("Bet added.")
 
     st.markdown("</div>", unsafe_allow_html=True)
-
     
 # =========================================================
 # ADAPTIVE SETTINGS

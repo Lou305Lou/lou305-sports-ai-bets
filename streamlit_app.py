@@ -2456,6 +2456,13 @@ def choose_best_parlay(active_df):
 # =========================================================
 # AUTO-LOG ACTIVE PLAYS (CATEGORY-AWARE)
 # =========================================================
+def normalize_result_value(result_value):
+    value = str(result_value).strip().title()
+    if value in ["Pending", "Win", "Loss", "Push"]:
+        return value
+    return "Pending"
+
+
 def normalize_log_categories(value):
     if isinstance(value, list):
         cleaned = []
@@ -2525,6 +2532,17 @@ def find_logged_bet_index_by_base_play_id(play_id):
         return exact_idx
 
     return find_logged_bet_index_by_suffix_play_id(target)
+
+
+def get_base_play_id(play_id):
+    pid = str(play_id).strip()
+    if "__" in pid:
+        return pid.split("__")[0].strip()
+    return pid
+
+
+def same_play_family(play_id_a, play_id_b):
+    return get_base_play_id(play_id_a) == get_base_play_id(play_id_b)
 
 
 def auto_log_active_plays(df: pd.DataFrame):
@@ -2707,7 +2725,6 @@ def log_ai_parlay_pick(best_parlay):
     st.session_state["bet_log"].append(new_row)
     save_bet_log()
     return True
-
 # =========================================================
 # PLAY CARD RENDER
 # =========================================================
@@ -3260,6 +3277,11 @@ def build_ai_portfolio(best_single, chosen_parlay, parlay_candidates):
 # =========================================================
 # DATA PREP (CRITICAL FIX)
 # =========================================================
+log_df_full_for_learning = pd.DataFrame(st.session_state.get("bet_log", [])).copy()
+learning_state = build_self_learning_state(log_df_full_for_learning)
+st.session_state["learning_state"] = learning_state
+st.session_state["learning_settings"] = learning_state.get("settings", default_learning_settings())
+
 df = generate_ai_plays()
 
 # =========================================================
@@ -3323,7 +3345,11 @@ avg_true_conf = active_df["true_confidence"].mean() if not active_df.empty else 
 avg_true_prob = active_df["true_prob"].mean() if (not active_df.empty and "true_prob" in active_df.columns) else 0.0
 total_units = active_df["units"].sum() if not active_df.empty else 0.0
 
-# =========================================================
+effective_learning = get_learning_settings()
+effective_active_edge = get_effective_min_active_edge()
+effective_watch_edge = get_effective_min_watch_edge()
+effective_active_true_conf = get_effective_min_active_true_conf()
+effective_watch_true_conf = get_effective_min_watch_true_conf()# =========================================================
 # PAGE STYLES
 # =========================================================
 st.markdown(
@@ -3497,19 +3523,16 @@ st.markdown("</div>", unsafe_allow_html=True)
 # =========================================================
 # BET LOG HELPERS
 # =========================================================
-def normalize_result_value(result_value):
-    value = str(result_value).strip().title()
-    if value in ["Pending", "Win", "Loss", "Push"]:
-        return value
-    return "Pending"
-
-
 def update_logged_bet_result(play_id, result_value):
     result_value = normalize_result_value(result_value)
     updated = False
+    target_base_id = get_base_play_id(play_id)
 
     for i, bet in enumerate(st.session_state.get("bet_log", [])):
-        if str(bet.get("play_id", "")).strip() != str(play_id).strip():
+        current_play_id = str(bet.get("play_id", "")).strip()
+        current_base_id = get_base_play_id(current_play_id)
+
+        if current_play_id != str(play_id).strip() and current_base_id != target_base_id:
             continue
 
         units = bet.get("units", 0)
@@ -3518,7 +3541,6 @@ def update_logged_bet_result(play_id, result_value):
         st.session_state["bet_log"][i]["result"] = result_value
         st.session_state["bet_log"][i]["profit"] = settle_result_pnl(odds, units, result_value)
         updated = True
-        break
 
     if updated:
         save_bet_log()
@@ -3533,25 +3555,31 @@ def sync_manual_results_into_bet_log():
 
     changed = False
 
-    for i, bet in enumerate(st.session_state.get("bet_log", [])):
-        pid = str(bet.get("play_id", "")).strip()
-        if not pid or pid not in manual_results:
-            continue
+    for selected_pid, selected_result in manual_results.items():
+        target_base_id = get_base_play_id(selected_pid)
+        normalized_result = normalize_result_value(selected_result)
 
-        result_value = normalize_result_value(manual_results.get(pid, "Pending"))
-        current_result = normalize_result_value(bet.get("result", "Pending"))
-        current_profit = float(bet.get("profit", 0.0) or 0.0)
+        for i, bet in enumerate(st.session_state.get("bet_log", [])):
+            pid = str(bet.get("play_id", "")).strip()
+            if not pid:
+                continue
 
-        new_profit = settle_result_pnl(
-            bet.get("odds", ""),
-            bet.get("units", 0),
-            result_value,
-        )
+            if get_base_play_id(pid) != target_base_id and pid != str(selected_pid).strip():
+                continue
 
-        if current_result != result_value or round(current_profit, 2) != round(new_profit, 2):
-            st.session_state["bet_log"][i]["result"] = result_value
-            st.session_state["bet_log"][i]["profit"] = new_profit
-            changed = True
+            current_result = normalize_result_value(bet.get("result", "Pending"))
+            current_profit = float(bet.get("profit", 0.0) or 0.0)
+
+            new_profit = settle_result_pnl(
+                bet.get("odds", ""),
+                bet.get("units", 0),
+                normalized_result,
+            )
+
+            if current_result != normalized_result or round(current_profit, 2) != round(new_profit, 2):
+                st.session_state["bet_log"][i]["result"] = normalized_result
+                st.session_state["bet_log"][i]["profit"] = new_profit
+                changed = True
 
     if changed:
         save_bet_log()
@@ -3862,19 +3890,60 @@ elif nav == "Bet Log":
     st.markdown("</div>", unsafe_allow_html=True)
 
 # =========================================================
-# ADAPTIVE SETTINGS
+# ADAPTIVE SETTINGS + SELF-LEARNING STATUS
 # =========================================================
-with st.expander("⚙️ Adaptive Settings", expanded=False):
+with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded=False):
+    st.markdown("#### Live Thresholds Now In Use")
+
     c1, c2 = st.columns(2)
 
     with c1:
-        st.write(f"Min Active Edge: {MIN_ACTIVE_EDGE}")
-        st.write(f"Min Watch Edge: {MIN_WATCH_EDGE}")
-        st.write(f"Min Active True Conf: {MIN_ACTIVE_TRUE_CONF}")
-        st.write(f"Min Active Books: {MIN_ACTIVE_BOOKS}")
+        st.write(f"Base Min Active Edge: {MIN_ACTIVE_EDGE}")
+        st.write(f"Effective Min Active Edge: {effective_active_edge:.2f}")
+        st.write(f"Base Min Watch Edge: {MIN_WATCH_EDGE}")
+        st.write(f"Effective Min Watch Edge: {effective_watch_edge:.2f}")
 
     with c2:
-        st.write(f"Max Top Plays: {TOP_PLAYS_LIMIT}")
-        st.write(f"Max Active Plays: {MAX_ACTIVE_PLAYS}")
-        st.write(f"Max Total Units: {MAX_TOTAL_UNITS}")
-        st.write(f"Min Parlay Odds: +{MIN_PARLAY_ODDS}")
+        st.write(f"Base Min Active True Conf: {MIN_ACTIVE_TRUE_CONF}")
+        st.write(f"Effective Min Active True Conf: {effective_active_true_conf:.1f}")
+        st.write(f"Base Min Watch True Conf: {MIN_WATCH_TRUE_CONF}")
+        st.write(f"Effective Min Watch True Conf: {effective_watch_true_conf:.1f}")
+
+    st.markdown("#### Unit Multipliers In Use")
+    c3, c4, c5, c6 = st.columns(4)
+    c3.metric("Low", f"{float(effective_learning.get('unit_mult_low', 0.92)):.2f}x")
+    c4.metric("Medium", f"{float(effective_learning.get('unit_mult_medium', 1.00)):.2f}x")
+    c5.metric("High", f"{float(effective_learning.get('unit_mult_high', 1.00)):.2f}x")
+    c6.metric("Elite", f"{float(effective_learning.get('unit_mult_elite', 1.05)):.2f}x")
+
+    st.markdown("#### Self-Learning Sample Status")
+    c7, c8, c9 = st.columns(3)
+    c7.metric("Settled Bets", int(learning_state.get("sample_size", 0)))
+    c8.metric("AI Sample", int(learning_state.get("ai_sample_size", 0)))
+    c9.metric("Overall ROI", f"{float(learning_state.get('overall_roi', 0.0)):.2f}%")
+
+    notes = learning_state.get("notes", [])
+    if notes:
+        st.markdown("#### Learning Actions")
+        for note in notes:
+            st.markdown(f"- {note}")
+    else:
+        st.caption("No threshold changes were triggered yet. The engine is collecting more settled results.")
+
+    conf_table = learning_state.get("confidence_table", pd.DataFrame())
+    edge_table = learning_state.get("edge_table", pd.DataFrame())
+    market_table = learning_state.get("market_table", pd.DataFrame())
+
+    st.markdown("#### Learning Breakdown Tables")
+
+    if conf_table is not None and not conf_table.empty:
+        st.markdown("**By True Confidence Bucket**")
+        st.dataframe(conf_table, use_container_width=True, hide_index=True)
+
+    if edge_table is not None and not edge_table.empty:
+        st.markdown("**By Edge Bucket**")
+        st.dataframe(edge_table, use_container_width=True, hide_index=True)
+
+    if market_table is not None and not market_table.empty:
+        st.markdown("**By Market Type**")
+        st.dataframe(market_table, use_container_width=True, hide_index=True)

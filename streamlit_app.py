@@ -2311,6 +2311,8 @@ def auto_log_active_plays(df: pd.DataFrame):
             "market": row.get("market"),
             "selection": row.get("selection"),
             "odds": row.get("odds"),
+            "implied_prob": row.get("implied_prob"),
+            "true_prob": row.get("true_prob"),
             "units": row.get("units"),
             "confidence": row.get("confidence"),
             "true_confidence": row.get("true_confidence"),
@@ -2344,20 +2346,13 @@ def log_ai_slip_pick(best_row):
 
     existing_rows = st.session_state.get("bet_log", [])
 
-    # Prevent double-staking if already logged as Top Play
     for row in existing_rows:
-        existing_pid = str(row.get("play_id", "")).strip()
-        existing_category = str(row.get("log_category", "")).strip()
-
-        if existing_pid == pid and existing_category == "Top Play":
+        if str(row.get("play_id")) == pid and str(row.get("log_category")) == "Top Play":
             return False
 
     ai_slip_id = f"{pid}__ai_slip"
 
-    existing_ids = {
-        str(r.get("play_id", "")).strip()
-        for r in existing_rows
-    }
+    existing_ids = {str(r.get("play_id")) for r in existing_rows}
 
     if ai_slip_id in existing_ids:
         return False
@@ -2368,6 +2363,8 @@ def log_ai_slip_pick(best_row):
         "market": best_row.get("market"),
         "selection": best_row.get("selection"),
         "odds": best_row.get("odds"),
+        "implied_prob": best_row.get("implied_prob"),
+        "true_prob": best_row.get("true_prob"),
         "units": best_row.get("units"),
         "confidence": best_row.get("confidence"),
         "true_confidence": best_row.get("true_confidence"),
@@ -2393,6 +2390,7 @@ def log_ai_parlay_pick(best_parlay):
     parlay_key = "|".join(
         [str(leg.get("selection", "")).strip() for leg in best_parlay.get("legs", [])]
     )
+
     if not parlay_key:
         return False
 
@@ -2401,7 +2399,7 @@ def log_ai_parlay_pick(best_parlay):
     ).hexdigest()
 
     existing_ids = {
-        str(r.get("play_id", "")).strip()
+        str(r.get("play_id"))
         for r in st.session_state.get("bet_log", [])
     }
 
@@ -2414,6 +2412,8 @@ def log_ai_parlay_pick(best_parlay):
         "market": "parlay",
         "selection": " | ".join([str(leg.get("selection", "")) for leg in best_parlay.get("legs", [])]),
         "odds": best_parlay.get("combined_odds"),
+        "implied_prob": None,
+        "true_prob": None,
         "units": scale_parlay_units(best_parlay),
         "confidence": "High" if float(best_parlay.get("avg_true_conf", 0)) >= 70 else "Medium",
         "true_confidence": best_parlay.get("avg_true_conf"),

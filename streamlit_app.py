@@ -66,14 +66,13 @@ def _merge_duplicate_play_id_rows(df: pd.DataFrame) -> pd.DataFrame:
 
     merged_rows = []
 
-    for play_id, group in id_rows.groupby("play_id", sort=False):
+    for _, group in id_rows.groupby("play_id", sort=False):
         group = group.copy()
-
         base_row = group.iloc[0].copy()
 
         # Merge categories across duplicates
         merged_categories = []
-        for raw_cat in group.get("log_category", pd.Series([], dtype="object")).tolist():
+        for raw_cat in group["log_category"].tolist():
             for part in str(raw_cat).split("|"):
                 label = part.strip()
                 if label and label not in merged_categories:
@@ -82,12 +81,16 @@ def _merge_duplicate_play_id_rows(df: pd.DataFrame) -> pd.DataFrame:
         base_row["log_category"] = " | ".join(merged_categories)
 
         # Preserve a settled result if any duplicate has one
-        settled_group = group[group.get("result", pd.Series([], dtype="object")).isin(["Win", "Loss", "Push"])]
-        if not settled_group.empty:
-            settled_row = settled_group.iloc[-1]
-            base_row["result"] = settled_row.get("result", base_row.get("result", "Pending"))
-            if "profit" in group.columns:
-                base_row["profit"] = settled_row.get("profit", base_row.get("profit", 0.0))
+        if "result" in group.columns:
+            settled_mask = group["result"].astype(str).isin(["Win", "Loss", "Push"])
+            settled_group = group[settled_mask].copy()
+
+            if not settled_group.empty:
+                settled_row = settled_group.iloc[-1]
+                base_row["result"] = settled_row.get("result", base_row.get("result", "Pending"))
+
+                if "profit" in group.columns:
+                    base_row["profit"] = settled_row.get("profit", base_row.get("profit", 0.0))
 
         # Prefer the latest timestamp if available
         if "timestamp" in group.columns:
@@ -3435,17 +3438,32 @@ elif nav == "Bet Log":
 
         st.subheader("Update Results")
 
-        selectable_rows = []
+        selectable_labels = []
+        selectable_map = {}
+
         for _, r in log_df.iterrows():
             pid = str(r.get("play_id", "")).strip()
             selection = str(r.get("selection", ""))
             game = str(r.get("game", ""))
-            if pid:
-                selectable_rows.append(f"{selection} | {game} | {pid}")
 
-        if selectable_rows:
-            selected = st.selectbox("Select Bet", selectable_rows)
-            selected_id = selected.split(" | ")[-1].strip()
+            if not pid:
+                continue
+
+            short_pid = pid[:8]
+            label = f"{selection} • {game} • ID {short_pid}"
+
+            suffix = 2
+            base_label = label
+            while label in selectable_map:
+                label = f"{base_label} ({suffix})"
+                suffix += 1
+
+            selectable_labels.append(label)
+            selectable_map[label] = pid
+
+        if selectable_labels:
+            selected_label = st.selectbox("Select Bet", selectable_labels)
+            selected_id = selectable_map[selected_label]
 
             existing_result = "Pending"
             for bet in st.session_state.get("bet_log", []):
@@ -3546,7 +3564,7 @@ elif nav == "Bet Log":
                     st.rerun()
 
     st.markdown("</div>", unsafe_allow_html=True)
-    
+
 # =========================================================
 # ADAPTIVE SETTINGS
 # =========================================================

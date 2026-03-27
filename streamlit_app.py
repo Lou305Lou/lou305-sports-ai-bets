@@ -2850,6 +2850,11 @@ def render_mobile_or_table(df: pd.DataFrame, best_first: bool = False):
             render_play_card(row, show_best_badge=(best_first and idx == 0))
     else:
         render_table_desktop(df)
+
+
+# =========================================================
+# ROI CALCULATOR (CATEGORY-BASED)
+# =========================================================
 def build_roi_dashboard(log_df: pd.DataFrame):
     if log_df is None or log_df.empty:
         return pd.DataFrame()
@@ -2918,7 +2923,7 @@ def build_roi_dashboard(log_df: pd.DataFrame):
         .sort_values(["ROI %", "Profit", "Bets"], ascending=False)
         .reset_index(drop=True)
     )
-    
+
 # =========================================================
 # PORTFOLIO LAYER
 # =========================================================

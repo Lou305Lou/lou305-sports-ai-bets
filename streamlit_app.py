@@ -20,6 +20,90 @@ st.set_page_config(page_title="Sports Betting AI Dashboard V34", layout="wide")
 # =========================================================
 BET_LOG_FILE = "bet_log.csv"
 
+def _normalize_category_text(value):
+    if isinstance(value, list):
+        cleaned = []
+        for item in value:
+            label = str(item).strip()
+            if label and label not in cleaned:
+                cleaned.append(label)
+        return " | ".join(cleaned)
+
+    raw = str(value).strip()
+    if not raw:
+        return ""
+
+    cleaned = []
+    for part in raw.split("|"):
+        label = str(part).strip()
+        if label and label not in cleaned:
+            cleaned.append(label)
+
+    return " | ".join(cleaned)
+
+
+def _merge_duplicate_play_id_rows(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame() if df is None else df.copy()
+
+    working = df.copy()
+
+    if "play_id" not in working.columns:
+        working["play_id"] = ""
+
+    if "log_category" not in working.columns:
+        working["log_category"] = ""
+
+    working["play_id"] = working["play_id"].astype(str).str.strip()
+    working["log_category"] = working["log_category"].apply(_normalize_category_text)
+
+    blank_mask = working["play_id"] == ""
+    blank_rows = working[blank_mask].copy()
+    id_rows = working[~blank_mask].copy()
+
+    if id_rows.empty:
+        return pd.concat([id_rows, blank_rows], ignore_index=True)
+
+    merged_rows = []
+
+    for play_id, group in id_rows.groupby("play_id", sort=False):
+        group = group.copy()
+
+        base_row = group.iloc[0].copy()
+
+        # Merge categories across duplicates
+        merged_categories = []
+        for raw_cat in group.get("log_category", pd.Series([], dtype="object")).tolist():
+            for part in str(raw_cat).split("|"):
+                label = part.strip()
+                if label and label not in merged_categories:
+                    merged_categories.append(label)
+
+        base_row["log_category"] = " | ".join(merged_categories)
+
+        # Preserve a settled result if any duplicate has one
+        settled_group = group[group.get("result", pd.Series([], dtype="object")).isin(["Win", "Loss", "Push"])]
+        if not settled_group.empty:
+            settled_row = settled_group.iloc[-1]
+            base_row["result"] = settled_row.get("result", base_row.get("result", "Pending"))
+            if "profit" in group.columns:
+                base_row["profit"] = settled_row.get("profit", base_row.get("profit", 0.0))
+
+        # Prefer the latest timestamp if available
+        if "timestamp" in group.columns:
+            non_blank_timestamps = group["timestamp"].astype(str).str.strip()
+            non_blank_timestamps = non_blank_timestamps[non_blank_timestamps != ""]
+            if not non_blank_timestamps.empty:
+                base_row["timestamp"] = non_blank_timestamps.iloc[-1]
+
+        merged_rows.append(base_row)
+
+    merged_df = pd.DataFrame(merged_rows)
+    cleaned_df = pd.concat([merged_df, blank_rows], ignore_index=True)
+
+    return cleaned_df.reset_index(drop=True)
+
+
 def load_bet_log():
     try:
         df = pd.read_csv(BET_LOG_FILE)
@@ -27,23 +111,10 @@ def load_bet_log():
         if df is None or df.empty:
             return []
 
-        # Ensure required column exists
-        if "play_id" not in df.columns:
-            df["play_id"] = ""
+        cleaned_df = _merge_duplicate_play_id_rows(df)
 
-        # Clean values
-        df["play_id"] = df["play_id"].astype(str).str.strip()
-
-        # Remove duplicate logged plays across app restarts
-        # Keep the first occurrence so ROI/history stays stable
-        non_blank_ids = df["play_id"] != ""
-        df_with_ids = df[non_blank_ids].drop_duplicates(subset=["play_id"], keep="first")
-        df_without_ids = df[~non_blank_ids].copy()
-
-        cleaned_df = pd.concat([df_with_ids, df_without_ids], ignore_index=True)
-
-        # Save cleaned version back to disk if duplicates were removed
-        if len(cleaned_df) != len(df):
+        # Save cleaned version back to disk if duplicates/categories were normalized
+        if not cleaned_df.equals(df):
             cleaned_df.to_csv(BET_LOG_FILE, index=False)
 
         return cleaned_df.to_dict("records")
@@ -63,19 +134,7 @@ def save_bet_log():
             df.to_csv(BET_LOG_FILE, index=False)
             return
 
-        # Ensure required column exists
-        if "play_id" not in df.columns:
-            df["play_id"] = ""
-
-        # Clean values
-        df["play_id"] = df["play_id"].astype(str).str.strip()
-
-        # Prevent duplicate saved play_ids
-        non_blank_ids = df["play_id"] != ""
-        df_with_ids = df[non_blank_ids].drop_duplicates(subset=["play_id"], keep="first")
-        df_without_ids = df[~non_blank_ids].copy()
-
-        cleaned_df = pd.concat([df_with_ids, df_without_ids], ignore_index=True)
+        cleaned_df = _merge_duplicate_play_id_rows(df)
         cleaned_df.to_csv(BET_LOG_FILE, index=False)
 
         # Keep session state synced with cleaned file
@@ -95,6 +154,7 @@ def build_logged_id_set(log_rows):
     except Exception:
         pass
     return ids
+
 
 # =========================================================
 # API CONFIG
@@ -2368,10 +2428,13 @@ def find_logged_bet_index_by_base_play_id(play_id):
     if not target:
         return None
 
+    # Prefer exact match first
+    exact_idx = find_logged_bet_index_by_exact_play_id(target)
+    if exact_idx is not None:
+        return exact_idx
+
     for i, row in enumerate(st.session_state.get("bet_log", [])):
         row_pid = str(row.get("play_id", "")).strip()
-        if row_pid == target:
-            return i
         if row_pid.startswith(f"{target}__"):
             return i
 
@@ -2393,7 +2456,8 @@ def auto_log_active_plays(df: pd.DataFrame):
         if not pid:
             continue
 
-        existing_idx = find_logged_bet_index_by_exact_play_id(pid)
+        # Use base-play match so older __ai_slip rows do not create duplicates
+        existing_idx = find_logged_bet_index_by_base_play_id(pid)
 
         if existing_idx is not None:
             existing_row = st.session_state["bet_log"][existing_idx]
@@ -2440,6 +2504,7 @@ def auto_log_active_plays(df: pd.DataFrame):
         save_bet_log()
 
     return added
+
 
 def log_ai_slip_pick(best_row):
     if best_row is None:
@@ -2533,6 +2598,7 @@ def log_ai_parlay_pick(best_parlay):
     st.session_state["bet_log"].append(new_row)
     save_bet_log()
     return True
+
 # =========================================================
 # PLAY CARD RENDER
 # =========================================================

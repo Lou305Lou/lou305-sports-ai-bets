@@ -3040,6 +3040,67 @@ st.markdown(
 st.markdown("</div>", unsafe_allow_html=True)
 
 # =========================================================
+# BET LOG HELPERS
+# =========================================================
+def normalize_result_value(result_value):
+    value = str(result_value).strip().title()
+    if value in ["Pending", "Win", "Loss", "Push"]:
+        return value
+    return "Pending"
+
+
+def update_logged_bet_result(play_id, result_value):
+    result_value = normalize_result_value(result_value)
+    updated = False
+
+    for i, bet in enumerate(st.session_state.get("bet_log", [])):
+        if str(bet.get("play_id", "")).strip() != str(play_id).strip():
+            continue
+
+        units = bet.get("units", 0)
+        odds = bet.get("odds", "")
+
+        st.session_state["bet_log"][i]["result"] = result_value
+        st.session_state["bet_log"][i]["profit"] = settle_result_pnl(odds, units, result_value)
+        updated = True
+        break
+
+    if updated:
+        save_bet_log()
+
+    return updated
+
+
+def sync_manual_results_into_bet_log():
+    manual_results = st.session_state.get("manual_results", {})
+    if not manual_results:
+        return
+
+    changed = False
+
+    for i, bet in enumerate(st.session_state.get("bet_log", [])):
+        pid = str(bet.get("play_id", "")).strip()
+        if not pid or pid not in manual_results:
+            continue
+
+        result_value = normalize_result_value(manual_results.get(pid, "Pending"))
+        current_result = normalize_result_value(bet.get("result", "Pending"))
+        current_profit = float(bet.get("profit", 0.0) or 0.0)
+
+        new_profit = settle_result_pnl(
+            bet.get("odds", ""),
+            bet.get("units", 0),
+            result_value,
+        )
+
+        if current_result != result_value or round(current_profit, 2) != round(new_profit, 2):
+            st.session_state["bet_log"][i]["result"] = result_value
+            st.session_state["bet_log"][i]["profit"] = new_profit
+            changed = True
+
+    if changed:
+        save_bet_log()
+# =========================================================
 # NAVIGATION
 # =========================================================
 st.markdown('<div class="nav-wrap">', unsafe_allow_html=True)

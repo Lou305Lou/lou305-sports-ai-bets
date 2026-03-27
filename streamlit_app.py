@@ -269,7 +269,7 @@ if "last_refresh_time" not in st.session_state:
 if "learning_state" not in st.session_state:
     st.session_state["learning_state"] = {}
 if "learning_settings" not in st.session_state:
-    st.session_state["learning_settings"] = default_learning_settings()
+    st.session_state["learning_settings"] = {}
 
 # =========================================================
 # SPORTS DATA FEED CONTROL

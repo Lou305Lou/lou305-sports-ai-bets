@@ -230,45 +230,62 @@ if "is_mobile" not in st.session_state:
 if "bet_log" not in st.session_state:
     st.session_state["bet_log"] = load_bet_log()
 
-if "auto_logged_ids" not in st.session_state:
-    st.session_state["auto_logged_ids"] = build_logged_id_set(st.session_state.get("bet_log", []))
-else:
-    # Re-sync on every app load so duplicates are blocked across restarts
-    st.session_state["auto_logged_ids"] = build_logged_id_set(st.session_state.get("bet_log", []))
+# Always rebuild from saved log so duplicate prevention survives reruns/restarts
+st.session_state["auto_logged_ids"] = build_logged_id_set(
+    st.session_state.get("bet_log", [])
+)
 
 if "nav_choice" not in st.session_state:
     st.session_state["nav_choice"] = "Top Plays"
+
 if "manual_results" not in st.session_state:
     st.session_state["manual_results"] = {}
+
 if "odds_api_games" not in st.session_state:
     st.session_state["odds_api_games"] = []
+
 if "last_successful_odds_games" not in st.session_state:
     st.session_state["last_successful_odds_games"] = []
+
 if "sportsdata_cache" not in st.session_state:
     st.session_state["sportsdata_cache"] = {}
+
 if "sportsdata_last_refresh" not in st.session_state:
     st.session_state["sportsdata_last_refresh"] = {}
+
 if "sportsdata_enabled" not in st.session_state:
     st.session_state["sportsdata_enabled"] = True
+
 if "api_mode" not in st.session_state:
     st.session_state["api_mode"] = "idle"
+
 if "api_status_note" not in st.session_state:
     st.session_state["api_status_note"] = ""
+
 if "last_refresh_error" not in st.session_state:
     st.session_state["last_refresh_error"] = ""
+
 if "last_refresh_count" not in st.session_state:
     st.session_state["last_refresh_count"] = 0
+
 if "last_api_pull_epoch" not in st.session_state:
     st.session_state["last_api_pull_epoch"] = 0.0
+
+# Manual-refresh protection / call-limit control
 if "api_cooldown_seconds" not in st.session_state:
     st.session_state["api_cooldown_seconds"] = 90.0
+
 if "last_odds_refresh_ok" not in st.session_state:
     st.session_state["last_odds_refresh_ok"] = False
+
 if "last_refresh_time" not in st.session_state:
     st.session_state["last_refresh_time"] = ""
+
 if "learning_state" not in st.session_state:
     st.session_state["learning_state"] = {}
-if "learning_settings" not in st.session_state:
+
+# Do not force empty learning settings every run
+if "learning_settings" not in st.session_state or not isinstance(st.session_state["learning_settings"], dict):
     st.session_state["learning_settings"] = {}
 
 # =========================================================

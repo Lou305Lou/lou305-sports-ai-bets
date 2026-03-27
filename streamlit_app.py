@@ -1077,41 +1077,116 @@ if err:
 # SMART DECISION LAYER
 # =========================================================
 def american_odds_to_implied_prob_pct(odds):
-    try:
-        odds = float(odds)
-        if odds > 0:
-            return round(100 * (100 / (odds + 100)), 2)
-        else:
-            return round(100 * (abs(odds) / (abs(odds) + 100)), 2)
-    except:
+    odds_val = american_to_int(odds)
+    if odds_val is None:
         return 50.0
 
+    if odds_val > 0:
+        return round((100 / (odds_val + 100)) * 100, 2)
 
-def clamp(val, low, high):
-    return max(low, min(val, high))
+    return round((abs(odds_val) / (abs(odds_val) + 100)) * 100, 2)
+
+
+def books_score(books_seen):
+    try:
+        books_seen = int(books_seen)
+    except Exception:
+        books_seen = 1
+
+    if books_seen >= 4:
+        return 1.00
+    if books_seen == 3:
+        return 0.82
+    if books_seen == 2:
+        return 0.56
+    return 0.22
+
+
+def consensus_score(consensus):
+    consensus = str(consensus).strip().lower()
+    if consensus == "strong":
+        return 1.00
+    if consensus == "fair":
+        return 0.66
+    return 0.30
+
+
+def edge_score(edge):
+    try:
+        edge = float(edge)
+    except Exception:
+        edge = 0.0
+    return clamp(edge / 10.0, 0.0, 1.0)
+
+
+def price_edge_score(price_edge):
+    try:
+        price_edge = float(price_edge)
+    except Exception:
+        price_edge = 0.0
+    return clamp(price_edge / 3.0, 0.0, 1.0)
+
+
+def model_score(score):
+    try:
+        score = float(score)
+    except Exception:
+        score = 50.0
+    return clamp((score - 78.0) / 22.0, 0.0, 1.0)
+
+
+def confidence_numeric(confidence_value):
+    raw = str(confidence_value).strip().lower()
+
+    if raw == "elite":
+        return 78.0
+    if raw == "high":
+        return 72.0
+    if raw == "medium":
+        return 66.0
+    if raw == "low":
+        return 58.0
+
+    try:
+        return float(confidence_value)
+    except Exception:
+        return 60.0
 
 
 def estimate_true_probability_pct(row):
+    score = float(row.get("score", 0))
+    books_seen = int(row.get("books_seen", 1))
+    consensus = str(row.get("consensus", "Thin"))
+    price_edge = float(row.get("price_edge", 0))
+    context_score = float(row.get("context_score", 0))
+    market = str(row.get("market", "")).lower()
     odds = row.get("odds")
+
+    ms = model_score(score)
+    bs = books_score(books_seen)
+    cs = consensus_score(consensus)
+    ps = price_edge_score(price_edge)
+
+    true_prob = (
+        38.0
+        + (ms * 20.0)
+        + (bs * 8.0)
+        + (cs * 10.0)
+        + (ps * 12.0)
+        + clamp(context_score, -20, 20) * 0.35
+    )
+
+    if market == "moneyline":
+        true_prob += 1.0
+    elif market == "spread":
+        true_prob += 0.5
+    elif market == "total":
+        true_prob += 0.0
+    elif market.startswith("prop_"):
+        true_prob -= 2.5
+
     implied_prob = american_odds_to_implied_prob_pct(odds)
-
-    score = float(row.get("score", 50))
-    confidence = float(row.get("confidence", 50))
-    consensus = float(row.get("consensus", 0))
-    books = float(row.get("books_seen", 0))
-
-    base = (
-        0.45 * score +
-        0.35 * confidence +
-        0.20 * (consensus * 20)
-    ) / 100
-
-    book_boost = min(books * 0.5, 5.0)
-    true_prob = base * 100 + book_boost
-
-    # ✅ IMPROVED RANGE
-    true_prob = clamp(true_prob, 32.0, 88.0)
-
+    true_prob = clamp(true_prob, 30.0, 82.0)
     edge = round(true_prob - implied_prob, 2)
 
     return round(true_prob, 1), round(implied_prob, 2), edge
@@ -1201,7 +1276,7 @@ def compute_true_confidence(row):
     true_confidence = round(adjusted_quality * 100.0, 1)
 
     reasons = []
-    if row["books_seen"] >= 3:
+    if int(row["books_seen"]) >= 3:
         reasons.append("multi-book support")
     if str(row["consensus"]).lower() == "strong":
         reasons.append("strong consensus")

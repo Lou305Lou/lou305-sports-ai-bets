@@ -1025,22 +1025,18 @@ def parse_today_games(games_text: str):
 # =========================================================
 st.sidebar.markdown("### 🗓️ Today's Slate")
 
-st.sidebar.text_area(
+today_games_text = st.sidebar.text_area(
     "Optional: Filter today's slate",
     key="today_games_text",
     height=180,
     placeholder="Examples:\nSAS vs CHA\nLAL vs BOS\nHeat vs Knicks\n\nLeave blank to use all live games",
 )
 
-# AUTO-UPPERCASE NORMALIZATION
-if st.session_state.get("today_games_text"):
-    st.session_state["today_games_text"] = st.session_state["today_games_text"].upper()
-
 st.sidebar.caption(
     "Supports abbreviations, full team names, or nicknames (e.g., LAL, Lakers, Los Angeles Lakers)"
 )
 
-today_games = parse_today_games(st.session_state.get("today_games_text", ""))
+today_games = parse_today_games(str(today_games_text).upper())
 
 # =========================================================
 # SIDEBAR - SPORTSDATA CONTROLS

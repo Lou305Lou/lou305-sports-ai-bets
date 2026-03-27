@@ -2441,7 +2441,7 @@ def render_play_card(row: pd.Series, show_best_badge: bool = False):
     best_display = "inline-flex" if show_best_badge else "none"
 
     fill_width, fill_color, conf_label = confidence_fill_and_color(row["true_confidence"])
-    edge_color = "#4ade80" if float(row["edge"]) >= 4 else "#fbbf24"
+    edge_color = "#4ade80" if float(row["edge"]) >= 4 else ("#fbbf24" if float(row["edge"]) >= 2 else "#f87171")
 
     watch_tier = row["watch_tier"] if "watch_tier" in row and pd.notna(row["watch_tier"]) else ""
     watch_display = "none"
@@ -2510,6 +2510,10 @@ def render_play_card(row: pd.Series, show_best_badge: bool = False):
         </div>
         """
 
+    implied_prob = float(row.get("implied_prob", 0))
+    true_prob = float(row.get("true_prob", 0))
+    value_edge = float(row.get("edge", 0))
+
     html = f"""
     <html><head><meta name="viewport" content="width=device-width, initial-scale=1" /></head>
     <body style="margin:0;background:transparent;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
@@ -2531,7 +2535,9 @@ def render_play_card(row: pd.Series, show_best_badge: bool = False):
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 12px;margin-bottom:6px;">
             <div><div style="color:#91a0b7;font-size:10px;">Odds</div><div style="font-weight:700;">{row['odds']}</div></div>
             <div><div style="color:#91a0b7;font-size:10px;">AI Score</div><div style="color:#60a5fa;font-weight:700;">{row['score']}</div></div>
-            <div><div style="color:#91a0b7;font-size:10px;">Edge</div><div style="color:{edge_color};font-weight:700;">{row['edge']:.2f}%</div></div>
+            <div><div style="color:#91a0b7;font-size:10px;">Implied Prob</div><div style="font-weight:700;">{implied_prob:.1f}%</div></div>
+            <div><div style="color:#91a0b7;font-size:10px;">True Prob</div><div style="font-weight:700;">{true_prob:.1f}%</div></div>
+            <div><div style="color:#91a0b7;font-size:10px;">Value Edge</div><div style="color:{edge_color};font-weight:700;">{value_edge:.2f}%</div></div>
             <div><div style="color:#91a0b7;font-size:10px;">Units</div><div style="font-weight:700;">{row['units']:.2f}u</div></div>
             <div><div style="color:#91a0b7;font-size:10px;">Consensus</div><div style="font-weight:700;">{row['consensus']}</div></div>
             <div><div style="color:#91a0b7;font-size:10px;">Books</div><div style="font-weight:700;">{row['books_seen']}</div></div>
@@ -2553,7 +2559,7 @@ def render_play_card(row: pd.Series, show_best_badge: bool = False):
     </div></body></html>
     """
 
-    components.html(html, height=360 if is_mobile() else 420, scrolling=False)
+    components.html(html, height=390 if is_mobile() else 445, scrolling=False)
 # =========================================================
 # PARLAY CARD RENDER
 # =========================================================
@@ -2611,6 +2617,7 @@ def render_parlay_table(candidates, title):
                 "Legs": p.get("leg_count"),
                 "Odds": p.get("combined_odds"),
                 "Avg Conf": round(p.get("avg_true_conf", 0), 1),
+                "Avg Edge": round(p.get("avg_edge", 0), 2),
                 "Score": round(p.get("display_score", p.get("score", 0)), 1),
                 "Risk": p.get("risk_label"),
             }
@@ -2629,6 +2636,8 @@ def render_table_desktop(df: pd.DataFrame):
         "market",
         "selection",
         "odds",
+        "implied_prob",
+        "true_prob",
         "edge",
         "score",
         "context_score",
@@ -2644,7 +2653,19 @@ def render_table_desktop(df: pd.DataFrame):
         "price_edge",
     ]
     existing_cols = [c for c in cols if c in df.columns]
-    st.dataframe(df[existing_cols], use_container_width=True, hide_index=True)
+
+    table_df = df[existing_cols].copy()
+
+    if "implied_prob" in table_df.columns:
+        table_df["implied_prob"] = pd.to_numeric(table_df["implied_prob"], errors="coerce").round(1)
+    if "true_prob" in table_df.columns:
+        table_df["true_prob"] = pd.to_numeric(table_df["true_prob"], errors="coerce").round(1)
+    if "edge" in table_df.columns:
+        table_df["edge"] = pd.to_numeric(table_df["edge"], errors="coerce").round(2)
+    if "true_confidence" in table_df.columns:
+        table_df["true_confidence"] = pd.to_numeric(table_df["true_confidence"], errors="coerce").round(1)
+
+    st.dataframe(table_df, use_container_width=True, hide_index=True)
 
 
 def render_mobile_or_table(df: pd.DataFrame, best_first: bool = False):
@@ -2815,6 +2836,7 @@ portfolio = build_ai_portfolio(best_row, best_parlay, all_portfolio_candidates)
 avg_active_edge = active_df["edge"].mean() if not active_df.empty else 0.0
 best_score = best_row["score"] if best_row is not None else "—"
 avg_true_conf = active_df["true_confidence"].mean() if not active_df.empty else 0.0
+avg_true_prob = active_df["true_prob"].mean() if (not active_df.empty and "true_prob" in active_df.columns) else 0.0
 total_units = active_df["units"].sum() if not active_df.empty else 0.0
 
 # =========================================================
@@ -2931,7 +2953,7 @@ h1, h2, h3 {
 status_text, status_dot, status_bg, status_fg = api_status_label()
 
 st.title("🔥 Sports Betting AI Dashboard V34")
-st.caption("Manual Live Odds Refresh • SportsDataIO Context • Cached Fallback • True Confidence Cleanup")
+st.caption("Manual Live Odds Refresh • SportsDataIO Context • Cached Fallback • True Probability + True Confidence Engine")
 
 st.markdown(
     f"""
@@ -2978,7 +3000,8 @@ st.markdown(
         <div><div class="metric-mini-label">Active Plays</div><div class="metric-mini-value">{len(active_df)}</div></div>
         <div><div class="metric-mini-label">Watchlist</div><div class="metric-mini-value">{len(watch_df)}</div></div>
         <div><div class="metric-mini-label">Best Score</div><div class="metric-mini-value">{best_score}</div></div>
-        <div><div class="metric-mini-label">Avg Active Edge</div><div class="metric-mini-value">{avg_active_edge:.2f}%</div></div>
+        <div><div class="metric-mini-label">Avg Value Edge</div><div class="metric-mini-value">{avg_active_edge:.2f}%</div></div>
+        <div><div class="metric-mini-label">Avg True Prob</div><div class="metric-mini-value">{avg_true_prob:.1f}%</div></div>
         <div><div class="metric-mini-label">Avg True Conf</div><div class="metric-mini-value">{avg_true_conf:.1f}</div></div>
         <div><div class="metric-mini-label">Total Active Units</div><div class="metric-mini-value">{total_units:.2f}u</div></div>
     </div>
@@ -3057,26 +3080,29 @@ elif nav == "AI Slip":
     if len(get_effective_odds_games()) == 0:
         st.warning("Press 'Refresh Live Odds' in the sidebar to load live odds.")
     elif best_row is not None:
-        risk_level = "Low" if float(best_row["units"]) <= 0.60 else "Moderate"
+    risk_level = "Low" if float(best_row["units"]) <= 0.60 else "Moderate"
 
-        st.markdown(
-            f"""
-            <div class="slip-card">
-                <div class="slip-kicker">🔥 AI Recommended Single</div>
-                <div class="slip-title">{best_row['selection']}</div>
-                <div class="slip-meta">{best_row['game']} • {prop_market_label(best_row['market']) if is_prop_market(best_row['market']) else str(best_row['market']).title()}</div>
-                <div class="slip-meta"><strong>Confidence:</strong> {best_row['confidence']}</div>
-                <div class="slip-meta"><strong>True Confidence:</strong> {best_row['true_confidence']:.1f}</div>
-                <div class="slip-meta"><strong>Quality Label:</strong> {best_row['quality_label']}</div>
-                <div class="slip-meta"><strong>Odds:</strong> {best_row['odds']}</div>
-                <div class="slip-meta"><strong>Type:</strong> Single best bet</div>
-                <div class="slip-meta"><strong>Risk Level:</strong> {risk_level}</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+    st.markdown(
+        f"""
+        <div class="slip-card">
+            <div class="slip-kicker">🔥 AI Recommended Single</div>
+            <div class="slip-title">{best_row['selection']}</div>
+            <div class="slip-meta">{best_row['game']} • {prop_market_label(best_row['market']) if is_prop_market(best_row['market']) else str(best_row['market']).title()}</div>
+            <div class="slip-meta"><strong>Odds:</strong> {best_row['odds']}</div>
+            <div class="slip-meta"><strong>Implied Probability:</strong> {float(best_row.get('implied_prob', 0)):.1f}%</div>
+            <div class="slip-meta"><strong>True Probability:</strong> {float(best_row.get('true_prob', 0)):.1f}%</div>
+            <div class="slip-meta"><strong>Value Edge:</strong> {float(best_row.get('edge', 0)):.2f}%</div>
+            <div class="slip-meta"><strong>Confidence:</strong> {best_row['confidence']}</div>
+            <div class="slip-meta"><strong>True Confidence:</strong> {best_row['true_confidence']:.1f}</div>
+            <div class="slip-meta"><strong>Quality Label:</strong> {best_row['quality_label']}</div>
+            <div class="slip-meta"><strong>Type:</strong> Single best bet</div>
+            <div class="slip-meta"><strong>Risk Level:</strong> {risk_level}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-        render_play_card(best_row, show_best_badge=True)
+    render_play_card(best_row, show_best_badge=True)
     else:
         st.info("No active AI single available.")
 

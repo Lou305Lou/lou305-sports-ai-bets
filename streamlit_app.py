@@ -1792,7 +1792,7 @@ def generate_ai_plays():
             }
             add_scored_row(row, ["API live odds", "moneyline", "best price"])
 
-         for team_name in [away_team, home_team]:
+        for team_name in [away_team, home_team]:
             best_point, best_price, books_found = get_best_spread_outcome(bookmakers, team_name)
             if best_point is None or best_price is None or books_found == 0:
                 continue
@@ -1829,7 +1829,8 @@ def generate_ai_plays():
                 "ai_tags": [],
             }
             add_scored_row(row, ["API live odds", "spread", "best line"])
-                for side in ["Over", "Under"]:
+
+        for side in ["Over", "Under"]:
             best_point, best_price, books_found = get_best_total_outcome(bookmakers, side)
             if best_point is None or best_price is None or books_found == 0:
                 continue

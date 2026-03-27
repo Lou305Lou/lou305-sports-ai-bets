@@ -279,7 +279,7 @@ if "daily_api_call_count" not in st.session_state:
     st.session_state["daily_api_call_count"] = 0
 
 if "daily_api_call_date" not in st.session_state:
-    st.session_state["daily_api_call_date"] = today_str()
+    st.session_state["daily_api_call_date"] = datetime.now().strftime("%Y-%m-%d")
 
 if "last_odds_refresh_ok" not in st.session_state:
     st.session_state["last_odds_refresh_ok"] = False

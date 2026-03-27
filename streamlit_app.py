@@ -593,6 +593,22 @@ def is_mobile():
 def clamp(value, low, high):
     return max(low, min(high, value))
 
+def safe_float(value, default=0.0):
+    try:
+        if value is None or str(value).strip() == "":
+            return float(default)
+        return float(value)
+    except Exception:
+        return float(default)
+
+def safe_int(value, default=0):
+    try:
+        if value is None or str(value).strip() == "":
+            return int(default)
+        return int(float(value))
+    except Exception:
+        return int(default)
+
 def american_to_int(odds_str):
     try:
         return int(str(odds_str).replace("+", "").strip())
@@ -705,10 +721,61 @@ def market_family(market):
         return "prop"
     return "other"
 
+# =========================================================
+# SELF-LEARNING SETTINGS ACCESSORS
+# =========================================================
+def default_learning_settings():
+    return {
+        "min_active_edge": MIN_ACTIVE_EDGE,
+        "min_watch_edge": MIN_WATCH_EDGE,
+        "min_active_true_conf": MIN_ACTIVE_TRUE_CONF,
+        "min_watch_true_conf": MIN_WATCH_TRUE_CONF,
+        "unit_mult_low": 0.92,
+        "unit_mult_medium": 1.00,
+        "unit_mult_high": 1.00,
+        "unit_mult_elite": 1.05,
+    }
+
+def get_learning_settings():
+    defaults = default_learning_settings()
+    saved = st.session_state.get("learning_settings", {})
+
+    if not isinstance(saved, dict):
+        return defaults
+
+    out = defaults.copy()
+    for k, v in saved.items():
+        out[k] = v
+    return out
+
+def get_effective_min_active_edge():
+    return float(get_learning_settings().get("min_active_edge", MIN_ACTIVE_EDGE))
+
+def get_effective_min_watch_edge():
+    return float(get_learning_settings().get("min_watch_edge", MIN_WATCH_EDGE))
+
+def get_effective_min_active_true_conf():
+    return float(get_learning_settings().get("min_active_true_conf", MIN_ACTIVE_TRUE_CONF))
+
+def get_effective_min_watch_true_conf():
+    return float(get_learning_settings().get("min_watch_true_conf", MIN_WATCH_TRUE_CONF))
+
+def get_confidence_unit_multiplier(true_conf):
+    bucket = confidence_bucket_from_true_conf(true_conf)
+    learning = get_learning_settings()
+
+    if bucket == "Elite":
+        return float(learning.get("unit_mult_elite", 1.05))
+    if bucket == "High":
+        return float(learning.get("unit_mult_high", 1.00))
+    if bucket == "Medium":
+        return float(learning.get("unit_mult_medium", 1.00))
+    return float(learning.get("unit_mult_low", 0.92))
+
 def scale_single_units(row):
-    true_conf = float(row.get("true_confidence", 0))
-    edge = float(row.get("edge", 0))
-    books_seen = int(row.get("books_seen", 1))
+    true_conf = safe_float(row.get("true_confidence", 0))
+    edge = safe_float(row.get("edge", 0))
+    books_seen = safe_int(row.get("books_seen", 1), 1)
 
     base = (
         (true_conf * 0.55)
@@ -716,7 +783,9 @@ def scale_single_units(row):
         + (books_seen * 3.0)
     ) / 55.0
 
-    return round(clamp(base, SINGLE_UNIT_MIN, SINGLE_UNIT_MAX), 2)
+    base = clamp(base, SINGLE_UNIT_MIN, SINGLE_UNIT_MAX)
+    multiplier = get_confidence_unit_multiplier(true_conf)
+    return round(clamp(base * multiplier, SINGLE_UNIT_MIN, SINGLE_UNIT_MAX), 2)
 
 def scale_parlay_units(parlay):
     if not parlay:
@@ -724,7 +793,7 @@ def scale_parlay_units(parlay):
 
     approval_type = parlay.get("approval_type", "")
     leg_count = int(parlay.get("leg_count", 2))
-    avg_true_conf = float(parlay.get("avg_true_conf", 0))
+    avg_true_conf = safe_float(parlay.get("avg_true_conf", 0))
     risk_label = str(parlay.get("risk_label", "Moderate"))
 
     if approval_type == "Sharp Approved":
@@ -744,12 +813,13 @@ def scale_parlay_units(parlay):
     elif risk_label == "Elevated":
         base_units -= 0.10
 
-    return round(clamp(base_units, 0.15, 0.75), 2)
+    multiplier = get_confidence_unit_multiplier(avg_true_conf)
+    return round(clamp(base_units * multiplier, 0.15, 0.75), 2)
 
 def scale_watch_units(row):
-    true_conf = float(row.get("true_confidence", 0))
-    edge = float(row.get("edge", 0))
-    books_seen = int(row.get("books_seen", 1))
+    true_conf = safe_float(row.get("true_confidence", 0))
+    edge = safe_float(row.get("edge", 0))
+    books_seen = safe_int(row.get("books_seen", 1), 1)
 
     base = (
         (true_conf * 0.42)
@@ -757,12 +827,14 @@ def scale_watch_units(row):
         + (books_seen * 2.0)
     ) / 55.0
 
-    return round(clamp(base, WATCH_UNIT_MIN, WATCH_UNIT_MAX), 2)
+    base = clamp(base, WATCH_UNIT_MIN, WATCH_UNIT_MAX)
+    multiplier = get_confidence_unit_multiplier(true_conf)
+    return round(clamp(base * multiplier, WATCH_UNIT_MIN, WATCH_UNIT_MAX), 2)
 
 def classify_watch_tier(row):
-    tc = float(row.get("true_confidence", 0))
-    edge = float(row.get("edge", 0))
-    books = int(row.get("books_seen", 0))
+    tc = safe_float(row.get("true_confidence", 0))
+    edge = safe_float(row.get("edge", 0))
+    books = safe_int(row.get("books_seen", 0))
     consensus = str(row.get("consensus", "")).strip()
 
     if tc >= 68 and edge >= 4.0 and books >= 3 and consensus in ["Strong", "Fair"]:
@@ -770,7 +842,6 @@ def classify_watch_tier(row):
     if tc >= 62 and edge >= 3.4 and books >= 3:
         return "Monitor"
     return "Weak Watch"
-
 # =========================================================
 # TEAM NORMALIZATION (FULL NBA COVERAGE)
 # =========================================================

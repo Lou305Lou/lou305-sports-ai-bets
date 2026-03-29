@@ -1060,7 +1060,7 @@ def get_learning_summary_rows():
             "ROI": round(info.get("roi", 0.0) * 100, 2),
             "Filtered": "Yes" if learning_state.get("bad_category_flags", {}).get(play_type, False) else "No",
         })
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows) 
 # =========================================================
 # V33.1 LEARNING ACTIVATION ENGINE
 # =========================================================

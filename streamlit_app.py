@@ -2901,7 +2901,7 @@ def choose_best_parlay(active_df):
     return None, sharp_candidates, fallback_candidates
 
 # =========================================================
-# AUTO-LOG ACTIVE PLAYS (CATEGORY-AWARE)
+# AUTO-LOG ACTIVE PLAYS (CATEGORY-AWARE + CLV READY)
 # =========================================================
 def normalize_result_value(result_value):
     value = str(result_value).strip().title()
@@ -2992,8 +2992,67 @@ def same_play_family(play_id_a, play_id_b):
     return get_base_play_id(play_id_a) == get_base_play_id(play_id_b)
 
 
+def extract_line_from_selection(selection_text):
+    text = str(selection_text).strip()
+    if not text:
+        return None
+
+    match = re.search(r'([+-]?\d+(?:\.\d+)?)', text)
+    if not match:
+        return None
+
+    try:
+        return float(match.group(1))
+    except Exception:
+        return None
+
+
+def calculate_clv_diff(open_line, closing_line, market, selection):
+    try:
+        if open_line is None or closing_line is None:
+            return None, None
+
+        open_line = float(open_line)
+        closing_line = float(closing_line)
+
+        market = str(market).strip().lower()
+        selection = str(selection).strip().lower()
+
+        if "total" in market:
+            if "over" in selection:
+                diff = closing_line - open_line
+            elif "under" in selection:
+                diff = open_line - closing_line
+            else:
+                diff = closing_line - open_line
+        elif "spread" in market:
+            diff = closing_line - open_line
+        elif "moneyline" in market or market == "ml":
+            diff = open_line - closing_line
+        else:
+            diff = closing_line - open_line
+
+        diff = round(diff, 2)
+
+        if diff > 0:
+            result = "Beat"
+        elif diff < 0:
+            result = "Lost"
+        else:
+            result = "Push"
+
+        return diff, result
+    except Exception:
+        return None, None
+
+
 def build_logged_bet_row(row_dict, log_category_label):
     enriched = enrich_play_with_learning_fields_compat(row_dict)
+
+    selection_line = extract_line_from_selection(enriched.get("selection", ""))
+
+    open_odds = enriched.get("odds")
+    open_line = selection_line if selection_line is not None else enriched.get("line", None)
 
     return {
         "play_id": str(enriched.get("play_id", "")).strip(),
@@ -3020,6 +3079,16 @@ def build_logged_bet_row(row_dict, log_category_label):
         "mode": TEST_MODE,
         "log_category": log_category_label,
         "timestamp": datetime.now().isoformat(),
+
+        # -----------------------------
+        # CLV / MARKET TRACKING FIELDS
+        # -----------------------------
+        "open_odds": open_odds,
+        "open_line": open_line,
+        "closing_odds": None,
+        "closing_line": None,
+        "clv_diff": None,
+        "clv_result": None,
     }
 
 
@@ -3047,6 +3116,19 @@ def auto_log_active_plays(df: pd.DataFrame):
             updated_row = add_category_to_logged_bet(existing_row, "Top Play")
             updated_row["category"] = "Top Plays"
             updated_row["primary_category"] = "Top Plays"
+
+            if "open_odds" not in updated_row:
+                updated_row["open_odds"] = updated_row.get("odds")
+            if "open_line" not in updated_row:
+                updated_row["open_line"] = extract_line_from_selection(updated_row.get("selection", ""))
+            if "closing_odds" not in updated_row:
+                updated_row["closing_odds"] = None
+            if "closing_line" not in updated_row:
+                updated_row["closing_line"] = None
+            if "clv_diff" not in updated_row:
+                updated_row["clv_diff"] = None
+            if "clv_result" not in updated_row:
+                updated_row["clv_result"] = None
 
             st.session_state["bet_log"][exact_idx] = updated_row
             st.session_state["auto_logged_ids"].add(pid)
@@ -3077,6 +3159,11 @@ def auto_log_active_plays(df: pd.DataFrame):
             new_bet["result"] = suffix_result
             new_bet["profit"] = settle_result_pnl(new_bet["odds"], new_bet["units"], suffix_result)
 
+            new_bet["closing_odds"] = suffix_row.get("closing_odds", None)
+            new_bet["closing_line"] = suffix_row.get("closing_line", None)
+            new_bet["clv_diff"] = suffix_row.get("clv_diff", None)
+            new_bet["clv_result"] = suffix_row.get("clv_result", None)
+
         st.session_state["bet_log"].append(new_bet)
         st.session_state["auto_logged_ids"].add(pid)
         added += 1
@@ -3102,6 +3189,20 @@ def log_ai_slip_pick(best_row):
         updated_row = add_category_to_logged_bet(existing_row, "AI Slip")
         updated_row["category"] = "AI Picks"
         updated_row["primary_category"] = "AI Picks"
+
+        if "open_odds" not in updated_row:
+            updated_row["open_odds"] = updated_row.get("odds")
+        if "open_line" not in updated_row:
+            updated_row["open_line"] = extract_line_from_selection(updated_row.get("selection", ""))
+        if "closing_odds" not in updated_row:
+            updated_row["closing_odds"] = None
+        if "closing_line" not in updated_row:
+            updated_row["closing_line"] = None
+        if "clv_diff" not in updated_row:
+            updated_row["clv_diff"] = None
+        if "clv_result" not in updated_row:
+            updated_row["clv_result"] = None
+
         st.session_state["bet_log"][exact_idx] = updated_row
         save_bet_log()
         return False
@@ -3112,6 +3213,20 @@ def log_ai_slip_pick(best_row):
         updated_row = add_category_to_logged_bet(existing_row, "AI Slip")
         updated_row["category"] = "AI Picks"
         updated_row["primary_category"] = "AI Picks"
+
+        if "open_odds" not in updated_row:
+            updated_row["open_odds"] = updated_row.get("odds")
+        if "open_line" not in updated_row:
+            updated_row["open_line"] = extract_line_from_selection(updated_row.get("selection", ""))
+        if "closing_odds" not in updated_row:
+            updated_row["closing_odds"] = None
+        if "closing_line" not in updated_row:
+            updated_row["closing_line"] = None
+        if "clv_diff" not in updated_row:
+            updated_row["clv_diff"] = None
+        if "clv_result" not in updated_row:
+            updated_row["clv_result"] = None
+
         st.session_state["bet_log"][suffix_idx] = updated_row
         save_bet_log()
         return False
@@ -3151,6 +3266,20 @@ def log_ai_parlay_pick(best_parlay):
         updated_row = add_category_to_logged_bet(existing_row, "AI Parlay")
         updated_row["category"] = "AI Parlays"
         updated_row["primary_category"] = "AI Parlays"
+
+        if "open_odds" not in updated_row:
+            updated_row["open_odds"] = updated_row.get("odds")
+        if "open_line" not in updated_row:
+            updated_row["open_line"] = None
+        if "closing_odds" not in updated_row:
+            updated_row["closing_odds"] = None
+        if "closing_line" not in updated_row:
+            updated_row["closing_line"] = None
+        if "clv_diff" not in updated_row:
+            updated_row["clv_diff"] = None
+        if "clv_result" not in updated_row:
+            updated_row["clv_result"] = None
+
         st.session_state["bet_log"][existing_idx] = updated_row
         save_bet_log()
         return False
@@ -3180,6 +3309,16 @@ def log_ai_parlay_pick(best_parlay):
         "mode": TEST_MODE,
         "log_category": "AI Parlay",
         "timestamp": datetime.now().isoformat(),
+
+        # -----------------------------
+        # CLV / MARKET TRACKING FIELDS
+        # -----------------------------
+        "open_odds": best_parlay.get("combined_odds"),
+        "open_line": None,
+        "closing_odds": None,
+        "closing_line": None,
+        "clv_diff": None,
+        "clv_result": None,
     }
 
     st.session_state["bet_log"].append(new_row)

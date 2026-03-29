@@ -4002,8 +4002,15 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-if status_text in ["CACHED", "LIMIT HIT", "OFFLINE", "KEY ERROR", "NO KEY"]:
-    st.info("Fallback mode is active. Cached odds will be used when available. If no cached odds exist yet, no live market plays can be generated.")
+if status_text in ["CACHED", "WAITING RESET", "DAILY LIMIT", "OFFLINE", "KEY ERROR", "NO KEY"]:
+    st.info(
+        "Fallback mode is active. Cached odds will be used when available. "
+        "If no cached odds exist yet, no live market plays can be generated."
+    )
+
+reset_expected = str(st.session_state.get("odds_api_reset_expected", "")).strip()
+if status_text == "WAITING RESET" and reset_expected:
+    st.warning(f"The Odds API appears to be waiting for quota reset. Expected reset around {reset_expected}.")
 
 if auto_logged_count > 0:
     st.markdown(
@@ -4125,8 +4132,17 @@ if nav == "Top Plays":
     st.header("🎯 Top Plays")
     st.caption("Up to 10 qualified plays only. No filler.")
 
+    current_api_mode = st.session_state.get("api_mode", "idle")
+
     if len(get_effective_odds_games()) == 0:
-        st.warning("Press 'Refresh Live Odds' in the sidebar to load live odds.")
+        if current_api_mode == "waiting_reset":
+            reset_expected = str(st.session_state.get("odds_api_reset_expected", "")).strip()
+            if reset_expected:
+                st.warning(f"The Odds API is waiting for reset. Expected reset around {reset_expected}.")
+            else:
+                st.warning("The Odds API is waiting for reset.")
+        else:
+            st.warning("Press 'Refresh Live Odds' in the sidebar to load live odds.")
     else:
         top_df = (
             active_df.sort_values(["rank_score", "true_confidence"], ascending=False)
@@ -4135,10 +4151,12 @@ if nav == "Top Plays":
         )
 
         if top_df.empty:
-            st.info("No plays met the active criteria for the current live slate.")
+            if current_api_mode == "waiting_reset":
+                st.info("No active plays available right now. Cached odds are being used while the API waits for reset.")
+            else:
+                st.info("No plays met the active criteria for the current live slate.")
         else:
             render_mobile_or_table(top_df, best_first=True)
-
 # =========================================================
 # WATCHLIST
 # =========================================================
@@ -4146,8 +4164,17 @@ elif nav == "Watchlist":
     st.header("👀 Watchlist")
     st.caption("Near-qualified plays only.")
 
+    current_api_mode = st.session_state.get("api_mode", "idle")
+
     if len(get_effective_odds_games()) == 0:
-        st.warning("Press 'Refresh Live Odds' in the sidebar to load live odds.")
+        if current_api_mode == "waiting_reset":
+            reset_expected = str(st.session_state.get("odds_api_reset_expected", "")).strip()
+            if reset_expected:
+                st.warning(f"The Odds API is waiting for reset. Expected reset around {reset_expected}.")
+            else:
+                st.warning("The Odds API is waiting for reset.")
+        else:
+            st.warning("Press 'Refresh Live Odds' in the sidebar to load live odds.")
     else:
         wl_df = (
             watch_df.sort_values(["rank_score", "true_confidence"], ascending=False)
@@ -4155,7 +4182,10 @@ elif nav == "Watchlist":
             .reset_index(drop=True)
         )
 
-        render_mobile_or_table(wl_df)
+        if wl_df.empty and current_api_mode == "waiting_reset":
+            st.info("No watchlist plays available right now. Cached odds are being used while the API waits for reset.")
+        else:
+            render_mobile_or_table(wl_df)
 
 # =========================================================
 # AI SLIP + PARLAY INTELLIGENCE
@@ -4168,8 +4198,18 @@ elif nav == "AI Slip":
     else:
         st.caption("Using all live games returned by the API.")
 
+    current_api_mode = st.session_state.get("api_mode", "idle")
+
     if len(get_effective_odds_games()) == 0:
-        st.warning("Press 'Refresh Live Odds' in the sidebar to load live odds.")
+        if current_api_mode == "waiting_reset":
+            reset_expected = str(st.session_state.get("odds_api_reset_expected", "")).strip()
+            if reset_expected:
+                st.warning(f"The Odds API is waiting for reset. Expected reset around {reset_expected}.")
+            else:
+                st.warning("The Odds API is waiting for reset.")
+        else:
+            st.warning("Press 'Refresh Live Odds' in the sidebar to load live odds.")
+
     elif best_row is not None:
         risk_level = "Low" if float(best_row["units"]) <= 0.60 else "Moderate"
 
@@ -4195,7 +4235,10 @@ elif nav == "AI Slip":
 
         render_play_card(best_row, show_best_badge=True)
     else:
-        st.info("No active AI single available.")
+        if current_api_mode == "waiting_reset":
+            st.info("No active AI single available right now. Cached odds are being used while the API waits for reset.")
+        else:
+            st.info("No active AI single available.")
 
     st.subheader("🎯 AI Parlay Intelligence")
 
@@ -4239,7 +4282,6 @@ elif nav == "AI Slip":
             )
 
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-
 # =========================================================
 # BET LOG
 # =========================================================

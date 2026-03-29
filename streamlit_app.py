@@ -4490,6 +4490,8 @@ elif nav == "Bet Log":
             log_df["true_confidence"] = pd.to_numeric(log_df["true_confidence"], errors="coerce").round(1)
         if "edge" in log_df.columns:
             log_df["edge"] = pd.to_numeric(log_df["edge"], errors="coerce").round(2)
+        if "clv_diff" in log_df.columns:
+            log_df["clv_diff"] = pd.to_numeric(log_df["clv_diff"], errors="coerce").round(2)
 
         st.dataframe(log_df, use_container_width=True, hide_index=True)
 
@@ -4527,7 +4529,6 @@ elif nav == "Bet Log":
 
             for bet in st.session_state.get("bet_log", []):
                 pid = str(bet.get("play_id", "")).strip()
-
                 if pid == selected_id or get_base_play_id(pid) == selected_base_id:
                     existing_result = normalize_result_value(bet.get("result", "Pending"))
                     break
@@ -4536,6 +4537,7 @@ elif nav == "Bet Log":
                 "Result",
                 ["Pending", "Win", "Loss", "Push"],
                 index=["Pending", "Win", "Loss", "Push"].index(existing_result),
+                key="bet_result_choice",
             )
 
             if st.button("Save Result"):
@@ -4550,91 +4552,114 @@ elif nav == "Bet Log":
         else:
             st.info("No selectable bets found.")
 
-# =========================================================
-# MANUAL BET ENTRY (CLV READY)
-# =========================================================
-st.subheader("➕ Add Manual Bet")
+    # =========================================================
+    # MANUAL BET ENTRY (CLV READY)
+    # =========================================================
+    st.subheader("➕ Add Manual Bet")
 
-with st.expander("Add Manual Bet Entry", expanded=False):
-    col1, col2 = st.columns(2)
+    with st.expander("Add Manual Bet Entry", expanded=False):
+        col1, col2 = st.columns(2)
 
-    with col1:
-        game_input = st.text_input("Game (e.g. LAL @ BOS)")
-        market_input = st.selectbox(
-            "Market",
-            ["moneyline", "spread", "total", "prop"],
-            index=0,
-        )
-        selection_input = st.text_input("Selection (e.g. Lakers -3.5 or Over 221.5)")
+        with col1:
+            game_input = st.text_input("Game (e.g. LAL @ BOS)", key="manual_game_input")
+            market_input = st.selectbox(
+                "Market",
+                ["moneyline", "spread", "total", "prop"],
+                index=0,
+                key="manual_market_input",
+            )
+            selection_input = st.text_input(
+                "Selection (e.g. Lakers -3.5 or Over 221.5)",
+                key="manual_selection_input",
+            )
 
-    with col2:
-        odds_input = st.text_input("Odds (American, e.g. -110 or +150)")
-        units_input = st.number_input("Units", min_value=0.1, max_value=10.0, value=1.0, step=0.1)
-        confidence_input = st.selectbox("Confidence", ["Low", "Medium", "High"], index=1)
+        with col2:
+            odds_input = st.text_input(
+                "Odds (American, e.g. -110 or +150)",
+                key="manual_odds_input",
+            )
+            units_input = st.number_input(
+                "Units",
+                min_value=0.1,
+                max_value=10.0,
+                value=1.0,
+                step=0.1,
+                key="manual_units_input",
+            )
+            confidence_input = st.selectbox(
+                "Confidence",
+                ["Low", "Medium", "High"],
+                index=1,
+                key="manual_confidence_input",
+            )
 
-    if st.button("Add Bet"):
-        game_clean = str(game_input).strip()
-        market_clean = str(market_input).strip()
-        selection_clean = str(selection_input).strip()
-        odds_clean = str(odds_input).strip()
-        units = float(units_input)
-        confidence = str(confidence_input)
+        if st.button("Add Bet", key="manual_add_bet_button"):
+            game_clean = str(game_input).strip()
+            market_clean = str(market_input).strip()
+            selection_clean = str(selection_input).strip()
+            odds_clean = str(odds_input).strip()
+            units = float(units_input)
+            confidence = str(confidence_input)
 
-        if not game_clean or not selection_clean or not odds_clean:
-            st.warning("Please fill in Game, Selection, and Odds.")
-        else:
-            new_play_id = hashlib.md5(
-                f"{game_clean}|{selection_clean}|{time.time()}".encode()
-            ).hexdigest()
+            if not game_clean or not selection_clean or not odds_clean:
+                st.warning("Please fill in Game, Selection, and Odds.")
+            elif american_to_int(odds_clean) is None:
+                st.warning("Odds must be valid American odds like -110 or +150.")
+            else:
+                new_play_id = hashlib.md5(
+                    f"{game_clean}|{market_clean}|{selection_clean}|{odds_clean}|{time.time()}".encode()
+                ).hexdigest()
 
-            # Extract line from selection
-            def extract_line(selection_text):
-                try:
-                    match = re.search(r'([+-]?\d+(?:\.\d+)?)', selection_text)
-                    if match:
-                        return float(match.group(1))
-                except:
-                    pass
-                return None
+                open_line_val = extract_line_from_selection(selection_clean)
 
-            open_line_val = extract_line(selection_clean)
+                new = {
+                    "play_id": new_play_id,
+                    "game": game_clean,
+                    "market": market_clean,
+                    "selection": selection_clean,
+                    "odds": odds_clean,
+                    "implied_prob": None,
+                    "true_prob": None,
+                    "implied_probability": None,
+                    "true_probability": None,
+                    "edge": None,
+                    "play_type": classify_play_type(
+                        {
+                            "market": market_clean,
+                            "selection": selection_clean,
+                            "category": "Manual",
+                        }
+                    ),
+                    "primary_category": "Manual",
+                    "category": "Manual",
+                    "units": round(float(units), 2),
+                    "stake": round(float(units), 2),
+                    "confidence": confidence,
+                    "true_confidence": None,
+                    "books_seen": None,
+                    "consensus": None,
+                    "result": "Pending",
+                    "profit": 0.0,
+                    "mode": TEST_MODE,
+                    "log_category": "Manual",
+                    "timestamp": datetime.now().isoformat(),
 
-            new = {
-                "play_id": new_play_id,
-                "game": game_clean,
-                "market": market_clean,
-                "selection": selection_clean,
-                "odds": odds_clean,
-                "implied_prob": None,
-                "true_prob": None,
-                "units": round(float(units), 2),
-                "stake": round(float(units), 2),
-                "confidence": confidence,
-                "true_confidence": None,
-                "edge": None,
-                "books_seen": None,
-                "consensus": None,
-                "result": "Pending",
-                "profit": 0.0,
-                "mode": TEST_MODE,
-                "log_category": "Manual",
-                "timestamp": datetime.now().isoformat(),
+                    # -----------------------------
+                    # CLV / MARKET TRACKING FIELDS
+                    # -----------------------------
+                    "open_odds": odds_clean,
+                    "open_line": open_line_val,
+                    "closing_odds": None,
+                    "closing_line": None,
+                    "clv_diff": None,
+                    "clv_result": None,
+                }
 
-                # -----------------------------
-                # CLV / MARKET TRACKING FIELDS
-                # -----------------------------
-                "open_odds": odds_clean,
-                "open_line": open_line_val,
-                "closing_odds": None,
-                "closing_line": None,
-                "clv_diff": None,
-                "clv_result": None,
-            }
+                st.session_state["bet_log"].append(new)
+                save_bet_log()
 
-            st.session_state["bet_log"].append(new)
-            save_bet_log()
-
-            st.success("Manual bet added successfully.")
+                st.success("Manual bet added successfully.")
+                st.rerun()
 # =========================================================
 # ADAPTIVE SETTINGS + SELF-LEARNING STATUS
 # =========================================================

@@ -1228,6 +1228,96 @@ def enrich_play_with_learning_fields_compat(row):
     return enriched
 
 
+# =========================================================
+# V33.1 LEARNING ACTIVATION ENGINE
+# =========================================================
+LEARNING_MIN_SAMPLE = 10
+BAD_PLAYTYPE_THRESHOLD = -0.25
+GOOD_PLAYTYPE_THRESHOLD = 0.10
+
+
+def get_learning_activation_metrics():
+    df = pd.DataFrame(st.session_state.get("bet_log", []))
+    if df.empty:
+        return {}
+
+    graded = df[df["result"].isin(["Win", "Loss"])].copy()
+    if graded.empty:
+        return {}
+
+    summary = {}
+
+    if "play_type" in graded.columns:
+        for play_type, group in graded.groupby("play_type"):
+            bets = len(group)
+            profit = pd.to_numeric(group.get("profit", 0), errors="coerce").fillna(0.0).sum()
+
+            if "stake" in group.columns:
+                stake = pd.to_numeric(group.get("stake", 0), errors="coerce").fillna(0.0).sum()
+            elif "units" in group.columns:
+                stake = pd.to_numeric(group.get("units", 0), errors="coerce").fillna(0.0).sum()
+            else:
+                stake = float(bets)
+
+            roi = (profit / stake) if stake > 0 else 0.0
+
+            summary[str(play_type).strip().lower()] = {
+                "bets": int(bets),
+                "roi": float(roi),
+            }
+
+    return summary
+
+
+def get_dynamic_edge_threshold(category):
+    learning_state = st.session_state.get("learning_state", {})
+    thresholds = learning_state.get("category_thresholds", {})
+
+    base_threshold = float(thresholds.get(category, 0.02))
+    activation = get_learning_activation_metrics()
+
+    for _, stats in activation.items():
+        if int(stats.get("bets", 0)) < LEARNING_MIN_SAMPLE:
+            continue
+
+        roi = float(stats.get("roi", 0.0))
+        if roi < BAD_PLAYTYPE_THRESHOLD:
+            base_threshold += 0.02
+        elif roi > GOOD_PLAYTYPE_THRESHOLD:
+            base_threshold -= 0.01
+
+    return max(0.01, min(base_threshold, 0.10))
+
+
+def should_block_play_type(play_type):
+    activation = get_learning_activation_metrics()
+    stats = activation.get(str(play_type).strip().lower())
+
+    if not stats:
+        return False
+
+    if int(stats.get("bets", 0)) < LEARNING_MIN_SAMPLE:
+        return False
+
+    return float(stats.get("roi", 0.0)) < BAD_PLAYTYPE_THRESHOLD
+
+
+def apply_v33_learning_filters(play):
+    play_type = str(play.get("play_type", "")).lower()
+    category = str(play.get("category", "Top Plays")).strip() or "Top Plays"
+
+    if should_block_play_type(play_type):
+        return False, "Play type underperforming (auto-blocked)"
+
+    edge = safe_float(play.get("edge", 0), 0) / 100.0
+    min_edge = get_dynamic_edge_threshold(category)
+
+    if edge < min_edge:
+        return False, f"Edge below dynamic threshold ({round(min_edge * 100, 2)}%)"
+
+    return True, "Passed V33.1 filters"
+
+
 def apply_learning_engine_to_df(df, category_name):
     if df is None or df.empty:
         return df
@@ -1239,7 +1329,14 @@ def apply_learning_engine_to_df(df, category_name):
         item["category"] = category_name
 
         item = enrich_play_with_learning_fields_compat(item)
+
         allowed, reason = should_allow_play(item)
+
+        # Apply V33.1 filters on top of base learning checks
+        v33_allowed, v33_reason = apply_v33_learning_filters(item)
+        if not v33_allowed:
+            allowed = False
+            reason = v33_reason
 
         item["learning_status"] = "Allowed" if allowed else "Filtered"
         item["learning_reason"] = reason
@@ -1261,7 +1358,6 @@ def apply_learning_engine_to_df(df, category_name):
         out = out.sort_values(["edge", "true_prob"], ascending=False)
 
     return out.reset_index(drop=True)
-
 
 
 # =========================================================

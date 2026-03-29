@@ -4678,7 +4678,8 @@ elif nav == "AI Slip":
                 }
             )
 
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=# =========================================================
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+# =========================================================
 # BET LOG
 # =========================================================
 elif nav == "Bet Log":

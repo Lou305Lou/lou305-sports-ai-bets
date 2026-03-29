@@ -4002,15 +4002,23 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-if status_text in ["CACHED", "WAITING RESET", "DAILY LIMIT", "OFFLINE", "KEY ERROR", "NO KEY"]:
+reset_expected = str(st.session_state.get("odds_api_reset_expected", "")).strip()
+
+if status_text == "WAITING RESET":
+    st.warning(
+        f"The Odds API appears to be waiting for quota reset."
+        + (f" Expected reset around {reset_expected}." if reset_expected else "")
+    )
+    st.info(
+        "Cached odds will be used when available. "
+        "If no cached odds exist yet, no live market plays can be generated."
+    )
+
+elif status_text in ["CACHED", "DAILY LIMIT", "OFFLINE", "KEY ERROR", "NO KEY"]:
     st.info(
         "Fallback mode is active. Cached odds will be used when available. "
         "If no cached odds exist yet, no live market plays can be generated."
     )
-
-reset_expected = str(st.session_state.get("odds_api_reset_expected", "")).strip()
-if status_text == "WAITING RESET" and reset_expected:
-    st.warning(f"The Odds API appears to be waiting for quota reset. Expected reset around {reset_expected}.")
 
 if auto_logged_count > 0:
     st.markdown(

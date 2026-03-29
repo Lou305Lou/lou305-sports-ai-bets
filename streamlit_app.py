@@ -4314,57 +4314,40 @@ elif nav == "Bet Log":
 # ADAPTIVE SETTINGS + SELF-LEARNING STATUS
 # =========================================================
 with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded=False):
-    st.markdown("#### Live Thresholds Now In Use")
+    update_learning_from_results()
+    learning_state = st.session_state.get("learning_state", {})
 
-    c1, c2 = st.columns(2)
+    weights = learning_state.get("weights", {})
+    thresholds = learning_state.get("category_thresholds", {})
+    last_run = learning_state.get("last_learning_run", "Not run yet")
 
-    with c1:
-        st.write(f"Base Min Active Edge: {MIN_ACTIVE_EDGE}")
-        st.write(f"Effective Min Active Edge: {effective_active_edge:.2f}")
-        st.write(f"Base Min Watch Edge: {MIN_WATCH_EDGE}")
-        st.write(f"Effective Min Watch Edge: {effective_watch_edge:.2f}")
+    st.markdown("#### Learning Weights")
 
-    with c2:
-        st.write(f"Base Min Active True Conf: {MIN_ACTIVE_TRUE_CONF}")
-        st.write(f"Effective Min Active True Conf: {effective_active_true_conf:.1f}")
-        st.write(f"Base Min Watch True Conf: {MIN_WATCH_TRUE_CONF}")
-        st.write(f"Effective Min Watch True Conf: {effective_watch_true_conf:.1f}")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("True Prob", f"{round(weights.get('true_probability', 0) * 100, 1)}%")
+    c2.metric("Price Edge", f"{round(weights.get('price_edge', 0) * 100, 1)}%")
+    c3.metric("Market Signal", f"{round(weights.get('market_signal', 0) * 100, 1)}%")
+    c4.metric("History", f"{round(weights.get('historical_performance', 0) * 100, 1)}%")
 
-    st.markdown("#### Unit Multipliers In Use")
-    c3, c4, c5, c6 = st.columns(4)
-    c3.metric("Low", f"{float(effective_learning.get('unit_mult_low', 0.92)):.2f}x")
-    c4.metric("Medium", f"{float(effective_learning.get('unit_mult_medium', 1.00)):.2f}x")
-    c5.metric("High", f"{float(effective_learning.get('unit_mult_high', 1.00)):.2f}x")
-    c6.metric("Elite", f"{float(effective_learning.get('unit_mult_elite', 1.05)):.2f}x")
+    st.caption(f"Last learning update: {last_run}")
 
-    st.markdown("#### Self-Learning Sample Status")
-    c7, c8, c9 = st.columns(3)
-    c7.metric("Settled Bets", int(learning_state.get("sample_size", 0)))
-    c8.metric("AI Sample", int(learning_state.get("ai_sample_size", 0)))
-    c9.metric("Overall ROI", f"{float(learning_state.get('overall_roi', 0.0)):.2f}%")
+    st.markdown("#### Category Edge Thresholds")
+    threshold_rows = []
+    for cat, val in thresholds.items():
+        threshold_rows.append({
+            "Category": cat,
+            "Min Edge Required %": round(float(val) * 100.0, 2)
+        })
 
-    notes = learning_state.get("notes", [])
-    if notes:
-        st.markdown("#### Learning Actions")
-        for note in notes:
-            st.markdown(f"- {note}")
+    threshold_df = pd.DataFrame(threshold_rows)
+    if not threshold_df.empty:
+        st.dataframe(threshold_df, use_container_width=True, hide_index=True)
     else:
-        st.caption("No threshold changes were triggered yet. The engine is collecting more settled results.")
+        st.info("No category thresholds available yet.")
 
-    conf_table = learning_state.get("confidence_table", pd.DataFrame())
-    edge_table = learning_state.get("edge_table", pd.DataFrame())
-    market_table = learning_state.get("market_table", pd.DataFrame())
-
-    st.markdown("#### Learning Breakdown Tables")
-
-    if conf_table is not None and not conf_table.empty:
-        st.markdown("**By True Confidence Bucket**")
-        st.dataframe(conf_table, use_container_width=True, hide_index=True)
-
-    if edge_table is not None and not edge_table.empty:
-        st.markdown("**By Edge Bucket**")
-        st.dataframe(edge_table, use_container_width=True, hide_index=True)
-
-    if market_table is not None and not market_table.empty:
-        st.markdown("**By Market Type**")
-        st.dataframe(market_table, use_container_width=True, hide_index=True)
+    st.markdown("#### Play Type Performance / Auto-Filter Status")
+    play_type_df = get_learning_summary_rows()
+    if not play_type_df.empty:
+        st.dataframe(play_type_df, use_container_width=True, hide_index=True)
+    else:
+        st.info("No graded bet history yet. The self-learning engine will activate after enough settled bets.")

@@ -242,8 +242,51 @@ if "manual_results" not in st.session_state:
 if "odds_api_games" not in st.session_state:
     st.session_state["odds_api_games"] = []
 
+if "last_successful_odds_games" not in st.session_state:
+    st.session_state["last_successful_odds_games"] = []
+
 if "odds_api_last_refresh" not in st.session_state:
     st.session_state["odds_api_last_refresh"] = None
+
+if "last_odds_refresh_ok" not in st.session_state:
+    st.session_state["last_odds_refresh_ok"] = False
+
+if "last_refresh_error" not in st.session_state:
+    st.session_state["last_refresh_error"] = ""
+
+if "last_refresh_count" not in st.session_state:
+    st.session_state["last_refresh_count"] = 0
+
+if "last_refresh_time" not in st.session_state:
+    st.session_state["last_refresh_time"] = None
+
+if "last_api_pull_epoch" not in st.session_state:
+    st.session_state["last_api_pull_epoch"] = None
+
+if "api_mode" not in st.session_state:
+    st.session_state["api_mode"] = "idle"
+
+if "api_status_note" not in st.session_state:
+    st.session_state["api_status_note"] = ""
+
+if "daily_api_call_limit" not in st.session_state:
+    st.session_state["daily_api_call_limit"] = 10
+
+if "daily_api_call_count" not in st.session_state:
+    st.session_state["daily_api_call_count"] = 0
+
+if "daily_api_call_date" not in st.session_state:
+    st.session_state["daily_api_call_date"] = datetime.now().strftime("%Y-%m-%d")
+
+# Optional testing note for current quota situation
+if "odds_api_reset_expected" not in st.session_state:
+    st.session_state["odds_api_reset_expected"] = "2026-04-01"
+
+if "sportsdata_cache" not in st.session_state:
+    st.session_state["sportsdata_cache"] = {}
+
+if "sportsdata_last_refresh" not in st.session_state:
+    st.session_state["sportsdata_last_refresh"] = {}
 
 if "api_calls_today" not in st.session_state:
     st.session_state["api_calls_today"] = 0

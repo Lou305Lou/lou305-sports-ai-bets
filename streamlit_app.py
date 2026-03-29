@@ -818,19 +818,6 @@ def american_odds_to_implied_prob(odds):
         return 0.0
 
 
-def safe_float(value, default=0.0):
-    try:
-        if value is None or value == "":
-            return float(default)
-        return float(value)
-    except:
-        return float(default)
-
-
-def clamp(value, low, high):
-    return max(low, min(high, value))
-
-
 def normalize_category_label(category_text):
     raw = str(category_text or "").strip()
     if not raw:

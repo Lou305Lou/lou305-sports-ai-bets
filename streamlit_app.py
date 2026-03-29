@@ -4678,8 +4678,7 @@ elif nav == "AI Slip":
                 }
             )
 
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-# =========================================================
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=# =========================================================
 # BET LOG
 # =========================================================
 elif nav == "Bet Log":
@@ -4883,7 +4882,8 @@ elif nav == "Bet Log":
                 save_bet_log()
 
                 st.success("Manual bet added successfully.")
-                st.rerun()# =========================================================
+                st.rerun()
+# =========================================================
 # ADAPTIVE SETTINGS + SELF-LEARNING STATUS
 # =========================================================
 with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded=False):

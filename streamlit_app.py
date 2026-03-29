@@ -4165,14 +4165,13 @@ def update_logged_bet_result(play_id, result_value):
         if current_play_id != str(play_id).strip() and current_base_id != target_base_id:
             continue
 
-        units = safe_float(bet.get("units", bet.get("stake", 0)), 0)
+        units = safe_float(bet.get("units", bet.get("stake", 0)), 0.0)
         odds = bet.get("odds", "")
 
         st.session_state["bet_log"][i]["result"] = result_value
         st.session_state["bet_log"][i]["profit"] = settle_result_pnl(odds, units, result_value)
         st.session_state["bet_log"][i]["stake"] = units
 
-        # ensure CLV fields always exist
         if "open_odds" not in st.session_state["bet_log"][i]:
             st.session_state["bet_log"][i]["open_odds"] = bet.get("odds")
         if "open_line" not in st.session_state["bet_log"][i]:
@@ -4189,15 +4188,19 @@ def update_logged_bet_result(play_id, result_value):
         open_line = st.session_state["bet_log"][i].get("open_line")
         closing_line = st.session_state["bet_log"][i].get("closing_line")
 
-        if open_line is not None and closing_line is not None:
+        clv_diff = None
+        clv_result = None
+
+        if open_line not in [None, ""] and closing_line not in [None, ""]:
             clv_diff, clv_result = calculate_clv_diff(
                 open_line=open_line,
                 closing_line=closing_line,
                 market=st.session_state["bet_log"][i].get("market", ""),
                 selection=st.session_state["bet_log"][i].get("selection", ""),
             )
-            st.session_state["bet_log"][i]["clv_diff"] = clv_diff
-            st.session_state["bet_log"][i]["clv_result"] = clv_result
+
+        st.session_state["bet_log"][i]["clv_diff"] = clv_diff
+        st.session_state["bet_log"][i]["clv_result"] = clv_result
 
         updated = True
 
@@ -4228,9 +4231,8 @@ def sync_manual_results_into_bet_log():
                 continue
 
             current_result = normalize_result_value(bet.get("result", "Pending"))
-            current_profit = float(bet.get("profit", 0.0) or 0.0)
-
-            units = safe_float(bet.get("units", bet.get("stake", 0)), 0)
+            current_profit = safe_float(bet.get("profit", 0.0), 0.0)
+            units = safe_float(bet.get("units", bet.get("stake", 0)), 0.0)
 
             new_profit = settle_result_pnl(
                 bet.get("odds", ""),
@@ -4254,10 +4256,10 @@ def sync_manual_results_into_bet_log():
             open_line = st.session_state["bet_log"][i].get("open_line")
             closing_line = st.session_state["bet_log"][i].get("closing_line")
 
-            clv_diff = st.session_state["bet_log"][i].get("clv_diff", None)
-            clv_result = st.session_state["bet_log"][i].get("clv_result", None)
+            clv_diff = None
+            clv_result = None
 
-            if open_line is not None and closing_line is not None:
+            if open_line not in [None, ""] and closing_line not in [None, ""]:
                 clv_diff, clv_result = calculate_clv_diff(
                     open_line=open_line,
                     closing_line=closing_line,

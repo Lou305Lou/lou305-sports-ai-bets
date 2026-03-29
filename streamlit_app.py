@@ -4091,6 +4091,34 @@ def update_logged_bet_result(play_id, result_value):
         st.session_state["bet_log"][i]["result"] = result_value
         st.session_state["bet_log"][i]["profit"] = settle_result_pnl(odds, units, result_value)
         st.session_state["bet_log"][i]["stake"] = units
+
+        # ensure CLV fields always exist
+        if "open_odds" not in st.session_state["bet_log"][i]:
+            st.session_state["bet_log"][i]["open_odds"] = bet.get("odds")
+        if "open_line" not in st.session_state["bet_log"][i]:
+            st.session_state["bet_log"][i]["open_line"] = extract_line_from_selection(bet.get("selection", ""))
+        if "closing_odds" not in st.session_state["bet_log"][i]:
+            st.session_state["bet_log"][i]["closing_odds"] = None
+        if "closing_line" not in st.session_state["bet_log"][i]:
+            st.session_state["bet_log"][i]["closing_line"] = None
+        if "clv_diff" not in st.session_state["bet_log"][i]:
+            st.session_state["bet_log"][i]["clv_diff"] = None
+        if "clv_result" not in st.session_state["bet_log"][i]:
+            st.session_state["bet_log"][i]["clv_result"] = None
+
+        open_line = st.session_state["bet_log"][i].get("open_line")
+        closing_line = st.session_state["bet_log"][i].get("closing_line")
+
+        if open_line is not None and closing_line is not None:
+            clv_diff, clv_result = calculate_clv_diff(
+                open_line=open_line,
+                closing_line=closing_line,
+                market=st.session_state["bet_log"][i].get("market", ""),
+                selection=st.session_state["bet_log"][i].get("selection", ""),
+            )
+            st.session_state["bet_log"][i]["clv_diff"] = clv_diff
+            st.session_state["bet_log"][i]["clv_result"] = clv_result
+
         updated = True
 
     if updated:
@@ -4130,10 +4158,44 @@ def sync_manual_results_into_bet_log():
                 normalized_result,
             )
 
-            if current_result != normalized_result or round(current_profit, 2) != round(new_profit, 2):
+            if "open_odds" not in st.session_state["bet_log"][i]:
+                st.session_state["bet_log"][i]["open_odds"] = bet.get("odds")
+            if "open_line" not in st.session_state["bet_log"][i]:
+                st.session_state["bet_log"][i]["open_line"] = extract_line_from_selection(bet.get("selection", ""))
+            if "closing_odds" not in st.session_state["bet_log"][i]:
+                st.session_state["bet_log"][i]["closing_odds"] = None
+            if "closing_line" not in st.session_state["bet_log"][i]:
+                st.session_state["bet_log"][i]["closing_line"] = None
+            if "clv_diff" not in st.session_state["bet_log"][i]:
+                st.session_state["bet_log"][i]["clv_diff"] = None
+            if "clv_result" not in st.session_state["bet_log"][i]:
+                st.session_state["bet_log"][i]["clv_result"] = None
+
+            open_line = st.session_state["bet_log"][i].get("open_line")
+            closing_line = st.session_state["bet_log"][i].get("closing_line")
+
+            clv_diff = st.session_state["bet_log"][i].get("clv_diff", None)
+            clv_result = st.session_state["bet_log"][i].get("clv_result", None)
+
+            if open_line is not None and closing_line is not None:
+                clv_diff, clv_result = calculate_clv_diff(
+                    open_line=open_line,
+                    closing_line=closing_line,
+                    market=bet.get("market", ""),
+                    selection=bet.get("selection", ""),
+                )
+
+            if (
+                current_result != normalized_result
+                or round(current_profit, 2) != round(new_profit, 2)
+                or st.session_state["bet_log"][i].get("clv_diff") != clv_diff
+                or st.session_state["bet_log"][i].get("clv_result") != clv_result
+            ):
                 st.session_state["bet_log"][i]["result"] = normalized_result
                 st.session_state["bet_log"][i]["profit"] = new_profit
                 st.session_state["bet_log"][i]["stake"] = units
+                st.session_state["bet_log"][i]["clv_diff"] = clv_diff
+                st.session_state["bet_log"][i]["clv_result"] = clv_result
                 changed = True
 
     if changed:

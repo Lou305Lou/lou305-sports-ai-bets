@@ -20,122 +20,29 @@ st.set_page_config(page_title="Sports Betting AI Dashboard V34", layout="wide")
 # =========================================================
 BET_LOG_FILE = "bet_log.csv"
 
-def _normalize_category_text(value):
-    if isinstance(value, list):
-        cleaned = []
-        for item in value:
-            label = str(item).strip()
-            if label and label not in cleaned:
-                cleaned.append(label)
-        return " | ".join(cleaned)
+REQUIRED_BET_LOG_COLUMNS = [
+    "bet_id",
+    "date",
+    "sport",
+    "game",
+    "market",
+    "selection",
+    "odds",
+    "line",
+    "stake",
+    "result",
+    "profit",
+    "category",
+    "play_id",
 
-    raw = str(value).strip()
-    if not raw:
-        return ""
-
-    cleaned = []
-    for part in raw.split("|"):
-        label = str(part).strip()
-        if label and label not in cleaned:
-            cleaned.append(label)
-
-    return " | ".join(cleaned)
-
-
-def _merge_duplicate_play_id_rows(df: pd.DataFrame) -> pd.DataFrame:
-    if df is None or df.empty:
-        return pd.DataFrame() if df is None else df.copy()
-
-    working = df.copy()
-
-    if "play_id" not in working.columns:
-        working["play_id"] = ""
-
-    if "log_category" not in working.columns:
-        working["log_category"] = ""
-
-    working["play_id"] = working["play_id"].astype(str).str.strip()
-    working["log_category"] = working["log_category"].apply(_normalize_category_text)
-
-    blank_mask = working["play_id"] == ""
-    blank_rows = working[blank_mask].copy()
-    id_rows = working[~blank_mask].copy()
-
-    if id_rows.empty:
-        return pd.concat([id_rows, blank_rows], ignore_index=True)
-
-    def _base_play_id(pid):
-        pid = str(pid).strip()
-        if "__" in pid:
-            return pid.split("__")[0].strip()
-        return pid
-
-    id_rows["_base_play_id"] = id_rows["play_id"].apply(_base_play_id)
-
-    merged_rows = []
-
-    for _, group in id_rows.groupby("_base_play_id", sort=False):
-        group = group.copy()
-
-        exact_rows = group[~group["play_id"].astype(str).str.contains("__", na=False)].copy()
-        if not exact_rows.empty:
-            base_row = exact_rows.iloc[0].copy()
-        else:
-            base_row = group.iloc[0].copy()
-
-        merged_categories = []
-        for raw_cat in group["log_category"].tolist():
-            for part in str(raw_cat).split("|"):
-                label = part.strip()
-                if label and label not in merged_categories:
-                    merged_categories.append(label)
-
-        base_row["log_category"] = " | ".join(merged_categories)
-
-        if "result" in group.columns:
-            settled_mask = group["result"].astype(str).isin(["Win", "Loss", "Push"])
-            settled_group = group[settled_mask].copy()
-
-            if not settled_group.empty:
-                settled_row = settled_group.iloc[-1]
-                base_row["result"] = settled_row.get("result", base_row.get("result", "Pending"))
-
-        if "profit" in group.columns and "result" in group.columns and "odds" in base_row.index and "units" in base_row.index:
-            result_value = str(base_row.get("result", "Pending")).strip().lower()
-            odds_value = base_row.get("odds", "")
-            units_value = base_row.get("units", 0)
-
-            try:
-                odds_int = int(str(odds_value).replace("+", "").strip())
-                stake = float(units_value)
-
-                if result_value == "win":
-                    if odds_int > 0:
-                        base_row["profit"] = round(stake * (odds_int / 100.0), 2)
-                    else:
-                        base_row["profit"] = round(stake * (100.0 / abs(odds_int)), 2)
-                elif result_value == "loss":
-                    base_row["profit"] = round(-stake, 2)
-                else:
-                    base_row["profit"] = 0.0
-            except Exception:
-                base_row["profit"] = 0.0
-
-        if "timestamp" in group.columns:
-            non_blank_timestamps = group["timestamp"].astype(str).str.strip()
-            non_blank_timestamps = non_blank_timestamps[non_blank_timestamps != ""]
-            if not non_blank_timestamps.empty:
-                base_row["timestamp"] = non_blank_timestamps.iloc[-1]
-
-        if "_base_play_id" in base_row.index:
-            base_row = base_row.drop(labels=["_base_play_id"])
-
-        merged_rows.append(base_row)
-
-    merged_df = pd.DataFrame(merged_rows)
-    cleaned_df = pd.concat([merged_df, blank_rows], ignore_index=True)
-
-    return cleaned_df.reset_index(drop=True)
+    # --- CLV / MARKET TRACKING ---
+    "open_odds",
+    "open_line",
+    "closing_odds",
+    "closing_line",
+    "clv_diff",
+    "clv_result",
+]
 
 
 def load_bet_log():
@@ -145,81 +52,58 @@ def load_bet_log():
         if df is None or df.empty:
             return []
 
-        cleaned_df = _merge_duplicate_play_id_rows(df)
+        # Ensure all required columns exist
+        for col in REQUIRED_BET_LOG_COLUMNS:
+            if col not in df.columns:
+                df[col] = None
 
-        if not cleaned_df.equals(df):
-            cleaned_df.to_csv(BET_LOG_FILE, index=False)
+        return df.to_dict("records")
 
-        return cleaned_df.to_dict("records")
-
-    except FileNotFoundError:
-        return []
-    except Exception:
+    except:
         return []
 
 
-def save_bet_log():
+def save_bet_log(records):
     try:
-        log_rows = st.session_state.get("bet_log", [])
-        df = pd.DataFrame(log_rows)
+        df = pd.DataFrame(records)
 
-        if df.empty:
-            df.to_csv(BET_LOG_FILE, index=False)
-            return
+        for col in REQUIRED_BET_LOG_COLUMNS:
+            if col not in df.columns:
+                df[col] = None
 
-        cleaned_df = _merge_duplicate_play_id_rows(df)
-        cleaned_df.to_csv(BET_LOG_FILE, index=False)
-
-        st.session_state["bet_log"] = cleaned_df.to_dict("records")
-
-    except Exception:
+        df.to_csv(BET_LOG_FILE, index=False)
+    except:
         pass
 
 
-def build_logged_id_set(log_rows):
-    ids = set()
+def calculate_clv(open_line, closing_line, market, selection):
     try:
-        for row in log_rows or []:
-            pid = str(row.get("play_id", "")).strip()
-            if not pid:
-                continue
+        open_line = float(open_line)
+        closing_line = float(closing_line)
 
-            ids.add(pid)
+        market = str(market).lower()
+        selection = str(selection).lower()
 
-            if "__" in pid:
-                ids.add(pid.split("__")[0].strip())
-    except Exception:
-        pass
-    return ids
-# =========================================================
-# API CONFIG
-# =========================================================
-SPORTSDATA_BASES = {
-    "nba": "https://api.sportsdata.io/v3/nba",
-    "nhl": "https://api.sportsdata.io/v3/nhl",
-    "mlb": "https://api.sportsdata.io/v3/mlb",
-}
+        if "over" in selection:
+            diff = closing_line - open_line
+        elif "under" in selection:
+            diff = open_line - closing_line
+        elif "ml" in market or "moneyline" in market:
+            diff = open_line - closing_line
+        else:
+            diff = closing_line - open_line
 
-def get_sportsdata_key():
-    possible_keys = [
-        "SPORTSDATA_API_KEY",
-        "SPORTSDATAIO_API_KEY",
-        "SPORTS_DATA_API_KEY",
-    ]
-    for key_name in possible_keys:
-        try:
-            value = st.secrets.get(key_name, "")
-            if value:
-                return str(value).strip()
-        except:
-            pass
-    return ""
+        if diff > 0:
+            result = "Beat"
+        elif diff < 0:
+            result = "Lost"
+        else:
+            result = "Push"
 
-SPORTSDATA_API_KEY = get_sportsdata_key()
+        return round(diff, 2), result
 
-ODDS_API_KEY = st.secrets.get("ODDS_API_KEY", "")
-ODDS_API_URL = "https://api.the-odds-api.com/v4/sports/basketball_nba/odds"
-ODDS_BOOKMAKERS = "draftkings,fanduel,betmgm,caesars,espnbet,betrivers"
+    except:
+        return None, None
 
 # =========================================================
 # SESSION STATE / LEARNING ENGINE STATE

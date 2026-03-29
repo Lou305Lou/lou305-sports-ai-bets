@@ -1061,98 +1061,6 @@ def get_learning_summary_rows():
             "Filtered": "Yes" if learning_state.get("bad_category_flags", {}).get(play_type, False) else "No",
         })
     return pd.DataFrame(rows) 
-# =========================================================
-# V33.1 LEARNING ACTIVATION ENGINE
-# =========================================================
-
-LEARNING_MIN_SAMPLE = 10
-BAD_PLAYTYPE_THRESHOLD = -0.25   # ROI < -25% → kill
-GOOD_PLAYTYPE_THRESHOLD = 0.10   # ROI > +10% → boost
-
-def get_learning_activation_metrics():
-    df = pd.DataFrame(st.session_state.get("bet_log", []))
-    if df.empty:
-        return {}
-
-    graded = df[df["result"].isin(["Win", "Loss"])].copy()
-    if graded.empty:
-        return {}
-
-    summary = {}
-
-    # -------------------------
-    # PLAY TYPE PERFORMANCE
-    # -------------------------
-    if "play_type" in graded.columns:
-        for play_type, group in graded.groupby("play_type"):
-            bets = len(group)
-            profit = group["profit"].sum()
-            stake = group["stake"].sum() if "stake" in group else bets
-
-            roi = profit / stake if stake > 0 else 0
-
-            summary[play_type] = {
-                "bets": bets,
-                "roi": roi
-            }
-
-    return summary
-
-
-def get_dynamic_edge_threshold(category):
-    learning_state = st.session_state.get("learning_state", {})
-    thresholds = learning_state.get("category_thresholds", {})
-
-    base_threshold = thresholds.get(category, 0.02)  # default 2%
-
-    activation = get_learning_activation_metrics()
-
-    # Adjust threshold based on performance
-    for play_type, stats in activation.items():
-        if stats["bets"] < LEARNING_MIN_SAMPLE:
-            continue
-
-        if stats["roi"] < BAD_PLAYTYPE_THRESHOLD:
-            base_threshold += 0.02  # tighten
-        elif stats["roi"] > GOOD_PLAYTYPE_THRESHOLD:
-            base_threshold -= 0.01  # loosen
-
-    return max(0.01, min(base_threshold, 0.10))
-
-
-def should_block_play_type(play_type):
-    activation = get_learning_activation_metrics()
-
-    stats = activation.get(play_type)
-    if not stats:
-        return False
-
-    if stats["bets"] < LEARNING_MIN_SAMPLE:
-        return False
-
-    return stats["roi"] < BAD_PLAYTYPE_THRESHOLD
-
-
-def apply_v33_learning_filters(play):
-    play_type = str(play.get("play_type", "")).lower()
-    category = play.get("category", "Top Plays")
-
-    # -------------------------
-    # HARD BLOCK (Kill switch)
-    # -------------------------
-    if should_block_play_type(play_type):
-        return False, "Play type underperforming (auto-blocked)"
-
-    # -------------------------
-    # DYNAMIC EDGE FILTER
-    # -------------------------
-    edge = safe_float(play.get("edge", 0), 0) / 100.0
-    min_edge = get_dynamic_edge_threshold(category)
-
-    if edge < min_edge:
-        return False, f"Edge below dynamic threshold ({round(min_edge*100,2)}%)"
-
-    return True, "Passed V33.1 filters"
 
 
 # =========================================================
@@ -3643,6 +3551,108 @@ def build_roi_dashboard(log_df: pd.DataFrame):
 # - get_learning_activation_metrics()
 # - apply_v33_learning_filters()
 # - apply_learning_engine_to_df()
+# =========================================================
+# =========================================================
+# EFFECTIVE THRESHOLDS + UNIT SCALING HELPERS
+# =========================================================
+def get_effective_min_active_edge():
+    return round(get_dynamic_edge_threshold("Top Plays") * 100.0, 2)
+
+
+def get_effective_min_watch_edge():
+    active_edge = get_effective_min_active_edge()
+    return round(max(MIN_WATCH_EDGE, active_edge - 1.75), 2)
+
+
+def get_effective_min_active_true_conf():
+    return float(MIN_ACTIVE_TRUE_CONF)
+
+
+def get_effective_min_watch_true_conf():
+    return float(MIN_WATCH_TRUE_CONF)
+
+
+def classify_watch_tier(row):
+    edge = safe_float(row.get("edge", 0), 0.0)
+    tc = safe_float(row.get("true_confidence", 0), 0.0)
+    books = safe_int(row.get("books_seen", 0), 0)
+
+    near_active_edge = max(get_effective_min_active_edge() - 0.75, get_effective_min_watch_edge())
+    near_active_conf = max(get_effective_min_active_true_conf() - 4.0, get_effective_min_watch_true_conf())
+
+    if edge >= near_active_edge and tc >= near_active_conf and books >= 2:
+        return "Near Active"
+
+    if edge >= get_effective_min_watch_edge() + 0.5 and tc >= get_effective_min_watch_true_conf() + 3.0:
+        return "Monitor"
+
+    return "Weak Watch"
+
+
+def _confidence_unit_multiplier(true_conf):
+    tc = safe_float(true_conf, 0.0)
+
+    if tc >= 75:
+        return 1.05
+    if tc >= 70:
+        return 1.00
+    if tc >= 65:
+        return 1.00
+    return 0.92
+
+
+def scale_single_units(row):
+    edge = safe_float(row.get("edge", 0), 0.0)
+    tc = safe_float(row.get("true_confidence", 0), 0.0)
+
+    base_units = 0.40
+
+    if tc >= 78 and edge >= 5.5:
+        base_units = 1.25
+    elif tc >= 74 and edge >= 5.0:
+        base_units = 1.00
+    elif tc >= 70 and edge >= 4.5:
+        base_units = 0.75
+    elif tc >= 65 and edge >= 4.0:
+        base_units = 0.50
+
+    base_units *= _confidence_unit_multiplier(tc)
+
+    return round(clamp(base_units, SINGLE_UNIT_MIN, SINGLE_UNIT_MAX), 2)
+
+
+def scale_watch_units(row):
+    edge = safe_float(row.get("edge", 0), 0.0)
+    tc = safe_float(row.get("true_confidence", 0), 0.0)
+
+    base_units = WATCH_UNIT_MIN
+
+    if tc >= 68 and edge >= 3.5:
+        base_units = 0.50
+    elif tc >= 62 and edge >= 2.75:
+        base_units = 0.35
+    else:
+        base_units = WATCH_UNIT_MIN
+
+    return round(clamp(base_units, WATCH_UNIT_MIN, WATCH_UNIT_MAX), 2)
+
+
+def scale_parlay_units(parlay):
+    if not parlay:
+        return 0.0
+
+    leg_count = safe_int(parlay.get("leg_count", 2), 2)
+    avg_true_conf = safe_float(parlay.get("avg_true_conf", 0), 0.0)
+    penalty = safe_float(parlay.get("total_penalty", 1.0), 1.0)
+    approval_type = str(parlay.get("approval_type", "")).strip()
+
+    if approval_type == "Sharp Approved" and avg_true_conf >= 70 and penalty <= SHARP_PARLAY_MAX_PENALTY:
+        return round(PARLAY_UNIT_SHARP, 2)
+
+    if leg_count <= 2:
+        return round(PARLAY_UNIT_FALLBACK_2, 2)
+
+    return round(PARLAY_UNIT_FALLBACK_3, 2)
 # =========================================================
 # PORTFOLIO LAYER
 # =========================================================

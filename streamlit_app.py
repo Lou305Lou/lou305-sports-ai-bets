@@ -4470,87 +4470,91 @@ elif nav == "Bet Log":
         else:
             st.info("No selectable bets found.")
 
-    # ================================
-    # MANUAL BET ENTRY
-    # ================================
-    st.markdown('<div class="bet-form-wrap">', unsafe_allow_html=True)
+  # =========================================================
+# MANUAL BET ENTRY (CLV READY)
+# =========================================================
+st.subheader("➕ Add Manual Bet")
 
-    with st.form("manual_bet", clear_on_submit=True):
-        c1, c2 = st.columns(2)
+with st.expander("Add Manual Bet Entry", expanded=False):
+    col1, col2 = st.columns(2)
 
-        with c1:
-            game = st.text_input("Game")
-            market = st.selectbox("Market", ["moneyline", "spread", "total"])
-            units = st.number_input("Units", min_value=0.0, max_value=10.0, value=0.5, step=0.25)
+    with col1:
+        game_input = st.text_input("Game (e.g. LAL @ BOS)")
+        market_input = st.selectbox(
+            "Market",
+            ["moneyline", "spread", "total", "prop"],
+            index=0,
+        )
+        selection_input = st.text_input("Selection (e.g. Lakers -3.5 or Over 221.5)")
 
-        with c2:
-            selection = st.text_input("Selection")
-            odds = st.text_input("Odds")
-            confidence = st.selectbox("Confidence", ["Low", "Medium", "High", "Elite"])
+    with col2:
+        odds_input = st.text_input("Odds (American, e.g. -110 or +150)")
+        units_input = st.number_input("Units", min_value=0.1, max_value=10.0, value=1.0, step=0.1)
+        confidence_input = st.selectbox("Confidence", ["Low", "Medium", "High"], index=1)
 
-        submit = st.form_submit_button("Add Bet")
+    if st.button("Add Bet"):
+        game_clean = str(game_input).strip()
+        market_clean = str(market_input).strip()
+        selection_clean = str(selection_input).strip()
+        odds_clean = str(odds_input).strip()
+        units = float(units_input)
+        confidence = str(confidence_input)
 
-        if submit:
-            game_clean = str(game).strip()
-            market_clean = str(market).strip().lower()
-            selection_clean = str(selection).strip()
-            odds_clean = str(odds).strip()
+        if not game_clean or not selection_clean or not odds_clean:
+            st.warning("Please fill in Game, Selection, and Odds.")
+        else:
+            new_play_id = hashlib.md5(
+                f"{game_clean}|{selection_clean}|{time.time()}".encode()
+            ).hexdigest()
 
-            if not game_clean or not selection_clean or not odds_clean:
-                st.warning("Game, selection, and odds are required.")
-            elif american_to_int(odds_clean) is None:
-                st.warning("Odds must be valid American odds like -110 or +125.")
-            else:
-                new_play_id = build_play_id(
-                    {
-                        "game": game_clean,
-                        "market": market_clean,
-                        "selection": selection_clean,
-                        "odds": odds_clean,
-                    }
-                )
+            # Extract line from selection
+            def extract_line(selection_text):
+                try:
+                    match = re.search(r'([+-]?\d+(?:\.\d+)?)', selection_text)
+                    if match:
+                        return float(match.group(1))
+                except:
+                    pass
+                return None
 
-                duplicate_family_found = False
-                for existing_row in st.session_state.get("bet_log", []):
-                    existing_pid = str(existing_row.get("play_id", "")).strip()
-                    if not existing_pid:
-                        continue
+            open_line_val = extract_line(selection_clean)
 
-                    if get_base_play_id(existing_pid) == new_play_id or existing_pid == new_play_id:
-                        duplicate_family_found = True
-                        break
+            new = {
+                "play_id": new_play_id,
+                "game": game_clean,
+                "market": market_clean,
+                "selection": selection_clean,
+                "odds": odds_clean,
+                "implied_prob": None,
+                "true_prob": None,
+                "units": round(float(units), 2),
+                "stake": round(float(units), 2),
+                "confidence": confidence,
+                "true_confidence": None,
+                "edge": None,
+                "books_seen": None,
+                "consensus": None,
+                "result": "Pending",
+                "profit": 0.0,
+                "mode": TEST_MODE,
+                "log_category": "Manual",
+                "timestamp": datetime.now().isoformat(),
 
-                if duplicate_family_found:
-                    st.warning("That bet already exists in the log or is already part of the same play family.")
-                else:
-                    new = {
-                        "play_id": new_play_id,
-                        "game": game_clean,
-                        "market": market_clean,
-                        "selection": selection_clean,
-                        "odds": odds_clean,
-                        "implied_prob": None,
-                        "true_prob": None,
-                        "units": round(float(units), 2),
-                        "confidence": confidence,
-                        "true_confidence": None,
-                        "edge": None,
-                        "books_seen": None,
-                        "consensus": None,
-                        "result": "Pending",
-                        "profit": 0.0,
-                        "mode": TEST_MODE,
-                        "log_category": "Manual",
-                        "timestamp": datetime.now().isoformat(),
-                    }
+                # -----------------------------
+                # CLV / MARKET TRACKING FIELDS
+                # -----------------------------
+                "open_odds": odds_clean,
+                "open_line": open_line_val,
+                "closing_odds": None,
+                "closing_line": None,
+                "clv_diff": None,
+                "clv_result": None,
+            }
 
-                    st.session_state["bet_log"].append(new)
-                    save_bet_log()
-                    st.success("Bet added.")
-                    st.rerun()
+            st.session_state["bet_log"].append(new)
+            save_bet_log()
 
-    st.markdown("</div>", unsafe_allow_html=True)
-
+            st.success("Manual bet added successfully.")
 # =========================================================
 # ADAPTIVE SETTINGS + SELF-LEARNING STATUS
 # =========================================================

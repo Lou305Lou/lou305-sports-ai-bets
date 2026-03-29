@@ -39,6 +39,15 @@ REQUIRED_BET_LOG_COLUMNS = [
     "log_category",
     "timestamp",
 
+    # learning / compatibility
+    "implied_prob",
+    "true_prob",
+    "implied_probability",
+    "true_probability",
+    "play_type",
+    "primary_category",
+    "category",
+
     # -----------------------------
     # CLV / MARKET TRACKING FIELDS
     # -----------------------------
@@ -63,12 +72,72 @@ def load_bet_log():
             if col not in df.columns:
                 df[col] = None
 
-        # Normalize values
-        df = df.fillna("")
+        # Normalize core text fields
+        for col in ["play_id", "game", "market", "selection", "odds", "log_category", "result"]:
+            if col in df.columns:
+                df[col] = df[col].astype(str).fillna("").str.strip()
+
+        # Clean result labels
+        if "result" in df.columns:
+            df["result"] = df["result"].replace(
+                {
+                    "win": "Win",
+                    "loss": "Loss",
+                    "push": "Push",
+                    "pending": "Pending",
+                    "": "Pending",
+                    "nan": "Pending",
+                    "None": "Pending",
+                }
+            )
+            df["result"] = df["result"].apply(
+                lambda x: x if x in ["Pending", "Win", "Loss", "Push"] else "Pending"
+            )
+
+        # Numeric cleanup
+        numeric_cols = [
+            "units",
+            "stake",
+            "true_confidence",
+            "edge",
+            "books_seen",
+            "profit",
+            "implied_prob",
+            "true_prob",
+            "implied_probability",
+            "true_probability",
+            "open_line",
+            "closing_line",
+            "clv_diff",
+        ]
+        for col in numeric_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+
+        # Fill text blanks only after numeric conversion
+        text_cols = [c for c in df.columns if c not in numeric_cols]
+        for col in text_cols:
+            df[col] = df[col].fillna("")
+
+        # Backfill stake from units if needed
+        if "stake" in df.columns and "units" in df.columns:
+            df["stake"] = df["stake"].fillna(df["units"])
+
+        # Deduplicate by play_id for non-blank IDs
+        if "play_id" in df.columns:
+            df["play_id"] = df["play_id"].astype(str).str.strip()
+            non_blank_ids = df["play_id"] != ""
+
+            df_with_ids = df[non_blank_ids].drop_duplicates(
+                subset=["play_id"],
+                keep="first",
+            )
+            df_without_ids = df[~non_blank_ids]
+            df = pd.concat([df_with_ids, df_without_ids], ignore_index=True)
 
         return df.to_dict("records")
 
-    except:
+    except Exception:
         return []
 
 
@@ -79,23 +148,88 @@ def save_bet_log(records=None):
 
         df = pd.DataFrame(records)
 
+        if df is None or df.empty:
+            df = pd.DataFrame(columns=REQUIRED_BET_LOG_COLUMNS)
+
         # Ensure all required columns exist
         for col in REQUIRED_BET_LOG_COLUMNS:
             if col not in df.columns:
                 df[col] = None
+
+        # Normalize text fields
+        for col in ["play_id", "game", "market", "selection", "odds", "log_category", "result"]:
+            if col in df.columns:
+                df[col] = df[col].astype(str).fillna("").str.strip()
+
+        # Normalize result values
+        if "result" in df.columns:
+            df["result"] = df["result"].replace(
+                {
+                    "win": "Win",
+                    "loss": "Loss",
+                    "push": "Push",
+                    "pending": "Pending",
+                    "": "Pending",
+                    "nan": "Pending",
+                    "None": "Pending",
+                }
+            )
+            df["result"] = df["result"].apply(
+                lambda x: x if x in ["Pending", "Win", "Loss", "Push"] else "Pending"
+            )
+
+        # Numeric cleanup
+        numeric_cols = [
+            "units",
+            "stake",
+            "true_confidence",
+            "edge",
+            "books_seen",
+            "profit",
+            "implied_prob",
+            "true_prob",
+            "implied_probability",
+            "true_probability",
+            "open_line",
+            "closing_line",
+            "clv_diff",
+        ]
+        for col in numeric_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+
+        # Backfill stake from units if missing
+        if "stake" in df.columns and "units" in df.columns:
+            df["stake"] = df["stake"].fillna(df["units"])
+
+        # De-duplicate saved rows by play_id
+        if "play_id" in df.columns:
+            df["play_id"] = df["play_id"].astype(str).str.strip()
+            non_blank_ids = df["play_id"] != ""
+
+            df_with_ids = df[non_blank_ids].drop_duplicates(
+                subset=["play_id"],
+                keep="first",
+            )
+            df_without_ids = df[~non_blank_ids]
+            df = pd.concat([df_with_ids, df_without_ids], ignore_index=True)
+
+        # Final column order
+        ordered_cols = REQUIRED_BET_LOG_COLUMNS + [c for c in df.columns if c not in REQUIRED_BET_LOG_COLUMNS]
+        df = df[ordered_cols]
 
         df.to_csv(BET_LOG_FILE, index=False)
 
         # Sync back into session
         st.session_state["bet_log"] = df.to_dict("records")
 
-    except:
+    except Exception:
         pass
 
 
 def calculate_clv_diff(open_line, closing_line, market, selection):
     try:
-        if open_line is None or closing_line is None:
+        if open_line in [None, ""] or closing_line in [None, ""]:
             return None, None
 
         open_line = float(open_line)
@@ -129,10 +263,8 @@ def calculate_clv_diff(open_line, closing_line, market, selection):
 
         return diff, result
 
-    except:
+    except Exception:
         return None, None
-
-
 # =========================================================
 # LEGACY COMPATIBILITY HELPERS (DO NOT REMOVE)
 # =========================================================

@@ -1525,16 +1525,25 @@ def api_status_label():
 
     if mode == "live":
         return "LIVE", "#10b981", "#ecfdf5", "#065f46"
+
     if mode == "cached":
         return "CACHED", "#0ea5e9", "#eff6ff", "#075985"
+
     if mode == "daily_limit":
         return "DAILY LIMIT", "#7c3aed", "#f5f3ff", "#5b21b6"
+
+    if mode == "waiting_reset":
+        return "WAITING RESET", "#f97316", "#fff7ed", "#9a3412"
+
     if not ODDS_API_KEY:
         return "NO KEY", "#f59e0b", "#fffbeb", "#92400e"
+
     if "401" in err or "unauthorized" in err:
         return "KEY ERROR", "#ef4444", "#fef2f2", "#991b1b"
+
     if "429" in err or "quota" in err or "usage" in err or "credits" in err or "out_of_usage_credits" in err:
-        return "LIMIT HIT", "#f97316", "#fff7ed", "#9a3412"
+        return "WAITING RESET", "#f97316", "#fff7ed", "#9a3412"
+
     if err:
         return "OFFLINE", "#64748b", "#f8fafc", "#334155"
 
@@ -1575,7 +1584,10 @@ def fetch_live_nba_odds(force=False):
         st.session_state["last_odds_refresh_ok"] = bool(cached_games)
         st.session_state["last_refresh_count"] = len(cached_games) if cached_games else 0
         st.session_state["api_mode"] = "daily_limit"
-        st.session_state["api_status_note"] = f"Daily live-odds limit reached ({calls_used}/{daily_limit})."
+        st.session_state["api_status_note"] = (
+            f"Odds API unavailable / waiting for reset. Daily live-odds limit reached "
+            f"({calls_used}/{daily_limit})."
+        )
 
         if cached_games:
             st.session_state["odds_api_games"] = cached_games
@@ -1583,7 +1595,7 @@ def fetch_live_nba_odds(force=False):
             return cached_games
 
         st.session_state["odds_api_games"] = []
-        st.session_state["last_refresh_error"] = "Daily live-odds limit reached and no cached odds are available."
+        st.session_state["last_refresh_error"] = "Odds API unavailable / waiting for reset."
         return []
 
     params = {
@@ -1614,7 +1626,10 @@ def fetch_live_nba_odds(force=False):
         st.session_state["last_refresh_time"] = pd.Timestamp.now().strftime("%Y-%m-%d %I:%M:%S %p")
         st.session_state["last_api_pull_epoch"] = time.time()
         st.session_state["api_mode"] = "live"
-        st.session_state["api_status_note"] = f"Live odds loaded successfully. Calls used today: {calls_used}/{daily_limit} ({calls_remaining} remaining)."
+        st.session_state["api_status_note"] = (
+            f"Live odds loaded successfully. Calls used today: "
+            f"{calls_used}/{daily_limit} ({calls_remaining} remaining)."
+        )
         return data
 
     except requests.exceptions.HTTPError as e:
@@ -1622,10 +1637,20 @@ def fetch_live_nba_odds(force=False):
 
         if status_code == 401:
             friendly_error = "401 Unauthorized — API key invalid, expired, or wrong."
+            new_mode = "fallback"
+            new_note = "Your Odds API key is not being accepted right now."
         elif status_code == 429:
-            friendly_error = "429 Rate limit / quota reached."
+            friendly_error = "Odds API unavailable / waiting for reset."
+            new_mode = "waiting_reset"
+            reset_date = str(st.session_state.get("odds_api_reset_expected", "")).strip()
+            if reset_date:
+                new_note = f"Odds API unavailable / waiting for reset. Expected reset around {reset_date}."
+            else:
+                new_note = "Odds API unavailable / waiting for reset."
         else:
             friendly_error = f"HTTP error: {e}"
+            new_mode = "fallback"
+            new_note = "Live refresh failed."
 
         st.session_state["last_odds_refresh_ok"] = False
         st.session_state["last_refresh_error"] = friendly_error
@@ -1633,29 +1658,53 @@ def fetch_live_nba_odds(force=False):
 
         if cached_games:
             st.session_state["odds_api_games"] = cached_games
-            st.session_state["api_mode"] = "cached"
-            st.session_state["api_status_note"] = "Live refresh failed. Using cached odds."
+            st.session_state["api_mode"] = "cached" if new_mode != "waiting_reset" else "waiting_reset"
+            st.session_state["api_status_note"] = f"{new_note} Using cached odds."
             return cached_games
 
         st.session_state["odds_api_games"] = []
-        st.session_state["api_mode"] = "fallback"
-        st.session_state["api_status_note"] = "Live refresh failed and no cache is available."
+        st.session_state["api_mode"] = new_mode
+        st.session_state["api_status_note"] = new_note
         return []
 
     except Exception as e:
+        raw_error = str(e)
+        lowered = raw_error.lower()
+
+        waiting_reset_error = (
+            "429" in lowered
+            or "quota" in lowered
+            or "usage" in lowered
+            or "credits" in lowered
+            or "out_of_usage_credits" in lowered
+        )
+
+        if waiting_reset_error:
+            friendly_error = "Odds API unavailable / waiting for reset."
+            new_mode = "waiting_reset"
+            reset_date = str(st.session_state.get("odds_api_reset_expected", "")).strip()
+            if reset_date:
+                new_note = f"Odds API unavailable / waiting for reset. Expected reset around {reset_date}."
+            else:
+                new_note = "Odds API unavailable / waiting for reset."
+        else:
+            friendly_error = raw_error
+            new_mode = "fallback"
+            new_note = "Refresh failed."
+
         st.session_state["last_odds_refresh_ok"] = False
-        st.session_state["last_refresh_error"] = str(e)
+        st.session_state["last_refresh_error"] = friendly_error
         st.session_state["last_refresh_count"] = 0
 
         if cached_games:
             st.session_state["odds_api_games"] = cached_games
-            st.session_state["api_mode"] = "cached"
-            st.session_state["api_status_note"] = "Refresh failed. Using cached odds."
+            st.session_state["api_mode"] = "cached" if new_mode != "waiting_reset" else "waiting_reset"
+            st.session_state["api_status_note"] = f"{new_note} Using cached odds."
             return cached_games
 
         st.session_state["odds_api_games"] = []
-        st.session_state["api_mode"] = "fallback"
-        st.session_state["api_status_note"] = "Refresh failed and no cached odds are available."
+        st.session_state["api_mode"] = new_mode
+        st.session_state["api_status_note"] = new_note
         return []
 
 
@@ -1680,6 +1729,10 @@ if st.sidebar.button("🔄 Refresh Live Odds"):
                 st.info(f"Daily limit reached. Using {len(data)} cached game(s).")
             elif current_mode == "cached" and len(data) > 0:
                 st.warning(f"Using {len(data)} cached game(s).")
+            elif current_mode == "waiting_reset" and len(data) > 0:
+                st.warning(f"Odds API waiting for reset. Using {len(data)} cached game(s).")
+            elif current_mode == "waiting_reset":
+                st.warning("Odds API unavailable / waiting for reset.")
             else:
                 st.error("Refresh failed.")
 
@@ -1721,11 +1774,10 @@ err = st.session_state.get("last_refresh_error", "")
 if err:
     if "401" in err.lower() or "unauthorized" in err.lower():
         st.sidebar.warning("Your Odds API key is not being accepted right now.")
-    elif "429" in err.lower() or "quota" in err.lower() or "usage" in err.lower() or "credits" in err.lower():
-        st.sidebar.warning("Your Odds API usage limit appears to be reached.")
+    elif "429" in err.lower() or "quota" in err.lower() or "usage" in err.lower() or "credits" in err.lower() or "waiting for reset" in err.lower():
+        st.sidebar.warning("Odds API unavailable / waiting for reset.")
     else:
         st.sidebar.caption(f"Error: {err}")
-
 # =========================================================
 # SMART DECISION LAYER
 # =========================================================

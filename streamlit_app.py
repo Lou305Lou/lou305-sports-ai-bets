@@ -958,7 +958,7 @@ def market_family(market):
     return "other"
 
 # =========================================================
-# SELF-LEARNING ENGINE HELPERS (V33 ON TOP OF V34)
+# SELF-LEARNING ENGINE HELPERS (V33.2 ON TOP OF V34)
 # =========================================================
 def american_odds_to_implied_prob(odds):
     try:
@@ -979,8 +979,7 @@ def normalize_category_label(category_text):
     if not parts:
         return "Uncategorized"
 
-    # prioritize major categories in stable order
-    priority = ["Top Plays", "AI Picks", "AI Parlays", "Watchlist"]
+    priority = ["Top Plays", "AI Picks", "AI Parlays", "Watchlist", "Manual"]
     for label in priority:
         if label in parts:
             return label
@@ -1015,10 +1014,27 @@ def classify_play_type(row):
     return "other"
 
 
+def safe_clv_score(row):
+    """
+    Convert CLV result + diff into a controlled score for learning.
+    Positive = model likely beat market
+    Negative = model likely lost to market
+    """
+    clv_result = str(row.get("clv_result", "")).strip().lower()
+    clv_diff = safe_float(row.get("clv_diff", 0.0), 0.0)
+
+    if clv_result == "beat":
+        return clamp(clv_diff / 5.0, 0.0, 1.0)
+    if clv_result == "lost":
+        return clamp(-abs(clv_diff) / 5.0, -1.0, 0.0)
+    return 0.0
+
+
 def compute_true_probability(row):
     """
     Controlled true probability estimate.
-    This is intentionally conservative for live testing.
+    V33.2 adds a SMALL CLV-aware adjustment.
+    This remains conservative for live testing.
     """
     implied_prob = american_odds_to_implied_prob(row.get("odds", 0))
 
@@ -1028,6 +1044,7 @@ def compute_true_probability(row):
     model_market = safe_float(row.get("model_market", 0.50), 0.50)
     model_history = safe_float(row.get("model_history", 0.50), 0.50)
     multi_ai_score = safe_float(row.get("multi_ai_score", row.get("score", 50)), 50)
+    clv_signal = safe_clv_score(row)
 
     weights = st.session_state["learning_state"]["weights"]
 
@@ -1035,13 +1052,9 @@ def compute_true_probability(row):
     market_component = clamp(model_market, 0.01, 0.99)
     history_component = clamp(model_history, 0.01, 0.99)
 
-    # risk works inversely: lower risk = stronger quality
     risk_quality = 1.0 - clamp(model_risk, 0.0, 1.0)
-
-    # multi_ai_score assumed on 0-100 scale if present
     matchup_quality = clamp(multi_ai_score / 100.0, 0.01, 0.99)
 
-    # price edge should nudge, not dominate
     price_nudge = clamp(implied_prob + (price_edge * 0.25), 0.01, 0.99)
 
     weighted_prob = (
@@ -1052,8 +1065,11 @@ def compute_true_probability(row):
         history_component * weights["historical_performance"]
     )
 
-    # controlled blend: keep close to market to avoid overfitting early
+    # very small CLV nudge only after base probability is formed
+    clv_nudge = clv_signal * 0.015
+
     true_probability = (weighted_prob * 0.55) + (implied_prob * 0.45)
+    true_probability = true_probability + clv_nudge
 
     return clamp(true_probability, 0.01, 0.99)
 
@@ -1083,8 +1099,8 @@ def should_allow_play(row):
     edge = safe_float(row.get("edge", 0.0), 0.0)
 
     category_threshold = learning_state["category_thresholds"].get(category, 0.03)
-
     bad_flags = learning_state.get("bad_category_flags", {})
+
     if bad_flags.get(play_type, False):
         return False, f"Filtered by learning engine: {play_type} underperforming"
 
@@ -1130,7 +1146,6 @@ def update_learning_from_results():
     if graded.empty:
         return
 
-    # enrich missing fields safely
     enriched_rows = []
     for _, row in graded.iterrows():
         enriched_rows.append(enrich_play_with_learning_fields(row.to_dict()))
@@ -1139,22 +1154,43 @@ def update_learning_from_results():
     if "stake" not in graded.columns:
         graded["stake"] = 1.0
     graded["stake"] = graded["stake"].apply(lambda x: safe_float(x, 1.0))
+
     graded["profit"] = graded.apply(
         lambda r: calculate_bet_profit(r.get("odds", 0), r.get("stake", 1.0), r.get("result", "")),
         axis=1
     )
 
+    if "clv_diff" not in graded.columns:
+        graded["clv_diff"] = 0.0
+    if "clv_result" not in graded.columns:
+        graded["clv_result"] = ""
+
+    graded["clv_diff"] = graded["clv_diff"].apply(lambda x: safe_float(x, 0.0))
+    graded["clv_result"] = graded["clv_result"].astype(str).str.strip()
+    graded["clv_score"] = graded.apply(safe_clv_score, axis=1)
+
     learning_state = st.session_state["learning_state"]
     min_samples = safe_float(learning_state.get("category_min_samples", 8), 8)
 
+    # -----------------------------------------------------
+    # PLAY TYPE STATS
+    # -----------------------------------------------------
     play_type_stats = {}
+
     for play_type, group in graded.groupby("play_type"):
         bets = len(group)
         wins = int((group["result"] == "win").sum())
         losses = int((group["result"] == "loss").sum())
         pushes = int((group["result"] == "push").sum())
         profit = round(group["profit"].sum(), 2)
-        roi = round(profit / max(group["stake"].sum(), 1.0), 4)
+        stake_sum = max(group["stake"].sum(), 1.0)
+        roi = round(profit / stake_sum, 4)
+
+        beat_clv = int((group["clv_result"].astype(str).str.lower() == "beat").sum())
+        lost_clv = int((group["clv_result"].astype(str).str.lower() == "lost").sum())
+        push_clv = int((group["clv_result"].astype(str).str.lower() == "push").sum())
+        avg_clv = round(group["clv_diff"].mean(), 3) if len(group) > 0 else 0.0
+        avg_clv_score = round(group["clv_score"].mean(), 4) if len(group) > 0 else 0.0
 
         play_type_stats[play_type] = {
             "bets": bets,
@@ -1163,30 +1199,41 @@ def update_learning_from_results():
             "pushes": pushes,
             "profit": profit,
             "roi": roi,
+            "beat_clv": beat_clv,
+            "lost_clv": lost_clv,
+            "push_clv": push_clv,
+            "avg_clv": avg_clv,
+            "avg_clv_score": avg_clv_score,
         }
 
     learning_state["play_type_stats"] = play_type_stats
 
-    # controlled auto-filtering
+    # -----------------------------------------------------
+    # AUTO-FILTERING
+    # -----------------------------------------------------
     bad_flags = {}
     for play_type, stats in play_type_stats.items():
         bets = stats["bets"]
         roi = stats["roi"]
+        avg_clv_score = stats.get("avg_clv_score", 0.0)
 
-        # controlled filter logic
-        if bets >= min_samples and roi <= -0.12:
+        if bets >= min_samples and (roi <= -0.12 or (roi <= -0.06 and avg_clv_score < -0.15)):
             bad_flags[play_type] = True
         else:
             bad_flags[play_type] = False
 
     learning_state["bad_category_flags"] = bad_flags
 
-    # controlled threshold adjustment by category
+    # -----------------------------------------------------
+    # CATEGORY THRESHOLDS
+    # -----------------------------------------------------
     updated_thresholds = dict(learning_state.get("category_thresholds", {}))
+
     for category, group in graded.groupby("primary_category"):
         bets = len(group)
         total_stake = max(group["stake"].sum(), 1.0)
         roi = group["profit"].sum() / total_stake
+        avg_clv_score = group["clv_score"].mean() if len(group) > 0 else 0.0
 
         current_threshold = updated_thresholds.get(category, 0.03)
 
@@ -1196,17 +1243,27 @@ def update_learning_from_results():
             elif roi > 0.08:
                 current_threshold -= 0.003
 
+            # CLV-specific tightening/loosening
+            if avg_clv_score < -0.12:
+                current_threshold += 0.003
+            elif avg_clv_score > 0.12:
+                current_threshold -= 0.002
+
         updated_thresholds[category] = round(clamp(current_threshold, 0.015, 0.08), 4)
 
     learning_state["category_thresholds"] = updated_thresholds
 
-    # controlled weight adjustment
+    # -----------------------------------------------------
+    # WEIGHT ADJUSTMENT
+    # -----------------------------------------------------
     wins = graded[graded["result"] == "win"]
     losses = graded[graded["result"] == "loss"]
 
     if not wins.empty and not losses.empty:
         win_edge = wins["edge"].mean()
         loss_edge = losses["edge"].mean()
+        win_clv_score = wins["clv_score"].mean() if "clv_score" in wins.columns else 0.0
+        loss_clv_score = losses["clv_score"].mean() if "clv_score" in losses.columns else 0.0
 
         weights = dict(learning_state.get("weights", {}))
 
@@ -1214,6 +1271,11 @@ def update_learning_from_results():
             weights["true_probability"] = clamp(weights["true_probability"] + 0.01, 0.22, 0.38)
             weights["price_edge"] = clamp(weights["price_edge"] + 0.005, 0.18, 0.32)
             weights["market_signal"] = clamp(weights["market_signal"] - 0.005, 0.10, 0.22)
+
+        if win_clv_score > loss_clv_score:
+            weights["market_signal"] = clamp(weights["market_signal"] + 0.006, 0.10, 0.24)
+            weights["historical_performance"] = clamp(weights["historical_performance"] + 0.004, 0.10, 0.24)
+            weights["matchup_quality"] = clamp(weights["matchup_quality"] - 0.004, 0.10, 0.22)
 
         total = sum(weights.values())
         if total > 0:
@@ -1239,10 +1301,13 @@ def get_learning_summary_rows():
             "Losses": info.get("losses", 0),
             "Pushes": info.get("pushes", 0),
             "Profit": round(info.get("profit", 0.0), 2),
-            "ROI": round(info.get("roi", 0.0) * 100, 2),
+            "ROI %": round(info.get("roi", 0.0) * 100, 2),
+            "Beat CLV": info.get("beat_clv", 0),
+            "Lost CLV": info.get("lost_clv", 0),
+            "Avg CLV": round(info.get("avg_clv", 0.0), 2),
             "Filtered": "Yes" if learning_state.get("bad_category_flags", {}).get(play_type, False) else "No",
         })
-    return pd.DataFrame(rows) 
+    return pd.DataFrame(rows)
 
 
 # =========================================================
@@ -4818,8 +4883,7 @@ elif nav == "Bet Log":
                 save_bet_log()
 
                 st.success("Manual bet added successfully.")
-                st.rerun()
-# =========================================================
+                st.rerun()# =========================================================
 # ADAPTIVE SETTINGS + SELF-LEARNING STATUS
 # =========================================================
 with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded=False):
@@ -4860,3 +4924,10 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
         st.dataframe(play_type_df, use_container_width=True, hide_index=True)
     else:
         st.info("No graded bet history yet. The self-learning engine will activate after enough settled bets.")
+
+    st.markdown("#### CLV Learning Notes")
+    st.caption(
+        "V33.2 now uses CLV as a secondary validation signal. "
+        "If a play type keeps losing both money and closing line value, "
+        "the engine tightens thresholds faster and can auto-filter that play type sooner."
+    )

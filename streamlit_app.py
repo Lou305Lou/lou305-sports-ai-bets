@@ -3955,8 +3955,37 @@ def build_ai_portfolio(best_single, chosen_parlay, parlay_candidates):
 # =========================================================
 # DATA PREP (CRITICAL FIX)
 # =========================================================
+loaded_bet_log = load_bet_log()
+
 if "bet_log" not in st.session_state or not st.session_state["bet_log"]:
-    st.session_state["bet_log"] = load_bet_log()
+    st.session_state["bet_log"] = loaded_bet_log
+else:
+    # Re-normalize whatever is already in session through the same persistence layer
+    existing_df = pd.DataFrame(st.session_state.get("bet_log", []))
+
+    if existing_df is None or existing_df.empty:
+        st.session_state["bet_log"] = loaded_bet_log
+    else:
+        for col in REQUIRED_BET_LOG_COLUMNS:
+            if col not in existing_df.columns:
+                existing_df[col] = None
+
+        existing_df = _merge_duplicate_play_id_rows(existing_df)
+        st.session_state["bet_log"] = existing_df.to_dict("records")
+
+# Final cleanup pass to guarantee duplicate-safe in-memory state
+bet_log_df = pd.DataFrame(st.session_state.get("bet_log", []))
+if bet_log_df is None or bet_log_df.empty:
+    bet_log_df = pd.DataFrame(columns=REQUIRED_BET_LOG_COLUMNS)
+else:
+    for col in REQUIRED_BET_LOG_COLUMNS:
+        if col not in bet_log_df.columns:
+            bet_log_df[col] = None
+
+    bet_log_df = _merge_duplicate_play_id_rows(bet_log_df)
+
+st.session_state["bet_log"] = bet_log_df.to_dict("records")
+save_bet_log(st.session_state["bet_log"])
 
 st.session_state["auto_logged_ids"] = build_logged_id_set(st.session_state.get("bet_log", []))
 

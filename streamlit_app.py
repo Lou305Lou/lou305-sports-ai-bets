@@ -21,21 +21,27 @@ st.set_page_config(page_title="Sports Betting AI Dashboard V34", layout="wide")
 BET_LOG_FILE = "bet_log.csv"
 
 REQUIRED_BET_LOG_COLUMNS = [
-    "bet_id",
-    "date",
-    "sport",
+    "play_id",
     "game",
     "market",
     "selection",
     "odds",
-    "line",
+    "units",
     "stake",
+    "confidence",
+    "true_confidence",
+    "edge",
+    "books_seen",
+    "consensus",
     "result",
     "profit",
-    "category",
-    "play_id",
+    "mode",
+    "log_category",
+    "timestamp",
 
-    # --- CLV / MARKET TRACKING ---
+    # -----------------------------
+    # CLV / MARKET TRACKING FIELDS
+    # -----------------------------
     "open_odds",
     "open_line",
     "closing_odds",
@@ -57,41 +63,62 @@ def load_bet_log():
             if col not in df.columns:
                 df[col] = None
 
+        # Normalize values
+        df = df.fillna("")
+
         return df.to_dict("records")
 
     except:
         return []
 
 
-def save_bet_log(records):
+def save_bet_log(records=None):
     try:
+        if records is None:
+            records = st.session_state.get("bet_log", [])
+
         df = pd.DataFrame(records)
 
+        # Ensure all required columns exist
         for col in REQUIRED_BET_LOG_COLUMNS:
             if col not in df.columns:
                 df[col] = None
 
         df.to_csv(BET_LOG_FILE, index=False)
+
+        # Sync back into session
+        st.session_state["bet_log"] = df.to_dict("records")
+
     except:
         pass
 
 
-def calculate_clv(open_line, closing_line, market, selection):
+def calculate_clv_diff(open_line, closing_line, market, selection):
     try:
+        if open_line is None or closing_line is None:
+            return None, None
+
         open_line = float(open_line)
         closing_line = float(closing_line)
 
-        market = str(market).lower()
-        selection = str(selection).lower()
+        market = str(market).strip().lower()
+        selection = str(selection).strip().lower()
 
-        if "over" in selection:
+        if "total" in market:
+            if "over" in selection:
+                diff = closing_line - open_line
+            elif "under" in selection:
+                diff = open_line - closing_line
+            else:
+                diff = closing_line - open_line
+        elif "spread" in market:
             diff = closing_line - open_line
-        elif "under" in selection:
-            diff = open_line - closing_line
-        elif "ml" in market or "moneyline" in market:
+        elif "moneyline" in market or market == "ml":
             diff = open_line - closing_line
         else:
             diff = closing_line - open_line
+
+        diff = round(diff, 2)
 
         if diff > 0:
             result = "Beat"
@@ -100,10 +127,63 @@ def calculate_clv(open_line, closing_line, market, selection):
         else:
             result = "Push"
 
-        return round(diff, 2), result
+        return diff, result
 
     except:
         return None, None
+
+
+# =========================================================
+# LEGACY COMPATIBILITY HELPERS (DO NOT REMOVE)
+# =========================================================
+def build_logged_id_set(bet_log):
+    ids = set()
+    for row in bet_log:
+        pid = str(row.get("play_id", "")).strip()
+        if pid:
+            ids.add(pid)
+    return ids
+
+
+def _normalize_category_text(value):
+    if isinstance(value, list):
+        cleaned = []
+        for item in value:
+            label = str(item).strip()
+            if label and label not in cleaned:
+                cleaned.append(label)
+        return " | ".join(cleaned)
+
+    raw = str(value).strip()
+    if not raw:
+        return ""
+
+    cleaned = []
+    for part in raw.split("|"):
+        label = str(part).strip()
+        if label and label not in cleaned:
+            cleaned.append(label)
+
+    return " | ".join(cleaned)
+
+
+def _merge_duplicate_play_id_rows(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty or "play_id" not in df.columns:
+        return df
+
+    df = df.copy()
+    df["play_id"] = df["play_id"].astype(str).str.strip()
+
+    non_blank_ids = df["play_id"] != ""
+
+    df_with_ids = df[non_blank_ids].drop_duplicates(
+        subset=["play_id"],
+        keep="first",
+    )
+
+    df_without_ids = df[~non_blank_ids]
+
+    return pd.concat([df_with_ids, df_without_ids], ignore_index=True)
 
 # =========================================================
 # SESSION STATE / LEARNING ENGINE STATE
@@ -4470,7 +4550,7 @@ elif nav == "Bet Log":
         else:
             st.info("No selectable bets found.")
 
-  # =========================================================
+# =========================================================
 # MANUAL BET ENTRY (CLV READY)
 # =========================================================
 st.subheader("➕ Add Manual Bet")

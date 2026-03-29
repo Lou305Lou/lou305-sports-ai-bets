@@ -14,7 +14,61 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 st.set_page_config(page_title="Sports Betting AI Dashboard V34", layout="wide")
+# =========================================================
+# API CONFIG (REQUIRED)
+# =========================================================
 
+# -----------------------------
+# SPORTS DATA IO CONFIG
+# -----------------------------
+SPORTSDATA_BASES = {
+    "nba": "https://api.sportsdata.io/v3/nba",
+    "nhl": "https://api.sportsdata.io/v3/nhl",
+    "mlb": "https://api.sportsdata.io/v3/mlb",
+}
+
+def get_sportsdata_key():
+    possible_keys = [
+        "SPORTSDATA_API_KEY",
+        "SPORTSDATAIO_API_KEY",
+        "SPORTS_DATA_API_KEY",
+    ]
+    for key_name in possible_keys:
+        try:
+            value = st.secrets.get(key_name, "")
+            if value:
+                return str(value).strip()
+        except:
+            pass
+    return ""
+
+SPORTSDATA_API_KEY = get_sportsdata_key()
+
+
+# -----------------------------
+# ODDS API CONFIG
+# -----------------------------
+def get_odds_api_key():
+    possible_keys = [
+        "ODDS_API_KEY",
+        "THE_ODDS_API_KEY",
+    ]
+    for key_name in possible_keys:
+        try:
+            value = st.secrets.get(key_name, "")
+            if value:
+                return str(value).strip()
+        except:
+            pass
+    return ""
+
+ODDS_API_KEY = get_odds_api_key()
+
+# Main endpoint (NBA only for now)
+ODDS_API_URL = "https://api.the-odds-api.com/v4/sports/basketball_nba/odds"
+
+# Free-plan friendly bookmaker set
+ODDS_BOOKMAKERS = "draftkings,fanduel,betmgm"
 # =========================================================
 # PERSISTENCE (BET LOG CSV)
 # =========================================================

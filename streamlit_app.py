@@ -222,18 +222,16 @@ ODDS_API_URL = "https://api.the-odds-api.com/v4/sports/basketball_nba/odds"
 ODDS_BOOKMAKERS = "draftkings,fanduel,betmgm,caesars,espnbet,betrivers"
 
 # =========================================================
-# SESSION STATE
+# SESSION STATE / LEARNING ENGINE STATE
 # =========================================================
 if "is_mobile" not in st.session_state:
     st.session_state["is_mobile"] = True
 
 if "bet_log" not in st.session_state:
-    st.session_state["bet_log"] = load_bet_log()
+    st.session_state["bet_log"] = []
 
-# Always rebuild from saved log so duplicate prevention survives reruns/restarts
-st.session_state["auto_logged_ids"] = build_logged_id_set(
-    st.session_state.get("bet_log", [])
-)
+if "auto_logged_ids" not in st.session_state:
+    st.session_state["auto_logged_ids"] = set()
 
 if "nav_choice" not in st.session_state:
     st.session_state["nav_choice"] = "Top Plays"
@@ -244,55 +242,35 @@ if "manual_results" not in st.session_state:
 if "odds_api_games" not in st.session_state:
     st.session_state["odds_api_games"] = []
 
-if "last_successful_odds_games" not in st.session_state:
-    st.session_state["last_successful_odds_games"] = []
+if "odds_api_last_refresh" not in st.session_state:
+    st.session_state["odds_api_last_refresh"] = None
 
-if "sportsdata_cache" not in st.session_state:
-    st.session_state["sportsdata_cache"] = {}
+if "api_calls_today" not in st.session_state:
+    st.session_state["api_calls_today"] = 0
 
-if "sportsdata_last_refresh" not in st.session_state:
-    st.session_state["sportsdata_last_refresh"] = {}
-
-if "sportsdata_enabled" not in st.session_state:
-    st.session_state["sportsdata_enabled"] = True
-
-if "api_mode" not in st.session_state:
-    st.session_state["api_mode"] = "idle"
-
-if "api_status_note" not in st.session_state:
-    st.session_state["api_status_note"] = ""
-
-if "last_refresh_error" not in st.session_state:
-    st.session_state["last_refresh_error"] = ""
-
-if "last_refresh_count" not in st.session_state:
-    st.session_state["last_refresh_count"] = 0
-
-if "last_api_pull_epoch" not in st.session_state:
-    st.session_state["last_api_pull_epoch"] = 0.0
-
-# DAILY CALL LIMIT CONTROL
-if "daily_api_call_limit" not in st.session_state:
-    st.session_state["daily_api_call_limit"] = 10
-
-if "daily_api_call_count" not in st.session_state:
-    st.session_state["daily_api_call_count"] = 0
-
-if "daily_api_call_date" not in st.session_state:
-    st.session_state["daily_api_call_date"] = datetime.now().strftime("%Y-%m-%d")
-
-if "last_odds_refresh_ok" not in st.session_state:
-    st.session_state["last_odds_refresh_ok"] = False
-
-if "last_refresh_time" not in st.session_state:
-    st.session_state["last_refresh_time"] = ""
+if "api_call_date" not in st.session_state:
+    st.session_state["api_call_date"] = datetime.now().strftime("%Y-%m-%d")
 
 if "learning_state" not in st.session_state:
-    st.session_state["learning_state"] = {}
-
-# Do not force empty learning settings every run
-if "learning_settings" not in st.session_state or not isinstance(st.session_state["learning_settings"], dict):
-    st.session_state["learning_settings"] = {}
+    st.session_state["learning_state"] = {
+        "weights": {
+            "true_probability": 0.30,
+            "price_edge": 0.25,
+            "market_signal": 0.15,
+            "matchup_quality": 0.15,
+            "historical_performance": 0.15,
+        },
+        "category_thresholds": {
+            "Top Plays": 0.030,
+            "AI Picks": 0.035,
+            "AI Parlays": 0.050,
+            "Watchlist": 0.020,
+        },
+        "category_min_samples": 8,
+        "bad_category_flags": {},
+        "play_type_stats": {},
+        "last_learning_run": None,
+    }
 
 # =========================================================
 # SPORTS DATA FEED CONTROL
@@ -785,126 +763,304 @@ def market_family(market):
     return "other"
 
 # =========================================================
-# SELF-LEARNING SETTINGS ACCESSORS
+# SELF-LEARNING ENGINE HELPERS (V33 ON TOP OF V34)
 # =========================================================
-def default_learning_settings():
-    return {
-        "min_active_edge": MIN_ACTIVE_EDGE,
-        "min_watch_edge": MIN_WATCH_EDGE,
-        "min_active_true_conf": MIN_ACTIVE_TRUE_CONF,
-        "min_watch_true_conf": MIN_WATCH_TRUE_CONF,
-        "unit_mult_low": 0.92,
-        "unit_mult_medium": 1.00,
-        "unit_mult_high": 1.00,
-        "unit_mult_elite": 1.05,
-    }
-
-def get_learning_settings():
-    defaults = default_learning_settings()
-    saved = st.session_state.get("learning_settings", {})
-
-    if not isinstance(saved, dict):
-        return defaults
-
-    out = defaults.copy()
-    for k, v in saved.items():
-        out[k] = v
-    return out
-
-def get_effective_min_active_edge():
-    return float(get_learning_settings().get("min_active_edge", MIN_ACTIVE_EDGE))
-
-def get_effective_min_watch_edge():
-    return float(get_learning_settings().get("min_watch_edge", MIN_WATCH_EDGE))
-
-def get_effective_min_active_true_conf():
-    return float(get_learning_settings().get("min_active_true_conf", MIN_ACTIVE_TRUE_CONF))
-
-def get_effective_min_watch_true_conf():
-    return float(get_learning_settings().get("min_watch_true_conf", MIN_WATCH_TRUE_CONF))
-
-def get_confidence_unit_multiplier(true_conf):
-    bucket = confidence_bucket_from_true_conf(true_conf)
-    learning = get_learning_settings()
-
-    if bucket == "Elite":
-        return float(learning.get("unit_mult_elite", 1.05))
-    if bucket == "High":
-        return float(learning.get("unit_mult_high", 1.00))
-    if bucket == "Medium":
-        return float(learning.get("unit_mult_medium", 1.00))
-    return float(learning.get("unit_mult_low", 0.92))
-
-def scale_single_units(row):
-    true_conf = safe_float(row.get("true_confidence", 0))
-    edge = safe_float(row.get("edge", 0))
-    books_seen = safe_int(row.get("books_seen", 1), 1)
-
-    base = (
-        (true_conf * 0.55)
-        + (edge * 6.5)
-        + (books_seen * 3.0)
-    ) / 55.0
-
-    base = clamp(base, SINGLE_UNIT_MIN, SINGLE_UNIT_MAX)
-    multiplier = get_confidence_unit_multiplier(true_conf)
-    return round(clamp(base * multiplier, SINGLE_UNIT_MIN, SINGLE_UNIT_MAX), 2)
-
-def scale_parlay_units(parlay):
-    if not parlay:
+def american_odds_to_implied_prob(odds):
+    try:
+        odds = float(odds)
+        if odds > 0:
+            return 100.0 / (odds + 100.0)
+        return abs(odds) / (abs(odds) + 100.0)
+    except:
         return 0.0
 
-    approval_type = parlay.get("approval_type", "")
-    leg_count = int(parlay.get("leg_count", 2))
-    avg_true_conf = safe_float(parlay.get("avg_true_conf", 0))
-    risk_label = str(parlay.get("risk_label", "Moderate"))
 
-    if approval_type == "Sharp Approved":
-        base_units = PARLAY_UNIT_SHARP
-    elif leg_count == 2:
-        base_units = PARLAY_UNIT_FALLBACK_2
-    else:
-        base_units = PARLAY_UNIT_FALLBACK_3
+def safe_float(value, default=0.0):
+    try:
+        if value is None or value == "":
+            return float(default)
+        return float(value)
+    except:
+        return float(default)
 
-    if avg_true_conf >= 75:
-        base_units += 0.10
-    elif avg_true_conf < 68:
-        base_units -= 0.08
 
-    if risk_label == "Low":
-        base_units += 0.05
-    elif risk_label == "Elevated":
-        base_units -= 0.10
+def clamp(value, low, high):
+    return max(low, min(high, value))
 
-    multiplier = get_confidence_unit_multiplier(avg_true_conf)
-    return round(clamp(base_units * multiplier, 0.15, 0.75), 2)
 
-def scale_watch_units(row):
-    true_conf = safe_float(row.get("true_confidence", 0))
-    edge = safe_float(row.get("edge", 0))
-    books_seen = safe_int(row.get("books_seen", 1), 1)
+def normalize_category_label(category_text):
+    raw = str(category_text or "").strip()
+    if not raw:
+        return "Uncategorized"
 
-    base = (
-        (true_conf * 0.42)
-        + (edge * 4.5)
-        + (books_seen * 2.0)
-    ) / 55.0
+    parts = [p.strip() for p in raw.split("|") if str(p).strip()]
+    if not parts:
+        return "Uncategorized"
 
-    base = clamp(base, WATCH_UNIT_MIN, WATCH_UNIT_MAX)
-    multiplier = get_confidence_unit_multiplier(true_conf)
-    return round(clamp(base * multiplier, WATCH_UNIT_MIN, WATCH_UNIT_MAX), 2)
+    # prioritize major categories in stable order
+    priority = ["Top Plays", "AI Picks", "AI Parlays", "Watchlist"]
+    for label in priority:
+        if label in parts:
+            return label
 
-def classify_watch_tier(row):
-    tc = safe_float(row.get("true_confidence", 0))
-    edge = safe_float(row.get("edge", 0))
-    books = safe_int(row.get("books_seen", 0))
-    consensus = str(row.get("consensus", "")).strip()
+    return parts[0]
 
-    if tc >= 68 and edge >= 4.0 and books >= 3 and consensus in ["Strong", "Fair"]:
-        return "Near Active"
-    if tc >= 62 and edge >= 3.4 and books >= 3:
-        return "Monitor"
-    return "Weak Watch"
+
+def classify_play_type(row):
+    market = str(row.get("market", "")).strip().lower()
+    selection = str(row.get("selection", row.get("pick", ""))).strip().lower()
+    category = normalize_category_label(row.get("category", ""))
+
+    if "parlay" in category.lower():
+        return "parlay"
+
+    if "moneyline" in market or market == "ml":
+        return "moneyline"
+
+    if "spread" in market:
+        return "spread"
+
+    if "total" in market:
+        if "over" in selection:
+            return "total_over"
+        if "under" in selection:
+            return "total_under"
+        return "total"
+
+    if "prop" in market:
+        return "prop"
+
+    return "other"
+
+
+def compute_true_probability(row):
+    """
+    Controlled true probability estimate.
+    This is intentionally conservative for live testing.
+    """
+    implied_prob = american_odds_to_implied_prob(row.get("odds", 0))
+
+    model_projection = safe_float(row.get("model_projection", 0.50), 0.50)
+    price_edge = safe_float(row.get("model_price_ev", row.get("price_edge", 0.0)), 0.0)
+    model_risk = safe_float(row.get("model_risk", 0.50), 0.50)
+    model_market = safe_float(row.get("model_market", 0.50), 0.50)
+    model_history = safe_float(row.get("model_history", 0.50), 0.50)
+    multi_ai_score = safe_float(row.get("multi_ai_score", row.get("score", 50)), 50)
+
+    weights = st.session_state["learning_state"]["weights"]
+
+    projection_component = clamp(model_projection, 0.01, 0.99)
+    market_component = clamp(model_market, 0.01, 0.99)
+    history_component = clamp(model_history, 0.01, 0.99)
+
+    # risk works inversely: lower risk = stronger quality
+    risk_quality = 1.0 - clamp(model_risk, 0.0, 1.0)
+
+    # multi_ai_score assumed on 0-100 scale if present
+    matchup_quality = clamp(multi_ai_score / 100.0, 0.01, 0.99)
+
+    # price edge should nudge, not dominate
+    price_nudge = clamp(implied_prob + (price_edge * 0.25), 0.01, 0.99)
+
+    weighted_prob = (
+        projection_component * weights["true_probability"] +
+        price_nudge * weights["price_edge"] +
+        market_component * weights["market_signal"] +
+        matchup_quality * weights["matchup_quality"] +
+        history_component * weights["historical_performance"]
+    )
+
+    # controlled blend: keep close to market to avoid overfitting early
+    true_probability = (weighted_prob * 0.55) + (implied_prob * 0.45)
+
+    return clamp(true_probability, 0.01, 0.99)
+
+
+def enrich_play_with_learning_fields(row):
+    row = dict(row)
+
+    implied_probability = american_odds_to_implied_prob(row.get("odds", 0))
+    true_probability = compute_true_probability(row)
+    edge = true_probability - implied_probability
+
+    row["implied_probability"] = round(implied_probability, 4)
+    row["true_probability"] = round(true_probability, 4)
+    row["edge"] = round(edge, 4)
+    row["play_type"] = classify_play_type(row)
+    row["primary_category"] = normalize_category_label(row.get("category", ""))
+
+    return row
+
+
+def should_allow_play(row):
+    learning_state = st.session_state["learning_state"]
+    row = enrich_play_with_learning_fields(row)
+
+    category = row.get("primary_category", "Uncategorized")
+    play_type = row.get("play_type", "other")
+    edge = safe_float(row.get("edge", 0.0), 0.0)
+
+    category_threshold = learning_state["category_thresholds"].get(category, 0.03)
+
+    bad_flags = learning_state.get("bad_category_flags", {})
+    if bad_flags.get(play_type, False):
+        return False, f"Filtered by learning engine: {play_type} underperforming"
+
+    if edge < category_threshold:
+        return False, f"Edge below threshold ({round(edge, 4)} < {round(category_threshold, 4)})"
+
+    return True, "Allowed"
+
+
+def calculate_bet_profit(odds, stake, result):
+    odds = safe_float(odds, 0.0)
+    stake = safe_float(stake, 0.0)
+    result = str(result or "").strip().lower()
+
+    if result == "win":
+        if odds > 0:
+            return round(stake * (odds / 100.0), 2)
+        return round(stake * (100.0 / abs(odds)), 2)
+
+    if result == "loss":
+        return round(-stake, 2)
+
+    return 0.0
+
+
+def update_learning_from_results():
+    bet_log = st.session_state.get("bet_log", [])
+    if not bet_log:
+        return
+
+    df = pd.DataFrame(bet_log)
+    if df.empty:
+        return
+
+    required_cols = ["result", "odds"]
+    for col in required_cols:
+        if col not in df.columns:
+            return
+
+    df["result"] = df["result"].astype(str).str.strip().str.lower()
+    graded = df[df["result"].isin(["win", "loss", "push"])].copy()
+
+    if graded.empty:
+        return
+
+    # enrich missing fields safely
+    enriched_rows = []
+    for _, row in graded.iterrows():
+        enriched_rows.append(enrich_play_with_learning_fields(row.to_dict()))
+    graded = pd.DataFrame(enriched_rows)
+
+    if "stake" not in graded.columns:
+        graded["stake"] = 1.0
+    graded["stake"] = graded["stake"].apply(lambda x: safe_float(x, 1.0))
+    graded["profit"] = graded.apply(
+        lambda r: calculate_bet_profit(r.get("odds", 0), r.get("stake", 1.0), r.get("result", "")),
+        axis=1
+    )
+
+    learning_state = st.session_state["learning_state"]
+    min_samples = safe_float(learning_state.get("category_min_samples", 8), 8)
+
+    play_type_stats = {}
+    for play_type, group in graded.groupby("play_type"):
+        bets = len(group)
+        wins = int((group["result"] == "win").sum())
+        losses = int((group["result"] == "loss").sum())
+        pushes = int((group["result"] == "push").sum())
+        profit = round(group["profit"].sum(), 2)
+        roi = round(profit / max(group["stake"].sum(), 1.0), 4)
+
+        play_type_stats[play_type] = {
+            "bets": bets,
+            "wins": wins,
+            "losses": losses,
+            "pushes": pushes,
+            "profit": profit,
+            "roi": roi,
+        }
+
+    learning_state["play_type_stats"] = play_type_stats
+
+    # controlled auto-filtering
+    bad_flags = {}
+    for play_type, stats in play_type_stats.items():
+        bets = stats["bets"]
+        roi = stats["roi"]
+
+        # controlled filter logic
+        if bets >= min_samples and roi <= -0.12:
+            bad_flags[play_type] = True
+        else:
+            bad_flags[play_type] = False
+
+    learning_state["bad_category_flags"] = bad_flags
+
+    # controlled threshold adjustment by category
+    updated_thresholds = dict(learning_state.get("category_thresholds", {}))
+    for category, group in graded.groupby("primary_category"):
+        bets = len(group)
+        total_stake = max(group["stake"].sum(), 1.0)
+        roi = group["profit"].sum() / total_stake
+
+        current_threshold = updated_thresholds.get(category, 0.03)
+
+        if bets >= min_samples:
+            if roi < -0.08:
+                current_threshold += 0.005
+            elif roi > 0.08:
+                current_threshold -= 0.003
+
+        updated_thresholds[category] = round(clamp(current_threshold, 0.015, 0.08), 4)
+
+    learning_state["category_thresholds"] = updated_thresholds
+
+    # controlled weight adjustment
+    wins = graded[graded["result"] == "win"]
+    losses = graded[graded["result"] == "loss"]
+
+    if not wins.empty and not losses.empty:
+        win_edge = wins["edge"].mean()
+        loss_edge = losses["edge"].mean()
+
+        weights = dict(learning_state.get("weights", {}))
+
+        if win_edge > loss_edge:
+            weights["true_probability"] = clamp(weights["true_probability"] + 0.01, 0.22, 0.38)
+            weights["price_edge"] = clamp(weights["price_edge"] + 0.005, 0.18, 0.32)
+            weights["market_signal"] = clamp(weights["market_signal"] - 0.005, 0.10, 0.22)
+
+        total = sum(weights.values())
+        if total > 0:
+            for key in weights:
+                weights[key] = round(weights[key] / total, 4)
+
+        learning_state["weights"] = weights
+
+    learning_state["last_learning_run"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    st.session_state["learning_state"] = learning_state
+
+
+def get_learning_summary_rows():
+    learning_state = st.session_state.get("learning_state", {})
+    stats = learning_state.get("play_type_stats", {})
+
+    rows = []
+    for play_type, info in stats.items():
+        rows.append({
+            "Play Type": play_type,
+            "Bets": info.get("bets", 0),
+            "Wins": info.get("wins", 0),
+            "Losses": info.get("losses", 0),
+            "Pushes": info.get("pushes", 0),
+            "Profit": round(info.get("profit", 0.0), 2),
+            "ROI": round(info.get("roi", 0.0) * 100, 2),
+            "Filtered": "Yes" if learning_state.get("bad_category_flags", {}).get(play_type, False) else "No",
+        })
+    return pd.DataFrame(rows)
 # =========================================================
 # TEAM NORMALIZATION (FULL NBA COVERAGE)
 # =========================================================

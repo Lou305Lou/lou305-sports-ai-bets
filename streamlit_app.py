@@ -1061,6 +1061,116 @@ def get_learning_summary_rows():
             "Filtered": "Yes" if learning_state.get("bad_category_flags", {}).get(play_type, False) else "No",
         })
     return pd.DataFrame(rows)
+
+# =========================================================
+# LEARNING ENGINE COMPATIBILITY LAYER
+# =========================================================
+def get_row_category_for_learning(row):
+    category = str(row.get("category", "")).strip()
+    if category:
+        return category
+
+    log_category = str(row.get("log_category", "")).strip()
+    if log_category:
+        parts = [p.strip() for p in log_category.split("|") if str(p).strip()]
+        if "Top Play" in parts:
+            return "Top Plays"
+        if "AI Slip" in parts:
+            return "AI Picks"
+        if "AI Parlay" in parts:
+            return "AI Parlays"
+        if "Watchlist" in parts:
+            return "Watchlist"
+        if parts:
+            return parts[0]
+
+    status = str(row.get("status", "")).strip()
+    if status == "Active":
+        return "Top Plays"
+    if status == "Watch":
+        return "Watchlist"
+
+    return "Uncategorized"
+
+
+def enrich_play_with_learning_fields_compat(row):
+    row = dict(row)
+
+    if "category" not in row or not str(row.get("category", "")).strip():
+        row["category"] = get_row_category_for_learning(row)
+
+    # Support both app field names and learning-engine field names
+    if "model_projection" not in row:
+        row["model_projection"] = clamp(safe_float(row.get("true_prob", 50.0), 50.0) / 100.0, 0.01, 0.99)
+
+    if "model_price_ev" not in row:
+        row["model_price_ev"] = safe_float(row.get("price_edge", row.get("edge", 0.0)), 0.0) / 100.0
+
+    if "model_risk" not in row:
+        tc = safe_float(row.get("true_confidence", 65.0), 65.0)
+        row["model_risk"] = clamp(1.0 - (tc / 100.0), 0.01, 0.99)
+
+    if "model_market" not in row:
+        row["model_market"] = clamp(safe_float(row.get("implied_prob", 50.0), 50.0) / 100.0, 0.01, 0.99)
+
+    if "model_history" not in row:
+        row["model_history"] = clamp(safe_float(row.get("true_confidence", 65.0), 65.0) / 100.0, 0.01, 0.99)
+
+    if "multi_ai_score" not in row:
+        row["multi_ai_score"] = safe_float(row.get("score", 50.0), 50.0)
+
+    if "stake" not in row:
+        row["stake"] = safe_float(row.get("units", 1.0), 1.0)
+
+    enriched = enrich_play_with_learning_fields(row)
+
+    # Keep both naming systems available
+    enriched["implied_prob"] = round(safe_float(enriched.get("implied_probability", 0.0), 0.0) * 100.0, 2)
+    enriched["true_prob"] = round(safe_float(enriched.get("true_probability", 0.0), 0.0) * 100.0, 2)
+    enriched["edge"] = round(
+        enriched["true_prob"] - enriched["implied_prob"],
+        2
+    )
+
+    return enriched
+
+
+def apply_learning_engine_to_df(df, category_name):
+    if df is None or df.empty:
+        return df
+
+    rows = []
+
+    for _, row in df.iterrows():
+        item = row.to_dict()
+        item["category"] = category_name
+
+        item = enrich_play_with_learning_fields_compat(item)
+        allowed, reason = should_allow_play(item)
+
+        item["learning_status"] = "Allowed" if allowed else "Filtered"
+        item["learning_reason"] = reason
+
+        rows.append(item)
+
+    out = pd.DataFrame(rows)
+    if out.empty:
+        return out
+
+    out = out[out["learning_status"] == "Allowed"].copy()
+
+    if out.empty:
+        return out.reset_index(drop=True)
+
+    if "rank_score" in out.columns:
+        out = out.sort_values(["rank_score", "true_confidence"], ascending=False)
+    elif "edge" in out.columns:
+        out = out.sort_values(["edge", "true_prob"], ascending=False)
+
+    return out.reset_index(drop=True)
+
+
+
 # =========================================================
 # TEAM NORMALIZATION (FULL NBA COVERAGE)
 # =========================================================
@@ -2819,6 +2929,37 @@ def same_play_family(play_id_a, play_id_b):
     return get_base_play_id(play_id_a) == get_base_play_id(play_id_b)
 
 
+def build_logged_bet_row(row_dict, log_category_label):
+    enriched = enrich_play_with_learning_fields_compat(row_dict)
+
+    return {
+        "play_id": str(enriched.get("play_id", "")).strip(),
+        "game": enriched.get("game"),
+        "market": enriched.get("market"),
+        "selection": enriched.get("selection"),
+        "odds": enriched.get("odds"),
+        "implied_prob": enriched.get("implied_prob"),
+        "true_prob": enriched.get("true_prob"),
+        "implied_probability": enriched.get("implied_probability"),
+        "true_probability": enriched.get("true_probability"),
+        "edge": enriched.get("edge"),
+        "play_type": enriched.get("play_type"),
+        "primary_category": enriched.get("primary_category"),
+        "category": enriched.get("category"),
+        "units": safe_float(enriched.get("units", 1.0), 1.0),
+        "stake": safe_float(enriched.get("units", 1.0), 1.0),
+        "confidence": enriched.get("confidence"),
+        "true_confidence": enriched.get("true_confidence"),
+        "books_seen": enriched.get("books_seen"),
+        "consensus": enriched.get("consensus"),
+        "result": "Pending",
+        "profit": 0.0,
+        "mode": TEST_MODE,
+        "log_category": log_category_label,
+        "timestamp": datetime.now().isoformat(),
+    }
+
+
 def auto_log_active_plays(df: pd.DataFrame):
     if df is None or df.empty:
         return 0
@@ -2841,38 +2982,22 @@ def auto_log_active_plays(df: pd.DataFrame):
             before_category = str(existing_row.get("log_category", "")).strip()
 
             updated_row = add_category_to_logged_bet(existing_row, "Top Play")
-            after_category = str(updated_row.get("log_category", "")).strip()
+            updated_row["category"] = "Top Plays"
+            updated_row["primary_category"] = "Top Plays"
 
             st.session_state["bet_log"][exact_idx] = updated_row
             st.session_state["auto_logged_ids"].add(pid)
 
-            if before_category != after_category:
+            if before_category != str(updated_row.get("log_category", "")).strip():
                 changed = True
 
             continue
 
         suffix_idx = find_logged_bet_index_by_suffix_play_id(pid)
 
-        new_bet = {
-            "play_id": pid,
-            "game": row.get("game"),
-            "market": row.get("market"),
-            "selection": row.get("selection"),
-            "odds": row.get("odds"),
-            "implied_prob": row.get("implied_prob"),
-            "true_prob": row.get("true_prob"),
-            "units": row.get("units"),
-            "confidence": row.get("confidence"),
-            "true_confidence": row.get("true_confidence"),
-            "edge": row.get("edge"),
-            "books_seen": row.get("books_seen"),
-            "consensus": row.get("consensus"),
-            "result": "Pending",
-            "profit": 0.0,
-            "mode": TEST_MODE,
-            "log_category": "Top Play",
-            "timestamp": datetime.now().isoformat(),
-        }
+        new_bet = build_logged_bet_row(row.to_dict(), "Top Play")
+        new_bet["category"] = "Top Plays"
+        new_bet["primary_category"] = "Top Plays"
 
         if suffix_idx is not None:
             suffix_row = st.session_state["bet_log"][suffix_idx]
@@ -2912,6 +3037,8 @@ def log_ai_slip_pick(best_row):
     if exact_idx is not None:
         existing_row = st.session_state["bet_log"][exact_idx]
         updated_row = add_category_to_logged_bet(existing_row, "AI Slip")
+        updated_row["category"] = "AI Picks"
+        updated_row["primary_category"] = "AI Picks"
         st.session_state["bet_log"][exact_idx] = updated_row
         save_bet_log()
         return False
@@ -2920,32 +3047,20 @@ def log_ai_slip_pick(best_row):
     if suffix_idx is not None:
         existing_row = st.session_state["bet_log"][suffix_idx]
         updated_row = add_category_to_logged_bet(existing_row, "AI Slip")
+        updated_row["category"] = "AI Picks"
+        updated_row["primary_category"] = "AI Picks"
         st.session_state["bet_log"][suffix_idx] = updated_row
         save_bet_log()
         return False
 
     ai_slip_id = f"{pid}__ai_slip"
 
-    new_row = {
-        "play_id": ai_slip_id,
-        "game": best_row.get("game"),
-        "market": best_row.get("market"),
-        "selection": best_row.get("selection"),
-        "odds": best_row.get("odds"),
-        "implied_prob": best_row.get("implied_prob"),
-        "true_prob": best_row.get("true_prob"),
-        "units": best_row.get("units"),
-        "confidence": best_row.get("confidence"),
-        "true_confidence": best_row.get("true_confidence"),
-        "edge": best_row.get("edge"),
-        "books_seen": best_row.get("books_seen"),
-        "consensus": best_row.get("consensus"),
-        "result": "Pending",
-        "profit": 0.0,
-        "mode": TEST_MODE,
-        "log_category": "AI Slip",
-        "timestamp": datetime.now().isoformat(),
-    }
+    row_dict = best_row.to_dict() if hasattr(best_row, "to_dict") else dict(best_row)
+    row_dict["play_id"] = ai_slip_id
+
+    new_row = build_logged_bet_row(row_dict, "AI Slip")
+    new_row["category"] = "AI Picks"
+    new_row["primary_category"] = "AI Picks"
 
     st.session_state["bet_log"].append(new_row)
     save_bet_log()
@@ -2971,6 +3086,8 @@ def log_ai_parlay_pick(best_parlay):
     if existing_idx is not None:
         existing_row = st.session_state["bet_log"][existing_idx]
         updated_row = add_category_to_logged_bet(existing_row, "AI Parlay")
+        updated_row["category"] = "AI Parlays"
+        updated_row["primary_category"] = "AI Parlays"
         st.session_state["bet_log"][existing_idx] = updated_row
         save_bet_log()
         return False
@@ -2983,10 +3100,16 @@ def log_ai_parlay_pick(best_parlay):
         "odds": best_parlay.get("combined_odds"),
         "implied_prob": None,
         "true_prob": None,
+        "implied_probability": None,
+        "true_probability": None,
+        "edge": best_parlay.get("avg_edge"),
+        "play_type": "parlay",
+        "primary_category": "AI Parlays",
+        "category": "AI Parlays",
         "units": scale_parlay_units(best_parlay),
+        "stake": scale_parlay_units(best_parlay),
         "confidence": "High" if float(best_parlay.get("avg_true_conf", 0)) >= 70 else "Medium",
         "true_confidence": best_parlay.get("avg_true_conf"),
-        "edge": best_parlay.get("avg_edge"),
         "books_seen": best_parlay.get("avg_books"),
         "consensus": best_parlay.get("approval_type"),
         "result": "Pending",
@@ -3551,10 +3674,12 @@ def build_ai_portfolio(best_single, chosen_parlay, parlay_candidates):
 # =========================================================
 # DATA PREP (CRITICAL FIX)
 # =========================================================
-log_df_full_for_learning = pd.DataFrame(st.session_state.get("bet_log", [])).copy()
-learning_state = build_self_learning_state(log_df_full_for_learning)
-st.session_state["learning_state"] = learning_state
-st.session_state["learning_settings"] = learning_state.get("settings", default_learning_settings())
+if "bet_log" not in st.session_state or not st.session_state["bet_log"]:
+    st.session_state["bet_log"] = load_bet_log()
+
+st.session_state["auto_logged_ids"] = build_logged_id_set(st.session_state.get("bet_log", []))
+
+update_learning_from_results()
 
 df = generate_ai_plays()
 
@@ -3572,13 +3697,23 @@ try:
 except Exception as e:
     st.warning(f"SportsData enrichment skipped: {e}")
 
+# =========================================================
+# APPLY LEARNING FILTERS
+# =========================================================
+if df is not None and not df.empty:
+    active_source_df = df[df["status"] == "Active"].copy().reset_index(drop=True)
+    watch_source_df = df[df["status"] == "Watch"].copy().reset_index(drop=True)
+
+    active_df = apply_learning_engine_to_df(active_source_df, "Top Plays")
+    watch_df = apply_learning_engine_to_df(watch_source_df, "Watchlist")
+else:
+    active_df = pd.DataFrame()
+    watch_df = pd.DataFrame()
+
 # ================================
 # AUTO LOG TOP PLAYS
 # ================================
-auto_logged_count = auto_log_active_plays(df)
-
-active_df = df[df["status"] == "Active"].copy().reset_index(drop=True)
-watch_df = df[df["status"] == "Watch"].copy().reset_index(drop=True)
+auto_logged_count = auto_log_active_plays(active_df)
 
 # ================================
 # BEST SINGLE
@@ -3604,6 +3739,8 @@ if best_row is not None:
 if best_parlay is not None:
     log_ai_parlay_pick(best_parlay)
 
+update_learning_from_results()
+
 # ================================
 # PORTFOLIO BUILD
 # ================================
@@ -3618,13 +3755,6 @@ best_score = best_row["score"] if best_row is not None else "—"
 avg_true_conf = active_df["true_confidence"].mean() if not active_df.empty else 0.0
 avg_true_prob = active_df["true_prob"].mean() if (not active_df.empty and "true_prob" in active_df.columns) else 0.0
 total_units = active_df["units"].sum() if not active_df.empty else 0.0
-
-effective_learning = get_learning_settings()
-effective_active_edge = get_effective_min_active_edge()
-effective_watch_edge = get_effective_min_watch_edge()
-effective_active_true_conf = get_effective_min_active_true_conf()
-effective_watch_true_conf = get_effective_min_watch_true_conf()
-
 # =========================================================
 # PAGE STYLES
 # =========================================================
@@ -3811,15 +3941,17 @@ def update_logged_bet_result(play_id, result_value):
         if current_play_id != str(play_id).strip() and current_base_id != target_base_id:
             continue
 
-        units = bet.get("units", 0)
+        units = safe_float(bet.get("units", bet.get("stake", 0)), 0)
         odds = bet.get("odds", "")
 
         st.session_state["bet_log"][i]["result"] = result_value
         st.session_state["bet_log"][i]["profit"] = settle_result_pnl(odds, units, result_value)
+        st.session_state["bet_log"][i]["stake"] = units
         updated = True
 
     if updated:
         save_bet_log()
+        update_learning_from_results()
 
     return updated
 
@@ -3846,19 +3978,23 @@ def sync_manual_results_into_bet_log():
             current_result = normalize_result_value(bet.get("result", "Pending"))
             current_profit = float(bet.get("profit", 0.0) or 0.0)
 
+            units = safe_float(bet.get("units", bet.get("stake", 0)), 0)
+
             new_profit = settle_result_pnl(
                 bet.get("odds", ""),
-                bet.get("units", 0),
+                units,
                 normalized_result,
             )
 
             if current_result != normalized_result or round(current_profit, 2) != round(new_profit, 2):
                 st.session_state["bet_log"][i]["result"] = normalized_result
                 st.session_state["bet_log"][i]["profit"] = new_profit
+                st.session_state["bet_log"][i]["stake"] = units
                 changed = True
 
     if changed:
         save_bet_log()
+        update_learning_from_results()
 # =========================================================
 # NAVIGATION
 # =========================================================

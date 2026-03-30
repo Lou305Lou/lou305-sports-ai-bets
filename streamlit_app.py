@@ -5373,9 +5373,11 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
     }
 
     learning_state = st.session_state.get("learning_state", {})
-    learning_state["category_min_samples"] = 3
+
     if not isinstance(learning_state, dict):
         learning_state = {}
+
+    learning_state["category_min_samples"] = 3
 
     for key, val in default_learning_state.items():
         if key not in learning_state:

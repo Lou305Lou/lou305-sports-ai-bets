@@ -4595,7 +4595,7 @@ elif nav == "AI Slip":
     else:
         st.caption("Using all live games returned by the API.")
 
-    current_api_mode = st.session_state.get("api_mode", "idle")
+    current_api_mode = str(st.session_state.get("api_mode", "idle")).strip().lower()
     effective_games = get_effective_odds_games()
 
     if len(effective_games) == 0:
@@ -4607,14 +4607,23 @@ elif nav == "AI Slip":
                 st.warning("The Odds API is waiting for reset.")
         elif current_api_mode == "limit_hit":
             st.warning("The Odds API limit has been hit. Cached data will be used when available.")
-        elif current_api_mode == "no_key":
-            st.warning("No Odds API key found. Add your key in Streamlit secrets to load live odds.")
+        elif current_api_mode in ["key_error", "invalid_key", "auth_error", "no_key"]:
+            st.warning("Your Odds API key is not being accepted right now.")
         else:
             st.warning("Press 'Refresh Live Odds' in the sidebar to load live odds.")
 
-    ai_df = best_plays_df.copy() if best_plays_df is not None else pd.DataFrame()
+    ai_df = pd.DataFrame()
+
+    try:
+        if "best_plays_df" in locals() and best_plays_df is not None:
+            ai_df = best_plays_df.copy()
+        elif "best_plays_df" in globals() and best_plays_df is not None:
+            ai_df = best_plays_df.copy()
+    except:
+        ai_df = pd.DataFrame()
 
     required_cols = [
+        "sport",
         "game",
         "market",
         "selection",
@@ -4638,78 +4647,72 @@ elif nav == "AI Slip":
         "play_id",
         "log_category",
     ]
+
     for col in required_cols:
         if col not in ai_df.columns:
             ai_df[col] = ""
 
+    def _safe_float(v, default=0.0):
+        try:
+            if v is None or str(v).strip() == "":
+                return float(default)
+            return float(v)
+        except:
+            return float(default)
+
+    def _safe_int(v, default=0):
+        try:
+            if v is None or str(v).strip() == "":
+                return int(default)
+            return int(float(v))
+        except:
+            return int(default)
+
+    def _clean_text(v, fallback="—"):
+        raw = str(v).strip()
+        return raw if raw else fallback
+
+    def _to_american_string(v):
+        try:
+            val = int(round(float(v)))
+            if val > 0:
+                return f"+{val}"
+            return str(val)
+        except:
+            return str(v)
+
+    def _risk_label(units, true_conf, edge):
+        units = _safe_float(units)
+        true_conf = _safe_float(true_conf)
+        edge = _safe_float(edge)
+
+        if true_conf >= 74 and edge >= 5.5 and units <= 0.75:
+            return "Low"
+        if true_conf >= 68 and edge >= 4.25 and units <= 1.00:
+            return "Moderate"
+        return "Elevated"
+
+    def _parlay_risk_label(legs, avg_true_conf, total_edge):
+        if legs <= 2 and avg_true_conf >= 70 and total_edge >= 8:
+            return "Moderate"
+        if legs <= 3 and avg_true_conf >= 66 and total_edge >= 7:
+            return "Elevated"
+        return "High"
+
     if ai_df.empty:
-        st.info("No AI Slip plays available yet. Load odds first, then return here.")
+        if current_api_mode in ["limit_hit", "waiting_reset"]:
+            st.info("Odds API limit reached. AI Slip will populate once the API resets or cached data is available.")
+        elif current_api_mode in ["key_error", "invalid_key", "auth_error", "no_key"]:
+            st.info("Odds API key issue detected. Fix the key and refresh live odds to generate AI Slip plays.")
+        else:
+            st.info("No AI Slip plays available yet. Load odds first, then return here.")
     else:
         ai_df = ai_df.copy()
-
-        def _safe_float(v, default=0.0):
-            try:
-                if v is None or str(v).strip() == "":
-                    return float(default)
-                return float(v)
-            except:
-                return float(default)
-
-        def _safe_int(v, default=0):
-            try:
-                if v is None or str(v).strip() == "":
-                    return int(default)
-                return int(float(v))
-            except:
-                return int(default)
-
-        def _clean_text(v, fallback="—"):
-            raw = str(v).strip()
-            return raw if raw else fallback
-
-        def _to_american_string(v):
-            try:
-                val = int(round(float(v)))
-                if val > 0:
-                    return f"+{val}"
-                return str(val)
-            except:
-                return str(v)
-
-        def _format_percent(v, digits=1):
-            try:
-                return f"{float(v):.{digits}f}%"
-            except:
-                return "—"
-
-        def _risk_label(units, true_conf, edge):
-            units = _safe_float(units)
-            true_conf = _safe_float(true_conf)
-            edge = _safe_float(edge)
-
-            if true_conf >= 74 and edge >= 5.5 and units <= 0.75:
-                return "Low"
-            if true_conf >= 68 and edge >= 4.25 and units <= 1.00:
-                return "Moderate"
-            return "Elevated"
-
-        def _parlay_risk_label(legs, avg_true_conf, total_edge):
-            if legs <= 2 and avg_true_conf >= 70 and total_edge >= 8:
-                return "Moderate"
-            if legs <= 3 and avg_true_conf >= 66 and total_edge >= 7:
-                return "Elevated"
-            return "High"
-
-        def _normalize_for_sort(df):
-            df = df.copy()
-            df["true_confidence_num"] = df["true_confidence"].apply(_safe_float)
-            df["edge_num"] = df["edge"].apply(_safe_float)
-            df["units_num"] = df["units"].apply(_safe_float)
-            df["rank_score_num"] = df["rank_score"].apply(_safe_float)
-            df["books_seen_num"] = df["books_seen"].apply(_safe_int)
-            return df
-
-        ai_df = _normalize_for_sort(ai_df)
+        ai_df["true_confidence_num"] = ai_df["true_confidence"].apply(_safe_float)
+        ai_df["edge_num"] = ai_df["edge"].apply(_safe_float)
+        ai_df["units_num"] = ai_df["units"].apply(_safe_float)
+        ai_df["rank_score_num"] = ai_df["rank_score"].apply(_safe_float)
+        ai_df["books_seen_num"] = ai_df["books_seen"].apply(_safe_int)
 
         ai_df = ai_df.sort_values(
             by=["rank_score_num", "true_confidence_num", "edge_num", "books_seen_num"],
@@ -4717,7 +4720,6 @@ elif nav == "AI Slip":
         ).reset_index(drop=True)
 
         best_row = ai_df.iloc[0].to_dict() if not ai_df.empty else None
-        top_rows = ai_df.head(6).to_dict("records")
 
         st.subheader("🎯 Best AI Single")
 
@@ -4807,7 +4809,11 @@ elif nav == "AI Slip":
                     }
 
                     existing_log = st.session_state.get("bet_log", [])
-                    existing_ids = set(str(x.get("play_id", "")).strip() for x in existing_log if str(x.get("play_id", "")).strip())
+                    existing_ids = set(
+                        str(x.get("play_id", "")).strip()
+                        for x in existing_log
+                        if str(x.get("play_id", "")).strip()
+                    )
 
                     if play_id in existing_ids:
                         st.info("This AI single is already in the bet log.")
@@ -4855,7 +4861,14 @@ elif nav == "AI Slip":
                     for o in odds_list:
                         decimal_price *= american_to_decimal(o)
 
-                    american_parlay_odds = int(round((decimal_price - 1) * 100)) if decimal_price >= 2 else int(round(-100 / (decimal_price - 1)))
+                    if decimal_price <= 1:
+                        continue
+
+                    if decimal_price >= 2:
+                        american_parlay_odds = int(round((decimal_price - 1) * 100))
+                    else:
+                        american_parlay_odds = int(round(-100 / (decimal_price - 1)))
+
                     if american_parlay_odds < MIN_PARLAY_ODDS:
                         continue
 
@@ -4863,8 +4876,8 @@ elif nav == "AI Slip":
                     total_edge = sum(_safe_float(x.get("edge", 0)) for x in combo)
                     avg_books = sum(_safe_int(x.get("books_seen", 0)) for x in combo) / len(combo)
 
-                    same_game_count = len(set(str(x.get("game", "")).strip() for x in combo))
-                    correlation_penalty = 0.00 if same_game_count == len(combo) else 0.08
+                    unique_games = len(set(str(x.get("game", "")).strip() for x in combo))
+                    correlation_penalty = 0.00 if unique_games == len(combo) else 0.08
 
                     score = (
                         (avg_true_conf * 0.55)
@@ -4965,7 +4978,11 @@ elif nav == "AI Slip":
 
             if st.button("➕ Add AI Parlay to Bet Log", key=f"add_ai_parlay_{parlay_play_id}"):
                 existing_log = st.session_state.get("bet_log", [])
-                existing_ids = set(str(x.get("play_id", "")).strip() for x in existing_log if str(x.get("play_id", "")).strip())
+                existing_ids = set(
+                    str(x.get("play_id", "")).strip()
+                    for x in existing_log
+                    if str(x.get("play_id", "")).strip()
+                )
 
                 if parlay_play_id in existing_ids:
                     st.info("This AI parlay is already in the bet log.")
@@ -5013,6 +5030,7 @@ elif nav == "AI Slip":
             "books_seen_num",
             "quality_label",
         ]
+
         preview_df = ai_df[preview_cols].copy()
         preview_df = preview_df.rename(columns={
             "edge_num": "edge",

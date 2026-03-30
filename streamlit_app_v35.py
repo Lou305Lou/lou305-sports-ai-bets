@@ -1065,6 +1065,67 @@ def get_selected_sport_template_summary():
         "display_note": get_sport_display_note(sport_name),
     }
 
+# =========================================================
+# MULTI-SPORT FRAMEWORK STATUS HELPERS
+# =========================================================
+def get_multi_sport_framework_status():
+    selected_sport = get_selected_sport()
+    cfg = get_sport_config(selected_sport)
+    learning_state = get_learning_state_for_sport(selected_sport)
+
+    if not isinstance(learning_state, dict):
+        learning_state = {}
+
+    return {
+        "selected_sport": selected_sport,
+        "sport_key": cfg.get("sport_key", ""),
+        "sportsdata_slug": cfg.get("sportsdata_slug", ""),
+        "api_mode": get_api_mode_for_sport(selected_sport),
+        "live_games_count": len(get_odds_games_for_sport(selected_sport)),
+        "cached_games_count": len(get_cached_games_for_sport(selected_sport)),
+        "bet_log_count": len(get_bet_log_for_sport(selected_sport)),
+        "min_samples": int(learning_state.get("category_min_samples", 3) or 3),
+        "accelerated_learning_mode": bool(learning_state.get("accelerated_learning_mode", True)),
+    }
+
+def render_multi_sport_framework_status():
+    status = get_multi_sport_framework_status()
+
+    st.sidebar.markdown("### 🧭 V35 Framework")
+    st.sidebar.caption(
+        f"Sport: {status['selected_sport']} • Odds key: {status['sport_key']} • SportsData: {status['sportsdata_slug']}"
+    )
+    st.sidebar.caption(
+        f"Live games: {status['live_games_count']} • Cached games: {status['cached_games_count']} • Logged bets: {status['bet_log_count']}"
+    )
+    st.sidebar.caption(
+        f"Learning min samples: {status['min_samples']} • Accelerated mode: {'On' if status['accelerated_learning_mode'] else 'Off'}"
+    )
+
+def get_selected_sport_empty_state_message():
+    selected_sport = get_selected_sport()
+    api_mode = str(get_api_mode_for_sport(selected_sport)).strip().lower()
+
+    if api_mode == "waiting_reset":
+        return f"{selected_sport} odds are waiting for API reset."
+    if api_mode == "limit_hit":
+        return f"{selected_sport} odds API limit has been reached."
+    if api_mode in ["key_error", "invalid_key", "auth_error", "no_key"]:
+        return f"{selected_sport} odds are unavailable because of an API key issue."
+    return f"No live {selected_sport} data loaded yet."
+
+def get_selected_sport_runtime_note():
+    selected_sport = get_selected_sport()
+    notes = {
+        "NBA": "NBA framework ready. Best current sport for immediate testing while season is active.",
+        "NHL": "NHL framework ready. Good parallel test sport during current active season.",
+        "MLB": "MLB framework ready. Strong long-run testing sport because of large game volume.",
+        "WNBA": "WNBA framework ready. Sport lane prepared for season start and later live learning.",
+    }
+    return notes.get(selected_sport, "Multi-sport framework active.")
+
+render_multi_sport_framework_status()
+
 
 
 # =========================================================

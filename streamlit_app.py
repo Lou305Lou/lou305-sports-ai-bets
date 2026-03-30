@@ -5339,450 +5339,103 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
                 ].copy()
     except:
         settled_df = pd.DataFrame()
-    st.subheader("Learning Weights")
 
-    learning_state = st.session_state.get("learning_state", {})
-    if not isinstance(learning_state, dict):
-        learning_state = {}
+    # =========================================================
+    # LEARNING WEIGHTS DISPLAY
+    # =========================================================
+    st.markdown("### Learning Weights")
 
-    default_weights = {
-        "true_probability": 0.30,
-        "price_edge": 0.25,
-        "market_signal": 0.15,
-        "matchup_quality": 0.15,
-        "historical_performance": 0.15,
-    }
-
-    state_weights = learning_state.get("weights", {})
-    if not isinstance(state_weights, dict):
-        state_weights = {}
-
-    weights = {
-        "true_probability": float(state_weights.get("true_probability", default_weights["true_probability"])),
-        "price_edge": float(state_weights.get("price_edge", default_weights["price_edge"])),
-        "market_signal": float(state_weights.get("market_signal", default_weights["market_signal"])),
-        "matchup_quality": float(state_weights.get("matchup_quality", default_weights["matchup_quality"])),
-        "historical_performance": float(state_weights.get("historical_performance", default_weights["historical_performance"])),
-    }
-
-    weight_col1, weight_col2 = st.columns(2)
-    with weight_col1:
-        st.metric("True Prob", f"{weights['true_probability'] * 100:.1f}%")
-        st.metric("Price Edge", f"{weights['price_edge'] * 100:.1f}%")
-        st.metric("Market Signal", f"{weights['market_signal'] * 100:.1f}%")
-    with weight_col2:
-        st.metric("Matchup Quality", f"{weights['matchup_quality'] * 100:.1f}%")
-        st.metric("History", f"{weights['historical_performance'] * 100:.1f}%")
-
-    last_learning_update = str(learning_state.get("last_learning_update", "")).strip()
-    st.caption(f"Last learning update: {last_learning_update if last_learning_update else 'None'}")
-
-    def _safe_float(v, default=0.0):
-        try:
-            if v is None or str(v).strip() == "":
-                return float(default)
-            return float(v)
-        except:
-            return float(default)
-
-    def _clean_text(v, fallback="—"):
-        raw = str(v).strip()
-        return raw if raw else fallback
-
-    def _normalize_result(v):
-        raw = str(v).strip().lower()
-        if raw in ["win", "won", "w"]:
-            return "Win"
-        if raw in ["loss", "lost", "l"]:
-            return "Loss"
-        if raw in ["push", "p"]:
-            return "Push"
-        return ""
-
-    def _normalize_threshold_percent(v, default_percent):
-        raw = _safe_float(v, default_percent)
-        if raw <= 0:
-            return float(default_percent)
-        if raw <= 1:
-            return raw * 100.0
-        return raw
-
-    def _threshold_status_label(current_percent, baseline_percent):
-        if current_percent > baseline_percent + 0.001:
-            return "Tightened"
-        if current_percent < baseline_percent - 0.001:
-            return "Loosened"
-        return "Base"
-
-    st.markdown("### Category Edge Thresholds")
-
-def _normalize_threshold_percent(v, default_percent):
-    try:
-        raw = float(v)
-    except:
-        raw = default_percent
-
-    if raw <= 0:
-        return float(default_percent)
-
-    # Convert decimal → percent
-    if raw <= 1:
-        return raw * 100.0
-
-    return raw
-
-def _threshold_status_label(current_percent, baseline_percent):
-    if current_percent > baseline_percent + 0.001:
-        return "Tightened"
-    if current_percent < baseline_percent - 0.001:
-        return "Loosened"
-    return "Base"
-
-default_thresholds_percent = {
-    "Top Plays": 3.0,
-    "AI Picks": 3.5,
-    "AI Parlays": 5.0,
-    "Watchlist": 2.0,
-}
-
-category_thresholds = learning_state.get("category_thresholds", {})
-if not isinstance(category_thresholds, dict):
-    category_thresholds = {}
-
-threshold_rows = []
-
-for category_name in ["Top Plays", "AI Picks", "AI Parlays", "Watchlist"]:
-    baseline = default_thresholds_percent[category_name]
-
-    raw_value = category_thresholds.get(category_name, baseline)
-    current = _normalize_threshold_percent(raw_value, baseline)
-
-    threshold_rows.append({
-        "Category": category_name,
-        "Min Edge Required %": round(current, 2),
-        "Base %": baseline,
-        "Status": _threshold_status_label(current, baseline)
+    learning_state = st.session_state.get("learning_state", {
+        "weights": {
+            "true_probability": 0.30,
+            "price_edge": 0.25,
+            "market_signal": 0.15,
+            "matchup_quality": 0.15,
+            "historical_performance": 0.15
+        },
+        "category_thresholds": {
+            "Top Plays": 0.030,
+            "AI Picks": 0.035,
+            "AI Parlays": 0.050,
+            "Watchlist": 0.020
+        },
+        "last_update": None,
+        "play_type_stats": {},
+        "category_stats": {}
     })
 
-threshold_df = pd.DataFrame(threshold_rows)
+    weights = learning_state.get("weights", {})
 
-st.dataframe(threshold_df, use_container_width=True, hide_index=True)
+    c1, c2 = st.columns(2)
+    with c1:
+        st.metric("True Prob", f"{weights.get('true_probability', 0)*100:.1f}%")
+        st.metric("Price Edge", f"{weights.get('price_edge', 0)*100:.1f}%")
+    with c2:
+        st.metric("Market Signal", f"{weights.get('market_signal', 0)*100:.1f}%")
+        st.metric("Matchup Quality", f"{weights.get('matchup_quality', 0)*100:.1f}%")
 
-# Quick summary metrics
-t1, t2, t3 = st.columns(3)
-with t1:
-    st.metric("Tightened", int((threshold_df["Status"] == "Tightened").sum()))
-with t2:
-    st.metric("Loosened", int((threshold_df["Status"] == "Loosened").sum()))
-with t3:
-    st.metric("Base", int((threshold_df["Status"] == "Base").sum()))
+    st.metric("History", f"{weights.get('historical_performance', 0)*100:.1f}%")
 
-    threshold_status_counts = {
-        "Tightened": int((threshold_df["Status"] == "Tightened").sum()),
-        "Loosened": int((threshold_df["Status"] == "Loosened").sum()),
-        "Base": int((threshold_df["Status"] == "Base").sum()),
-    }
+    last_update = learning_state.get("last_update")
+    st.caption(f"Last learning update: {last_update if last_update else 'None'}")
 
-    tcol1, tcol2, tcol3 = st.columns(3)
-    with tcol1:
-        st.metric("Tightened", threshold_status_counts["Tightened"])
-    with tcol2:
-        st.metric("Loosened", threshold_status_counts["Loosened"])
-    with tcol3:
-        st.metric("Base", threshold_status_counts["Base"])
-# =========================================================
-# V33 SELF-LEARNING ENGINE (AUTO THRESHOLD ADJUSTMENT)
-# =========================================================
-learning_state = st.session_state.get("learning_state", {})
-if not isinstance(learning_state, dict):
-    learning_state = {}
+    # =========================================================
+    # CATEGORY EDGE THRESHOLDS
+    # =========================================================
+    st.markdown("### Category Edge Thresholds")
 
-category_thresholds = learning_state.get("category_thresholds", {})
-if not isinstance(category_thresholds, dict):
-    category_thresholds = {}
+    threshold_data = []
+    for cat, base_val in learning_state.get("category_thresholds", {}).items():
+        threshold_data.append({
+            "Category": cat,
+            "Min Edge Required %": round(base_val * 100, 2),
+            "Base %": round(base_val * 100, 2),
+            "Status": "Base"
+        })
 
-bad_play_type_flags = learning_state.get("bad_play_type_flags", {})
-if not isinstance(bad_play_type_flags, dict):
-    bad_play_type_flags = {}
+    threshold_df = pd.DataFrame(threshold_data)
 
-MIN_SAMPLES = int(learning_state.get("category_min_samples", 8) or 8)
+    st.dataframe(threshold_df, use_container_width=True, hide_index=True)
 
-def _clamp(val, low, high):
-    return max(low, min(high, val))
+    # =========================================================
+    # THRESHOLD SUMMARY (CLEAN - NO DUPLICATES)
+    # =========================================================
+    t1, t2, t3 = st.columns(3)
+    with t1:
+        st.metric("Tightened", int((threshold_df["Status"] == "Tightened").sum()))
+    with t2:
+        st.metric("Loosened", int((threshold_df["Status"] == "Loosened").sum()))
+    with t3:
+        st.metric("Base", int((threshold_df["Status"] == "Base").sum()))
 
-def _adjust_threshold(current, change):
-    return _clamp(current + change, 1.5, 7.5)
-
-# Only run learning if we actually have settled data
-if not settled_df.empty:
-
-    grouped = settled_df.groupby("market_clean", dropna=False)
-
-    updated_flags = {}
-    updated_thresholds = dict(category_thresholds)
-
-    for market_name, group in grouped:
-        total_bets = len(group)
-
-        if total_bets < MIN_SAMPLES:
-            continue
-
-        total_profit = float(group["profit_num"].sum())
-        total_units = float(group["units_num"].sum())
-
-        roi = 0.0
-        if total_units > 0:
-            roi = (total_profit / total_units) * 100.0
-
-        avg_true_conf = float(group["true_confidence_num"].mean())
-
-        # -----------------------------
-        # LOSING PLAY TYPE → tighten
-        # -----------------------------
-        if roi < -5 and avg_true_conf < 65:
-            updated_flags[market_name] = {
-                "is_filtered": True,
-                "reason": f"Low ROI ({round(roi,2)}%) + weak confidence"
-            }
-
-            for cat in ["Top Plays", "AI Picks"]:
-                current = float(updated_thresholds.get(cat, 3.0))
-                updated_thresholds[cat] = _adjust_threshold(current, +0.5)
-
-        # -----------------------------
-        # WINNING PLAY TYPE → loosen
-        # -----------------------------
-        elif roi > 5 and avg_true_conf > 68:
-            updated_flags[market_name] = {
-                "is_filtered": False,
-                "reason": f"Strong ROI ({round(roi,2)}%)"
-            }
-
-            for cat in ["Top Plays", "AI Picks"]:
-                current = float(updated_thresholds.get(cat, 3.0))
-                updated_thresholds[cat] = _adjust_threshold(current, -0.25)
-
-        # -----------------------------
-        # NEUTRAL → no change
-        # -----------------------------
-        else:
-            updated_flags[market_name] = {
-                "is_filtered": False,
-                "reason": "Neutral performance"
-            }
-
-    # Save learning updates
-    learning_state["bad_play_type_flags"] = updated_flags
-    learning_state["category_thresholds"] = updated_thresholds
-    learning_state["last_learning_update"] = datetime.now().strftime("%Y-%m-%d %H:%M")
-
-    st.session_state["learning_state"] = learning_state
-    st.markdown("### Play Type Performance / Auto-Filter Status")
-
-    bet_log_records = st.session_state.get("bet_log", [])
-    if not isinstance(bet_log_records, list):
-        bet_log_records = []
-
-    bet_log_df = pd.DataFrame(bet_log_records) if bet_log_records else pd.DataFrame()
-
-    required_log_cols = [
-        "timestamp",
-        "date",
-        "sport",
-        "game",
-        "market",
-        "selection",
-        "odds",
-        "edge",
-        "confidence",
-        "true_confidence",
-        "units",
-        "result",
-        "profit",
-        "status",
-        "play_id",
-        "log_category",
-        "source",
-        "notes",
-    ]
-    for col in required_log_cols:
-        if col not in bet_log_df.columns:
-            bet_log_df[col] = ""
-
-    def _derive_settled_result(row):
-        direct_result = _normalize_result(row.get("result", ""))
-        if direct_result:
-            return direct_result
-
-        status_value = str(row.get("status", "")).strip().lower()
-        if status_value in ["win", "won"]:
-            return "Win"
-        if status_value in ["loss", "lost"]:
-            return "Loss"
-        if status_value == "push":
-            return "Push"
-
-        profit_value = row.get("profit", "")
-        if str(profit_value).strip() != "":
-            profit_num = _safe_float(profit_value, 0.0)
-            if profit_num > 0:
-                return "Win"
-            if profit_num < 0:
-                return "Loss"
-            return "Push"
-
-        return ""
-
-    settled_df = bet_log_df.copy()
-
-    if not settled_df.empty:
-        settled_df["derived_result"] = settled_df.apply(_derive_settled_result, axis=1)
-        settled_df["profit_num"] = settled_df["profit"].apply(lambda x: _safe_float(x, 0.0))
-        settled_df["units_num"] = settled_df["units"].apply(lambda x: _safe_float(x, 0.0))
-        settled_df["edge_num"] = settled_df["edge"].apply(lambda x: _safe_float(x, 0.0))
-        settled_df["true_confidence_num"] = settled_df["true_confidence"].apply(lambda x: _safe_float(x, 0.0))
-        settled_df["market_clean"] = settled_df["market"].apply(lambda x: _clean_text(x, "").lower())
-        settled_df["category_clean"] = settled_df["log_category"].apply(lambda x: _clean_text(x, "Uncategorized"))
-        settled_df = settled_df[settled_df["derived_result"] != ""].copy()
-
-    min_samples_required = int(learning_state.get("category_min_samples", 8) or 8)
-
-    bad_play_type_flags = learning_state.get("bad_play_type_flags", {})
-    if not isinstance(bad_play_type_flags, dict):
-        bad_play_type_flags = {}
-
-    if settled_df.empty:
-        st.info("No graded bet history yet. The self-learning engine will activate after enough settled bets.")
-    else:
-        performance_rows = []
-
-        grouped = settled_df.groupby("market_clean", dropna=False)
-        for market_name, group in grouped:
-            total_bets = len(group)
-            wins = int((group["derived_result"] == "Win").sum())
-            losses = int((group["derived_result"] == "Loss").sum())
-            pushes = int((group["derived_result"] == "Push").sum())
-            total_profit = float(group["profit_num"].sum())
-            total_units = float(group["units_num"].sum())
-
-            roi = 0.0
-            if total_units > 0:
-                roi = (total_profit / total_units) * 100.0
-
-            avg_edge = float(group["edge_num"].mean()) if total_bets > 0 else 0.0
-            avg_true_conf = float(group["true_confidence_num"].mean()) if total_bets > 0 else 0.0
-
-            auto_flag = bad_play_type_flags.get(market_name, {})
-            if not isinstance(auto_flag, dict):
-                auto_flag = {}
-
-            is_filtered = bool(auto_flag.get("is_filtered", False))
-            filter_reason = str(auto_flag.get("reason", "")).strip()
-
-            if total_bets < min_samples_required:
-                status_label = f"Learning ({total_bets}/{min_samples_required})"
-            elif is_filtered:
-                status_label = "Auto-Filtered"
-            elif roi > 0:
-                status_label = "Positive"
-            elif roi < 0:
-                status_label = "Negative"
-            else:
-                status_label = "Neutral"
-
-            performance_rows.append({
-                "Play Type": market_name.title() if market_name else "Unknown",
-                "Bets": total_bets,
-                "Wins": wins,
-                "Losses": losses,
-                "Pushes": pushes,
-                "ROI %": round(roi, 2),
-                "Profit": round(total_profit, 2),
-                "Avg Edge %": round(avg_edge, 2),
-                "Avg True Conf %": round(avg_true_conf, 2),
-                "Status": status_label,
-                "Reason": filter_reason if filter_reason else "—",
-            })
-
-        performance_df = pd.DataFrame(performance_rows)
-
-        if performance_df.empty:
-            st.info("No play-type performance data is ready yet.")
-        else:
-            performance_df = performance_df.sort_values(
-                by=["Bets", "ROI %", "Avg Edge %"],
-                ascending=[False, False, False]
-            ).reset_index(drop=True)
-
-            st.dataframe(performance_df, use_container_width=True, hide_index=True)
-
-            summary_col1, summary_col2, summary_col3 = st.columns(3)
-            with summary_col1:
-                st.metric("Settled Bets", int(len(settled_df)))
-            with summary_col2:
-                positive_types = int((performance_df["Status"] == "Positive").sum())
-                st.metric("Positive Play Types", positive_types)
-            with summary_col3:
-                filtered_types = int((performance_df["Status"] == "Auto-Filtered").sum())
-                st.metric("Auto-Filtered Types", filtered_types)
-
+    # =========================================================
+    # CATEGORY PERFORMANCE SNAPSHOT
+    # =========================================================
     st.markdown("### Category Performance Snapshot")
 
-    if settled_df.empty:
-        st.info("No settled category data yet.")
-    else:
-        category_rows = []
-        category_grouped = settled_df.groupby("category_clean", dropna=False)
-
-        for category_name, group in category_grouped:
-            total_bets = len(group)
-            wins = int((group["derived_result"] == "Win").sum())
-            total_profit = float(group["profit_num"].sum())
-            total_units = float(group["units_num"].sum())
-
-            roi = 0.0
-            if total_units > 0:
-                roi = (total_profit / total_units) * 100.0
-
-            graded_non_push = int((group["derived_result"].isin(["Win", "Loss"])).sum())
-            win_rate = 0.0
-            if graded_non_push > 0:
-                win_rate = (wins / graded_non_push) * 100.0
-
-            category_rows.append({
-                "Category": category_name,
-                "Bets": total_bets,
-                "Win Rate %": round(win_rate, 2),
-                "ROI %": round(roi, 2),
-                "Profit": round(total_profit, 2),
-            })
-
-        category_df = pd.DataFrame(category_rows)
-
-        if not category_df.empty:
-            category_df = category_df.sort_values(
-                by=["Bets", "ROI %"],
-                ascending=[False, False]
-            ).reset_index(drop=True)
-
-            st.dataframe(category_df, use_container_width=True, hide_index=True)
-        else:
-            st.info("No settled category data yet.")
-
-    st.markdown("### CLV Learning Notes")
-    st.caption(
-        "V33.2 uses CLV as a secondary validation signal. "
-        "If a play type keeps losing both money and closing line value, "
-        "the engine tightens thresholds faster and can auto-filter that play type sooner."
-    )
-
-    st.markdown("### Engine Readiness")
-    if settled_df.empty:
-        st.warning("Learning engine is waiting for settled bets before it can adapt.")
-    elif len(settled_df) < min_samples_required:
-        st.warning(
-            f"Learning engine is collecting data. "
-            f"It becomes more reliable after at least {min_samples_required} settled bets per play type."
+    if not settled_df.empty and "category" in settled_df.columns:
+        perf = (
+            settled_df.groupby("category")
+            .agg(
+                bets=("category", "count"),
+                wins=("status", lambda x: (x == "win").sum()),
+                profit=("profit", "sum") if "profit" in settled_df.columns else ("category", "count")
+            )
+            .reset_index()
         )
+
+        perf["win_rate"] = (perf["wins"] / perf["bets"]) * 100
+        st.dataframe(perf, use_container_width=True, hide_index=True)
     else:
+        st.info("Not enough settled data yet for category performance.")
+
+    # =========================================================
+    # ENGINE STATUS
+    # =========================================================
+    st.markdown("### Engine Status")
+
+    if len(settled_df) < 5:
+        st.warning("Learning engine is collecting data (need 5+ settled bets).")
+    else:
+        st.success("Learning engine active.")
         st.success("Learning engine has enough graded history to begin making stronger filter decisions.")

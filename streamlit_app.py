@@ -5322,22 +5322,23 @@ elif nav == "Bet Log":
 # =========================================================
 # ADAPTIVE SETTINGS + V33 SELF-LEARNING ENGINE
 # =========================================================
-with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded=False): 
-# =========================================================
-# SAFE SETTLED DATA INIT (PREVENT NAME ERROR)
-# =========================================================
-settled_df = pd.DataFrame()
+with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded=False):
 
-try:
-    if "bet_log" in st.session_state and st.session_state["bet_log"]:
-        _df = pd.DataFrame(st.session_state["bet_log"])
-
-        if "status" in _df.columns:
-            settled_df = _df[
-                _df["status"].astype(str).str.lower().isin(["win", "loss"])
-            ].copy()
-except:
+    # =========================================================
+    # SAFE SETTLED DATA INIT (PREVENT NAME ERROR)
+    # =========================================================
     settled_df = pd.DataFrame()
+
+    try:
+        if "bet_log" in st.session_state and st.session_state["bet_log"]:
+            _df = pd.DataFrame(st.session_state["bet_log"])
+
+            if "status" in _df.columns:
+                settled_df = _df[
+                    _df["status"].astype(str).str.lower().isin(["win", "loss"])
+                ].copy()
+    except:
+        settled_df = pd.DataFrame()
     st.subheader("Learning Weights")
 
     learning_state = st.session_state.get("learning_state", {})

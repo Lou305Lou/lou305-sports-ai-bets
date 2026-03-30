@@ -5332,34 +5332,66 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
 
     st.markdown("### Category Edge Thresholds")
 
-    default_thresholds_percent = {
-        "Top Plays": 3.0,
-        "AI Picks": 3.5,
-        "AI Parlays": 5.0,
-        "Watchlist": 2.0,
-    }
+def _normalize_threshold_percent(v, default_percent):
+    try:
+        raw = float(v)
+    except:
+        raw = default_percent
 
-    category_thresholds = learning_state.get("category_thresholds", {})
-    if not isinstance(category_thresholds, dict):
-        category_thresholds = {}
+    if raw <= 0:
+        return float(default_percent)
 
-    threshold_rows = []
-    for category_name in ["Top Plays", "AI Picks", "AI Parlays", "Watchlist"]:
-        baseline_percent = float(default_thresholds_percent[category_name])
-        current_percent = _normalize_threshold_percent(
-            category_thresholds.get(category_name, baseline_percent),
-            baseline_percent
-        )
+    # Convert decimal → percent
+    if raw <= 1:
+        return raw * 100.0
 
-        threshold_rows.append({
-            "Category": category_name,
-            "Min Edge Required %": round(current_percent, 2),
-            "Base %": round(baseline_percent, 2),
-            "Status": _threshold_status_label(current_percent, baseline_percent),
-        })
+    return raw
 
-    threshold_df = pd.DataFrame(threshold_rows)
-    st.dataframe(threshold_df, use_container_width=True, hide_index=True)
+def _threshold_status_label(current_percent, baseline_percent):
+    if current_percent > baseline_percent + 0.001:
+        return "Tightened"
+    if current_percent < baseline_percent - 0.001:
+        return "Loosened"
+    return "Base"
+
+default_thresholds_percent = {
+    "Top Plays": 3.0,
+    "AI Picks": 3.5,
+    "AI Parlays": 5.0,
+    "Watchlist": 2.0,
+}
+
+category_thresholds = learning_state.get("category_thresholds", {})
+if not isinstance(category_thresholds, dict):
+    category_thresholds = {}
+
+threshold_rows = []
+
+for category_name in ["Top Plays", "AI Picks", "AI Parlays", "Watchlist"]:
+    baseline = default_thresholds_percent[category_name]
+
+    raw_value = category_thresholds.get(category_name, baseline)
+    current = _normalize_threshold_percent(raw_value, baseline)
+
+    threshold_rows.append({
+        "Category": category_name,
+        "Min Edge Required %": round(current, 2),
+        "Base %": baseline,
+        "Status": _threshold_status_label(current, baseline)
+    })
+
+threshold_df = pd.DataFrame(threshold_rows)
+
+st.dataframe(threshold_df, use_container_width=True, hide_index=True)
+
+# Quick summary metrics
+t1, t2, t3 = st.columns(3)
+with t1:
+    st.metric("Tightened", int((threshold_df["Status"] == "Tightened").sum()))
+with t2:
+    st.metric("Loosened", int((threshold_df["Status"] == "Loosened").sum()))
+with t3:
+    st.metric("Base", int((threshold_df["Status"] == "Base").sum()))
 
     threshold_status_counts = {
         "Tightened": int((threshold_df["Status"] == "Tightened").sum()),

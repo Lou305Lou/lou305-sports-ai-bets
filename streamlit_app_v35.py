@@ -782,6 +782,78 @@ def finalize_selected_sport_context():
     """
     sync_legacy_keys_to_selected_s
 
+# =========================================================
+# MULTI-SPORT DISPLAY / LOG HELPERS
+# =========================================================
+def get_selected_sport_label():
+    return str(get_selected_sport()).strip().upper()
+
+def format_scope_caption(base_text):
+    return f"{base_text} ({get_selected_sport_label()})"
+
+def get_selected_sport_bet_count():
+    return len(get_bet_log_for_sport(get_selected_sport()))
+
+def build_composite_play_id(play_id, sport_name=None):
+    sport_name = str(sport_name or get_selected_sport()).strip().upper()
+    raw_play_id = str(play_id).strip()
+    return f"{sport_name}__{raw_play_id}"
+
+def get_existing_composite_play_ids():
+    existing_rows = st.session_state.get("bet_log", [])
+    output = set()
+
+    for row in existing_rows:
+        sport_name = str(row.get("sport", "")).strip().upper()
+        play_id = str(row.get("play_id", "")).strip()
+        if sport_name and play_id:
+            output.add(f"{sport_name}__{play_id}")
+
+    return output
+
+def ensure_row_has_selected_sport(row, sport_name=None):
+    sport_name = str(sport_name or get_selected_sport()).strip().upper()
+    out = dict(row) if isinstance(row, dict) else {}
+    out["sport"] = sport_name
+    return out
+
+def filter_dataframe_to_selected_sport(df, sport_name=None):
+    sport_name = str(sport_name or get_selected_sport()).strip().upper()
+
+    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+        return pd.DataFrame() if not isinstance(df, pd.DataFrame) else df.copy()
+
+    out = df.copy()
+
+    if "sport" not in out.columns:
+        out["sport"] = sport_name
+        return out
+
+    out["sport"] = out["sport"].astype(str).str.upper().str.strip()
+    filtered = out[out["sport"].isin(["", sport_name])].copy()
+
+    if filtered.empty:
+        return out.copy()
+
+    filtered.loc[:, "sport"] = filtered["sport"].replace("", sport_name)
+    return filtered
+
+def get_selected_sport_learning_summary():
+    learning_state = get_learning_state_for_sport(get_selected_sport())
+
+    if not isinstance(learning_state, dict):
+        return {
+            "min_samples": 3,
+            "last_update": None,
+            "accelerated_mode": True,
+        }
+
+    return {
+        "min_samples": int(learning_state.get("category_min_samples", 3) or 3),
+        "last_update": learning_state.get("last_update"),
+        "accelerated_mode": bool(learning_state.get("accelerated_learning_mode", True)),
+    }
+
 
 # =========================================================
 # CACHE + DATE HELPERS

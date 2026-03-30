@@ -5293,9 +5293,46 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
     last_learning_update = str(learning_state.get("last_learning_update", "")).strip()
     st.caption(f"Last learning update: {last_learning_update if last_learning_update else 'None'}")
 
+    def _safe_float(v, default=0.0):
+        try:
+            if v is None or str(v).strip() == "":
+                return float(default)
+            return float(v)
+        except:
+            return float(default)
+
+    def _clean_text(v, fallback="—"):
+        raw = str(v).strip()
+        return raw if raw else fallback
+
+    def _normalize_result(v):
+        raw = str(v).strip().lower()
+        if raw in ["win", "won", "w"]:
+            return "Win"
+        if raw in ["loss", "lost", "l"]:
+            return "Loss"
+        if raw in ["push", "p"]:
+            return "Push"
+        return ""
+
+    def _normalize_threshold_percent(v, default_percent):
+        raw = _safe_float(v, default_percent)
+        if raw <= 0:
+            return float(default_percent)
+        if raw <= 1:
+            return raw * 100.0
+        return raw
+
+    def _threshold_status_label(current_percent, baseline_percent):
+        if current_percent > baseline_percent + 0.001:
+            return "Tightened"
+        if current_percent < baseline_percent - 0.001:
+            return "Loosened"
+        return "Base"
+
     st.markdown("### Category Edge Thresholds")
 
-    default_thresholds = {
+    default_thresholds_percent = {
         "Top Plays": 3.0,
         "AI Picks": 3.5,
         "AI Parlays": 5.0,
@@ -5308,13 +5345,35 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
 
     threshold_rows = []
     for category_name in ["Top Plays", "AI Picks", "AI Parlays", "Watchlist"]:
+        baseline_percent = float(default_thresholds_percent[category_name])
+        current_percent = _normalize_threshold_percent(
+            category_thresholds.get(category_name, baseline_percent),
+            baseline_percent
+        )
+
         threshold_rows.append({
             "Category": category_name,
-            "Min Edge Required %": float(category_thresholds.get(category_name, default_thresholds[category_name]))
+            "Min Edge Required %": round(current_percent, 2),
+            "Base %": round(baseline_percent, 2),
+            "Status": _threshold_status_label(current_percent, baseline_percent),
         })
 
     threshold_df = pd.DataFrame(threshold_rows)
     st.dataframe(threshold_df, use_container_width=True, hide_index=True)
+
+    threshold_status_counts = {
+        "Tightened": int((threshold_df["Status"] == "Tightened").sum()),
+        "Loosened": int((threshold_df["Status"] == "Loosened").sum()),
+        "Base": int((threshold_df["Status"] == "Base").sum()),
+    }
+
+    tcol1, tcol2, tcol3 = st.columns(3)
+    with tcol1:
+        st.metric("Tightened", threshold_status_counts["Tightened"])
+    with tcol2:
+        st.metric("Loosened", threshold_status_counts["Loosened"])
+    with tcol3:
+        st.metric("Base", threshold_status_counts["Base"])
 
     st.markdown("### Play Type Performance / Auto-Filter Status")
 
@@ -5347,28 +5406,6 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
     for col in required_log_cols:
         if col not in bet_log_df.columns:
             bet_log_df[col] = ""
-
-    def _safe_float(v, default=0.0):
-        try:
-            if v is None or str(v).strip() == "":
-                return float(default)
-            return float(v)
-        except:
-            return float(default)
-
-    def _clean_text(v, fallback="—"):
-        raw = str(v).strip()
-        return raw if raw else fallback
-
-    def _normalize_result(v):
-        raw = str(v).strip().lower()
-        if raw in ["win", "won", "w"]:
-            return "Win"
-        if raw in ["loss", "lost", "l"]:
-            return "Loss"
-        if raw in ["push", "p"]:
-            return "Push"
-        return ""
 
     def _derive_settled_result(row):
         direct_result = _normalize_result(row.get("result", ""))

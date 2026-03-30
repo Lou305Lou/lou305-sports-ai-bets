@@ -15,7 +15,166 @@ import streamlit.components.v1 as components
 
 st.set_page_config(page_title="Sports Betting AI Dashboard V34", layout="wide")
 
+# =========================================================
+# MULTI-SPORT STATE + HELPERS
+# =========================================================
+SUPPORTED_SPORTS = {
+    "NBA": {
+        "sport_key": "basketball_nba",
+        "sportsdata_slug": "nba",
+    },
+    "NHL": {
+        "sport_key": "icehockey_nhl",
+        "sportsdata_slug": "nhl",
+    },
+    "MLB": {
+        "sport_key": "baseball_mlb",
+        "sportsdata_slug": "mlb",
+    },
+    "WNBA": {
+        "sport_key": "basketball_wnba",
+        "sportsdata_slug": "wnba",
+    },
+}
 
+DEFAULT_SPORT = "NBA"
+
+if "selected_sport" not in st.session_state:
+    st.session_state["selected_sport"] = DEFAULT_SPORT
+
+if "learning_state_by_sport" not in st.session_state:
+    st.session_state["learning_state_by_sport"] = {}
+
+if "odds_api_games_by_sport" not in st.session_state:
+    st.session_state["odds_api_games_by_sport"] = {}
+
+if "last_successful_odds_games_by_sport" not in st.session_state:
+    st.session_state["last_successful_odds_games_by_sport"] = {}
+
+if "api_mode_by_sport" not in st.session_state:
+    st.session_state["api_mode_by_sport"] = {}
+
+if "last_api_pull_epoch_by_sport" not in st.session_state:
+    st.session_state["last_api_pull_epoch_by_sport"] = {}
+
+if "odds_api_reset_expected_by_sport" not in st.session_state:
+    st.session_state["odds_api_reset_expected_by_sport"] = {}
+
+def get_selected_sport():
+    raw = str(st.session_state.get("selected_sport", DEFAULT_SPORT)).strip().upper()
+    if raw in SUPPORTED_SPORTS:
+        return raw
+    return DEFAULT_SPORT
+
+def get_sport_config(sport=None):
+    sport_name = str(sport or get_selected_sport()).strip().upper()
+    return SUPPORTED_SPORTS.get(sport_name, SUPPORTED_SPORTS[DEFAULT_SPORT])
+
+def get_current_sport_key():
+    return get_sport_config()["sport_key"]
+
+def get_current_sportsdata_slug():
+    return get_sport_config()["sportsdata_slug"]
+
+def get_learning_state_for_sport(sport=None):
+    sport_name = str(sport or get_selected_sport()).strip().upper()
+    all_states = st.session_state.get("learning_state_by_sport", {})
+
+    if sport_name not in all_states or not isinstance(all_states.get(sport_name), dict):
+        all_states[sport_name] = {
+            "weights": {
+                "true_probability": 0.30,
+                "price_edge": 0.25,
+                "market_signal": 0.15,
+                "matchup_quality": 0.15,
+                "historical_performance": 0.15,
+            },
+            "category_thresholds": {
+                "Top Plays": 0.030,
+                "AI Picks": 0.035,
+                "AI Parlays": 0.050,
+                "Watchlist": 0.020,
+            },
+            "last_update": None,
+            "play_type_stats": {},
+            "category_stats": {},
+            "bad_play_type_flags": {},
+            "category_min_samples": 3,
+            "accelerated_learning_mode": True,
+        }
+
+    st.session_state["learning_state_by_sport"] = all_states
+    return all_states[sport_name]
+
+def save_learning_state_for_sport(state, sport=None):
+    sport_name = str(sport or get_selected_sport()).strip().upper()
+    all_states = st.session_state.get("learning_state_by_sport", {})
+    all_states[sport_name] = state
+    st.session_state["learning_state_by_sport"] = all_states
+
+def get_odds_games_for_sport(sport=None):
+    sport_name = str(sport or get_selected_sport()).strip().upper()
+    return st.session_state.get("odds_api_games_by_sport", {}).get(sport_name, [])
+
+def set_odds_games_for_sport(games, sport=None):
+    sport_name = str(sport or get_selected_sport()).strip().upper()
+    mapping = st.session_state.get("odds_api_games_by_sport", {})
+    mapping[sport_name] = games
+    st.session_state["odds_api_games_by_sport"] = mapping
+
+def get_cached_games_for_sport(sport=None):
+    sport_name = str(sport or get_selected_sport()).strip().upper()
+    return st.session_state.get("last_successful_odds_games_by_sport", {}).get(sport_name, [])
+
+def set_cached_games_for_sport(games, sport=None):
+    sport_name = str(sport or get_selected_sport()).strip().upper()
+    mapping = st.session_state.get("last_successful_odds_games_by_sport", {})
+    mapping[sport_name] = games
+    st.session_state["last_successful_odds_games_by_sport"] = mapping
+
+def get_api_mode_for_sport(sport=None):
+    sport_name = str(sport or get_selected_sport()).strip().upper()
+    return st.session_state.get("api_mode_by_sport", {}).get(sport_name, "idle")
+
+def set_api_mode_for_sport(mode, sport=None):
+    sport_name = str(sport or get_selected_sport()).strip().upper()
+    mapping = st.session_state.get("api_mode_by_sport", {})
+    mapping[sport_name] = str(mode).strip().lower()
+    st.session_state["api_mode_by_sport"] = mapping
+
+def get_last_pull_epoch_for_sport(sport=None):
+    sport_name = str(sport or get_selected_sport()).strip().upper()
+    return float(st.session_state.get("last_api_pull_epoch_by_sport", {}).get(sport_name, 0) or 0)
+
+def set_last_pull_epoch_for_sport(epoch_value, sport=None):
+    sport_name = str(sport or get_selected_sport()).strip().upper()
+    mapping = st.session_state.get("last_api_pull_epoch_by_sport", {})
+    mapping[sport_name] = float(epoch_value or 0)
+    st.session_state["last_api_pull_epoch_by_sport"] = mapping
+
+def get_api_reset_expected_for_sport(sport=None):
+    sport_name = str(sport or get_selected_sport()).strip().upper()
+    return str(st.session_state.get("odds_api_reset_expected_by_sport", {}).get(sport_name, "")).strip()
+
+def set_api_reset_expected_for_sport(value, sport=None):
+    sport_name = str(sport or get_selected_sport()).strip().upper()
+    mapping = st.session_state.get("odds_api_reset_expected_by_sport", {})
+    mapping[sport_name] = str(value).strip()
+    st.session_state["odds_api_reset_expected_by_sport"] = mapping
+
+def get_effective_odds_games_for_sport(sport=None):
+    live_games = get_odds_games_for_sport(sport)
+    if live_games:
+        return live_games
+    return get_cached_games_for_sport(sport)
+
+def get_bet_log_for_sport(sport=None):
+    sport_name = str(sport or get_selected_sport()).strip().upper()
+    rows = st.session_state.get("bet_log", [])
+    return [
+        row for row in rows
+        if str(row.get("sport", "")).strip().upper() == sport_name
+    ]
 # =========================================================
 # API CONFIG (REQUIRED)
 # =========================================================
@@ -485,6 +644,18 @@ SPORTSDATA_CALL_LIMITS = {
     "starting_lineups_hours": 8,
     "team_game_stats_by_date_hours": 12,
 }
+# =========================================================
+# MULTI-SPORT API HELPERS
+# =========================================================
+def get_sportsdata_base(sport_slug=None):
+    slug = str(sport_slug or get_current_sportsdata_slug()).strip().lower()
+    return SPORTSDATA_BASES.get(slug, SPORTSDATA_BASES["nba"])
+
+def get_odds_api_sport_key(sport_name=None):
+    return get_sport_config(sport_name)["sport_key"]
+
+def get_sportsdata_sport_slug(sport_name=None):
+    return get_sport_config(sport_name)["sportsdata_slug"]
 # =========================================================
 # CACHE + DATE HELPERS
 # =========================================================
@@ -1652,7 +1823,23 @@ def parse_today_games(games_text: str):
 
     return games
 
+# =========================================================
+# MULTI-SPORT SIDEBAR SELECTOR
+# =========================================================
+st.sidebar.markdown("### 🏟️ Sport")
 
+selected_sport = st.sidebar.selectbox(
+    "Choose sport",
+    options=list(SUPPORTED_SPORTS.keys()),
+    index=list(SUPPORTED_SPORTS.keys()).index(get_selected_sport()),
+    key="selected_sport",
+)
+
+active_sport_cfg = get_sport_config(selected_sport)
+
+st.sidebar.caption(
+    f"Active sport: {selected_sport} • Odds key: {active_sport_cfg['sport_key']} • Learning tracked separately by sport"
+)
 # =========================================================
 # SIDEBAR CONTROLS (V34.1 IMPROVED UX)
 # =========================================================
@@ -5360,11 +5547,14 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
     # =========================================================
     # SAFE SETTLED DATA INIT
     # =========================================================
+    selected_sport = get_selected_sport()
     settled_df = pd.DataFrame()
 
     try:
-        if "bet_log" in st.session_state and st.session_state["bet_log"]:
-            _df = pd.DataFrame(st.session_state["bet_log"]).copy()
+        sport_bet_log = get_bet_log_for_sport(selected_sport)
+
+        if sport_bet_log:
+            _df = pd.DataFrame(sport_bet_log).copy()
 
             for required_col in ["status", "profit", "market", "log_category", "true_confidence", "edge"]:
                 if required_col not in _df.columns:
@@ -5406,9 +5596,9 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
         "accelerated_learning_mode": True
     }
 
-    learning_state = st.session_state.get("learning_state", {})
+    learning_state = get_learning_state_for_sport(selected_sport)
     if not isinstance(learning_state, dict):
-        learning_state = {}
+        learning_state = default_learning_state.copy()
 
     for key, val in default_learning_state.items():
         if key not in learning_state:
@@ -5507,7 +5697,6 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
                 "stage": stage,
             }
 
-            # Trusted filtering
             if sample_size >= 8:
                 if total_profit <= -2 and win_rate < 45:
                     bad_play_type_flags[market_name] = {
@@ -5525,7 +5714,6 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
                         "reason": "Trusted but neutral"
                     }
 
-            # Active filtering
             elif sample_size >= 5:
                 if total_profit <= -1.5 and win_rate < 45:
                     bad_play_type_flags[market_name] = {
@@ -5543,7 +5731,6 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
                         "reason": "Active review"
                     }
 
-            # Probation stage: soft flags only
             elif sample_size >= min_samples:
                 if total_profit <= -1 and win_rate < 40:
                     bad_play_type_flags[market_name] = {
@@ -5594,21 +5781,18 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
             if category_name in current_thresholds and sample_size >= min_samples:
                 current_val = float(current_thresholds[category_name])
 
-                # Trusted stage
                 if sample_size >= 8:
                     if total_profit <= -2 and win_rate < 45:
                         current_val += 0.0030
                     elif total_profit >= 2 and win_rate >= 55 and avg_true_conf >= 65:
                         current_val -= 0.0030
 
-                # Active stage
                 elif sample_size >= 5:
                     if total_profit <= -1.5 and win_rate < 45:
                         current_val += 0.0025
                     elif total_profit >= 1.5 and win_rate >= 55 and avg_true_conf >= 65:
                         current_val -= 0.0025
 
-                # Probation stage
                 elif sample_size >= 3:
                     if total_profit <= -1 and win_rate < 40:
                         current_val += 0.0015
@@ -5625,7 +5809,7 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
     learning_state["category_min_samples"] = min_samples
     learning_state["accelerated_learning_mode"] = True
 
-    st.session_state["learning_state"] = learning_state
+    save_learning_state_for_sport(learning_state, selected_sport)
 
     # =========================================================
     # LEARNING WEIGHTS DISPLAY
@@ -5646,6 +5830,7 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
 
     last_update = learning_state.get("last_update")
     st.caption(f"Last learning update: {last_update if last_update else 'None'}")
+    st.caption(f"Learning scope: {selected_sport}")
 
     # =========================================================
     # CATEGORY EDGE THRESHOLDS
@@ -5703,7 +5888,7 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
         )
         st.dataframe(pt_df, use_container_width=True, hide_index=True)
     else:
-        st.info("No graded bet history yet. The self-learning engine will activate after enough settled bets.")
+        st.info(f"No graded {selected_sport} bet history yet. The self-learning engine will activate after enough settled bets.")
 
     # =========================================================
     # CATEGORY PERFORMANCE SNAPSHOT
@@ -5731,14 +5916,14 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
         )
         st.dataframe(cat_df, use_container_width=True, hide_index=True)
     else:
-        st.info("No settled category data yet.")
+        st.info(f"No settled {selected_sport} category data yet.")
 
     # =========================================================
     # CLV LEARNING NOTES
     # =========================================================
     st.markdown("### CLV Learning Notes")
     st.caption(
-        "Accelerated Learning Mode starts with probation-stage learning after 3 settled bets, "
+        f"Accelerated Learning Mode for {selected_sport} starts with probation-stage learning after 3 settled bets, "
         "becomes active around 5, and trusted around 8. Early adjustments stay small to reduce overreaction."
     )
 
@@ -5748,10 +5933,10 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
     st.markdown("### Engine Readiness")
 
     if len(settled_df) < min_samples:
-        st.warning(f"Learning engine is collecting data (need {min_samples}+ settled bets).")
+        st.warning(f"{selected_sport} learning engine is collecting data (need {min_samples}+ settled bets).")
     elif len(settled_df) < 5:
-        st.info("Accelerated Learning Mode is in probation stage.")
+        st.info(f"{selected_sport} Accelerated Learning Mode is in probation stage.")
     elif len(settled_df) < 8:
-        st.info("Accelerated Learning Mode is active.")
+        st.info(f"{selected_sport} Accelerated Learning Mode is active.")
     else:
-        st.success("Accelerated Learning Mode is fully active.")
+        st.success(f"{selected_sport} Accelerated Learning Mode is fully active.")

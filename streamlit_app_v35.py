@@ -696,6 +696,94 @@ def get_active_sportsdata_slug():
 sync_selected_sport_state_to_legacy_keys()
 
 # =========================================================
+# MULTI-SPORT ODDS REQUEST HELPERS
+# =========================================================
+def get_odds_api_url_for_sport(sport_name=None):
+    sport_key = get_odds_api_sport_key(sport_name)
+    return f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds"
+
+def get_default_odds_params_for_sport(sport_name=None):
+    return {
+        "regions": "us",
+        "markets": "h2h,spreads,totals",
+        "oddsFormat": "american",
+        "dateFormat": "iso",
+        "bookmakers": "draftkings,fanduel,betmgm,caesars,espnbet,betrivers",
+    }
+
+def get_supported_market_types_for_sport(sport_name=None):
+    sport_name = str(sport_name or get_selected_sport()).strip().upper()
+
+    if sport_name == "MLB":
+        return ["h2h", "spreads", "totals"]
+    if sport_name == "NHL":
+        return ["h2h", "spreads", "totals"]
+    if sport_name == "WNBA":
+        return ["h2h", "spreads", "totals"]
+    return ["h2h", "spreads", "totals"]
+
+def normalize_market_name_by_sport(market_name, sport_name=None):
+    sport_name = str(sport_name or get_selected_sport()).strip().upper()
+    raw = str(market_name).strip().lower()
+
+    if raw in ["h2h", "moneyline", "ml"]:
+        return "moneyline"
+    if raw in ["spreads", "spread"]:
+        return "spread"
+    if raw in ["totals", "total", "ou", "over_under"]:
+        return "total"
+
+    # keep raw label for anything custom that may come later
+    return raw
+
+def enrich_play_row_with_sport(play_row, sport_name=None):
+    sport_name = str(sport_name or get_selected_sport()).strip().upper()
+    row = dict(play_row) if isinstance(play_row, dict) else {}
+
+    row["sport"] = sport_name
+
+    if "market" in row:
+        row["market"] = normalize_market_name_by_sport(row.get("market", ""), sport_name)
+
+    return row
+
+def normalize_dataframe_for_selected_sport(df, sport_name=None):
+    sport_name = str(sport_name or get_selected_sport()).strip().upper()
+
+    if df is None or not isinstance(df, pd.DataFrame):
+        return pd.DataFrame()
+
+    out = df.copy()
+
+    if "sport" not in out.columns:
+        out["sport"] = sport_name
+    else:
+        out["sport"] = out["sport"].astype(str).str.upper().replace("", sport_name)
+
+    if "market" in out.columns:
+        out["market"] = out["market"].apply(lambda x: normalize_market_name_by_sport(x, sport_name))
+
+    return out
+
+# =========================================================
+# MULTI-SPORT FETCH / STATE WRAPPER HELPERS
+# =========================================================
+def prepare_selected_sport_context():
+    """
+    Before older odds-fetch code runs, mirror the selected sport's state
+    into the original single-sport session keys so legacy logic keeps working.
+    """
+    sync_selected_sport_state_to_legacy_keys()
+
+def finalize_selected_sport_context():
+    """
+    After older odds-fetch code runs, push any updated legacy keys back into
+    the selected sport's dedicated storage bucket.
+    """
+    sync_legacy_keys_to_selected_s
+
+
+# =========================================================
 # CACHE + DATE HELPERS
 # =========================================================
 def today_str():

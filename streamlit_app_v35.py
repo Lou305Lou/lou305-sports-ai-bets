@@ -854,6 +854,218 @@ def get_selected_sport_learning_summary():
         "accelerated_mode": bool(learning_state.get("accelerated_learning_mode", True)),
     }
 
+# =========================================================
+# MULTI-SPORT PLAY TEMPLATE HELPERS
+# =========================================================
+def get_default_team_market_templates_for_sport(sport_name=None):
+    sport_name = str(sport_name or get_selected_sport()).strip().upper()
+
+    if sport_name == "NBA":
+        return [
+            ("moneyline", lambda g: g.split(" vs ")[1]),
+            ("moneyline", lambda g: g.split(" vs ")[0]),
+            ("total", lambda g: "Over 221.5"),
+            ("total", lambda g: "Under 221.5"),
+        ]
+
+    if sport_name == "NHL":
+        return [
+            ("moneyline", lambda g: g.split(" vs ")[1]),
+            ("moneyline", lambda g: g.split(" vs ")[0]),
+            ("total", lambda g: "Over 6.5"),
+            ("total", lambda g: "Under 6.5"),
+        ]
+
+    if sport_name == "MLB":
+        return [
+            ("moneyline", lambda g: g.split(" vs ")[1]),
+            ("moneyline", lambda g: g.split(" vs ")[0]),
+            ("total", lambda g: "Over 8.5"),
+            ("total", lambda g: "Under 8.5"),
+        ]
+
+    if sport_name == "WNBA":
+        return [
+            ("moneyline", lambda g: g.split(" vs ")[1]),
+            ("moneyline", lambda g: g.split(" vs ")[0]),
+            ("total", lambda g: "Over 164.5"),
+            ("total", lambda g: "Under 164.5"),
+        ]
+
+    return [
+        ("moneyline", lambda g: g.split(" vs ")[1]),
+        ("moneyline", lambda g: g.split(" vs ")[0]),
+        ("total", lambda g: "Over 221.5"),
+        ("total", lambda g: "Under 221.5"),
+    ]
+
+def get_default_prop_types_for_sport(sport_name=None):
+    sport_name = str(sport_name or get_selected_sport()).strip().upper()
+
+    if sport_name in ["NBA", "WNBA"]:
+        return ["points", "rebounds", "assists", "pra"]
+
+    if sport_name == "NHL":
+        return ["goals", "assists", "points", "sog"]
+
+    if sport_name == "MLB":
+        return ["hits", "runs", "rbis", "strikeouts"]
+
+    return ["points", "rebounds", "assists", "pra"]
+
+def get_default_total_band_for_sport(sport_name=None):
+    sport_name = str(sport_name or get_selected_sport()).strip().upper()
+
+    if sport_name == "NBA":
+        return (210.5, 238.5)
+    if sport_name == "NHL":
+        return (5.5, 7.5)
+    if sport_name == "MLB":
+        return (7.0, 10.5)
+    if sport_name == "WNBA":
+        return (156.5, 178.5)
+
+    return (210.5, 238.5)
+
+def get_sport_display_note(sport_name=None):
+    sport_name = str(sport_name or get_selected_sport()).strip().upper()
+
+    notes = {
+        "NBA": "Basketball scoring environment with standard moneyline / total logic.",
+        "NHL": "Lower-scoring environment; totals and moneylines tend to be tighter.",
+        "MLB": "Baseball scoring environment with lower totals and different volatility.",
+        "WNBA": "Basketball logic with lower default totals than NBA.",
+    }
+
+    return notes.get(sport_name, "Multi-sport framework active.")
+
+def safe_parse_matchup(game_text):
+    raw = str(game_text).strip()
+
+    if " vs " in raw:
+        parts = raw.split(" vs ")
+        if len(parts) == 2:
+            return parts[0].strip(), parts[1].strip()
+
+    if " v " in raw:
+        parts = raw.split(" v ")
+        if len(parts) == 2:
+            return parts[0].strip(), parts[1].strip()
+
+    return "", ""
+
+def build_team_market_templates_for_selected_sport():
+    return get_default_team_market_templates_for_sport(get_selected_sport())
+
+def build_prop_types_for_selected_sport():
+    return get_default_prop_types_for_sport(get_selected_sport())
+
+def get_total_band_for_selected_sport():
+    return get_default_total_band_for_sport(get_selected_sport())
+# =========================================================
+# MULTI-SPORT PLAY GENERATION HELPERS
+# =========================================================
+def build_default_game_label(away_team, home_team):
+    away = str(away_team).strip().upper()
+    home = str(home_team).strip().upper()
+
+    if away and home:
+        return f"{away} vs {home}"
+    return ""
+
+def get_default_total_value_for_sport(sport_name=None):
+    sport_name = str(sport_name or get_selected_sport()).strip().upper()
+
+    defaults = {
+        "NBA": 221.5,
+        "NHL": 6.5,
+        "MLB": 8.5,
+        "WNBA": 164.5,
+    }
+
+    return float(defaults.get(sport_name, 221.5))
+
+def format_default_total_selection(direction, sport_name=None):
+    total_value = get_default_total_value_for_sport(sport_name)
+    direction = str(direction).strip().title()
+
+    if direction not in ["Over", "Under"]:
+        direction = "Over"
+
+    return f"{direction} {total_value}"
+
+def build_team_market_templates_for_game(game_text, sport_name=None):
+    sport_name = str(sport_name or get_selected_sport()).strip().upper()
+    away_team, home_team = safe_parse_matchup(game_text)
+
+    if not away_team or not home_team:
+        return []
+
+    return [
+        {
+            "market": "moneyline",
+            "selection": home_team,
+            "sport": sport_name,
+            "game": game_text,
+        },
+        {
+            "market": "moneyline",
+            "selection": away_team,
+            "sport": sport_name,
+            "game": game_text,
+        },
+        {
+            "market": "total",
+            "selection": format_default_total_selection("Over", sport_name),
+            "sport": sport_name,
+            "game": game_text,
+        },
+        {
+            "market": "total",
+            "selection": format_default_total_selection("Under", sport_name),
+            "sport": sport_name,
+            "game": game_text,
+        },
+    ]
+
+def build_default_market_rows_from_games(games_list, sport_name=None):
+    sport_name = str(sport_name or get_selected_sport()).strip().upper()
+    rows = []
+
+    for game_text in games_list or []:
+        rows.extend(build_team_market_templates_for_game(game_text, sport_name))
+
+    if not rows:
+        return pd.DataFrame(columns=["sport", "game", "market", "selection"])
+
+    return pd.DataFrame(rows)
+
+def attach_selected_sport_to_dataframe(df, sport_name=None):
+    sport_name = str(sport_name or get_selected_sport()).strip().upper()
+
+    if df is None or not isinstance(df, pd.DataFrame):
+        return pd.DataFrame()
+
+    out = df.copy()
+
+    if "sport" not in out.columns:
+        out["sport"] = sport_name
+    else:
+        out["sport"] = out["sport"].astype(str).str.upper().replace("", sport_name)
+
+    return out
+
+def get_selected_sport_template_summary():
+    sport_name = get_selected_sport()
+
+    return {
+        "sport": sport_name,
+        "default_total": get_default_total_value_for_sport(sport_name),
+        "prop_types": get_default_prop_types_for_sport(sport_name),
+        "display_note": get_sport_display_note(sport_name),
+    }
+
+
 
 # =========================================================
 # CACHE + DATE HELPERS

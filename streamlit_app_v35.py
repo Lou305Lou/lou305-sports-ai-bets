@@ -656,6 +656,45 @@ def get_odds_api_sport_key(sport_name=None):
 
 def get_sportsdata_sport_slug(sport_name=None):
     return get_sport_config(sport_name)["sportsdata_slug"]
+
+# =========================================================
+# MULTI-SPORT ODDS STATE COMPATIBILITY HELPERS
+# =========================================================
+def sync_selected_sport_state_to_legacy_keys():
+    """
+    Keeps old single-sport parts of the app working while V35 is being upgraded.
+    This mirrors the selected sport's state into the original session keys.
+    """
+    selected_sport = get_selected_sport()
+
+    st.session_state["api_mode"] = get_api_mode_for_sport(selected_sport)
+    st.session_state["odds_api_games"] = get_odds_games_for_sport(selected_sport)
+    st.session_state["last_successful_odds_games"] = get_cached_games_for_sport(selected_sport)
+    st.session_state["last_api_pull_epoch"] = get_last_pull_epoch_for_sport(selected_sport)
+    st.session_state["odds_api_reset_expected"] = get_api_reset_expected_for_sport(selected_sport)
+
+def sync_legacy_keys_to_selected_sport_state():
+    """
+    Pushes results from older existing code back into the selected sport bucket.
+    Use this after old refresh/fetch logic runs, so V35 keeps sport-isolated storage.
+    """
+    selected_sport = get_selected_sport()
+
+    set_api_mode_for_sport(st.session_state.get("api_mode", "idle"), selected_sport)
+    set_odds_games_for_sport(st.session_state.get("odds_api_games", []), selected_sport)
+    set_cached_games_for_sport(st.session_state.get("last_successful_odds_games", []), selected_sport)
+    set_last_pull_epoch_for_sport(st.session_state.get("last_api_pull_epoch", 0), selected_sport)
+    set_api_reset_expected_for_sport(st.session_state.get("odds_api_reset_expected", ""), selected_sport)
+
+def get_active_odds_api_sport_key():
+    return get_sport_config(get_selected_sport())["sport_key"]
+
+def get_active_sportsdata_slug():
+    return get_sport_config(get_selected_sport())["sportsdata_slug"]
+
+# Make sure old code below can still operate on the currently selected sport
+sync_selected_sport_state_to_legacy_keys()
+
 # =========================================================
 # CACHE + DATE HELPERS
 # =========================================================
@@ -4775,29 +4814,30 @@ elif nav == "Watchlist":
 # AI SLIP + PARLAY INTELLIGENCE
 # =========================================================
 elif nav == "AI Slip":
-    st.header("🧠 AI Slip")
+    selected_sport = get_selected_sport()
+    st.header(f"🧠 AI Slip — {selected_sport}")
 
     if today_games:
-        st.caption("Filtered Slate: " + " | ".join(today_games))
+        st.caption(f"{selected_sport} Filtered Slate: " + " | ".join(today_games))
     else:
-        st.caption("Using all live games returned by the API.")
+        st.caption(f"Using all live {selected_sport} games returned by the API.")
 
-    current_api_mode = str(st.session_state.get("api_mode", "idle")).strip().lower()
-    effective_games = get_effective_odds_games()
+    current_api_mode = str(get_api_mode_for_sport(selected_sport)).strip().lower()
+    effective_games = get_effective_odds_games_for_sport(selected_sport)
 
     if len(effective_games) == 0:
         if current_api_mode == "waiting_reset":
-            reset_expected = str(st.session_state.get("odds_api_reset_expected", "")).strip()
+            reset_expected = get_api_reset_expected_for_sport(selected_sport)
             if reset_expected:
-                st.warning(f"The Odds API is waiting for reset. Expected reset around {reset_expected}.")
+                st.warning(f"The Odds API is waiting for reset for {selected_sport}. Expected reset around {reset_expected}.")
             else:
-                st.warning("The Odds API is waiting for reset.")
+                st.warning(f"The Odds API is waiting for reset for {selected_sport}.")
         elif current_api_mode == "limit_hit":
-            st.warning("The Odds API limit has been hit. Cached data will be used when available.")
+            st.warning(f"The Odds API limit has been hit for {selected_sport}. Cached data will be used when available.")
         elif current_api_mode in ["key_error", "invalid_key", "auth_error", "no_key"]:
             st.warning("Your Odds API key is not being accepted right now.")
         else:
-            st.warning("Press 'Refresh Live Odds' in the sidebar to load live odds.")
+            st.warning(f"Press 'Refresh Live Odds' in the sidebar to load live {selected_sport} odds.")
 
     ai_df = pd.DataFrame()
 
@@ -4894,7 +4934,7 @@ elif nav == "AI Slip":
             return raw * 100.0
         return raw
 
-    learning_state = st.session_state.get("learning_state", {})
+    learning_state = get_learning_state_for_sport(selected_sport)
     if not isinstance(learning_state, dict):
         learning_state = {}
 
@@ -4929,13 +4969,19 @@ elif nav == "AI Slip":
 
     if ai_df.empty:
         if current_api_mode in ["limit_hit", "waiting_reset"]:
-            st.info("Odds API limit reached. AI Slip will populate once the API resets or cached data is available.")
+            st.info(f"{selected_sport} Odds API limit reached. AI Slip will populate once the API resets or cached data is available.")
         elif current_api_mode in ["key_error", "invalid_key", "auth_error", "no_key"]:
             st.info("Odds API key issue detected. Fix the key and refresh live odds to generate AI Slip plays.")
         else:
-            st.info("No AI Slip plays available yet. Load odds first, then return here.")
+            st.info(f"No {selected_sport} AI Slip plays available yet. Load odds first, then return here.")
     else:
         ai_df = ai_df.copy()
+
+        if "sport" in ai_df.columns:
+            ai_df["sport"] = ai_df["sport"].astype(str).str.upper().str.strip()
+            sport_filtered_df = ai_df[ai_df["sport"].isin(["", selected_sport])].copy()
+            if not sport_filtered_df.empty:
+                ai_df = sport_filtered_df
 
         ai_df["true_confidence_num"] = ai_df["true_confidence"].apply(_safe_float)
         ai_df["edge_num"] = ai_df["edge"].apply(_safe_float)
@@ -4945,8 +4991,6 @@ elif nav == "AI Slip":
         ai_df["market_clean"] = ai_df["market"].apply(lambda x: _clean_text(x, "").lower())
         ai_df["log_category_clean"] = ai_df["log_category"].apply(lambda x: _clean_text(x, "AI Picks"))
 
-        original_count = len(ai_df)
-
         def _is_market_filtered(market_name):
             market_name = str(market_name).strip().lower()
             flag = bad_play_type_flags.get(market_name, {})
@@ -4954,9 +4998,6 @@ elif nav == "AI Slip":
                 return False
             return bool(flag.get("is_filtered", False))
 
-        # -------------------------------------------------
-        # SMART FILTERING STEP 1: REMOVE BAD PLAY TYPES
-        # -------------------------------------------------
         filtered_out_market_df = ai_df[ai_df["market_clean"].apply(_is_market_filtered)].copy()
         if not filtered_out_market_df.empty:
             removed_by_learning_filters = len(filtered_out_market_df)
@@ -4971,9 +5012,6 @@ elif nav == "AI Slip":
 
         ai_df = ai_df[~ai_df["market_clean"].apply(_is_market_filtered)].copy()
 
-        # -------------------------------------------------
-        # SMART FILTERING STEP 2: ENFORCE AI PICK THRESHOLD
-        # -------------------------------------------------
         below_threshold_df = ai_df[ai_df["edge_num"] < active_ai_pick_threshold].copy()
         if not below_threshold_df.empty:
             removed_by_thresholds = len(below_threshold_df)
@@ -4988,10 +5026,10 @@ elif nav == "AI Slip":
         ai_df = ai_df[ai_df["edge_num"] >= active_ai_pick_threshold].copy()
 
         if removed_by_learning_filters > 0:
-            st.info(f"Smart filtering removed {removed_by_learning_filters} play(s) based on weak play-type performance.")
+            st.info(f"{selected_sport} smart filtering removed {removed_by_learning_filters} play(s) based on weak play-type performance.")
 
         if removed_by_thresholds > 0:
-            st.info(f"Threshold filtering removed {removed_by_thresholds} play(s) below the current AI Picks edge requirement of {active_ai_pick_threshold:.2f}%.")
+            st.info(f"{selected_sport} threshold filtering removed {removed_by_thresholds} play(s) below the current AI Picks edge requirement of {active_ai_pick_threshold:.2f}%.")
 
         if removed_summary_rows:
             removed_df = pd.DataFrame(removed_summary_rows)
@@ -4999,7 +5037,7 @@ elif nav == "AI Slip":
             st.dataframe(removed_df, use_container_width=True, hide_index=True)
 
         if ai_df.empty:
-            st.info("All current AI Slip plays were filtered out by smart filtering or active edge thresholds.")
+            st.info(f"All current {selected_sport} AI Slip plays were filtered out by smart filtering or active edge thresholds.")
         else:
             ai_df = ai_df.sort_values(
                 by=["rank_score_num", "true_confidence_num", "edge_num", "books_seen_num"],
@@ -5021,6 +5059,7 @@ elif nav == "AI Slip":
                 if not play_id:
                     play_id = hashlib.md5(
                         (
+                            str(selected_sport) +
                             str(best_row.get("game", "")) +
                             str(best_row.get("market", "")) +
                             str(best_row.get("selection", ""))
@@ -5042,6 +5081,7 @@ elif nav == "AI Slip":
                         </div>
                         <hr style="margin:10px 0;">
                         <div style="font-size:0.86rem;line-height:1.6;">
+                            <b>Sport:</b> {selected_sport}<br>
                             <b>Odds:</b> {_to_american_string(best_row.get("odds"))}<br>
                             <b>Edge:</b> {best_edge:.2f}%<br>
                             <b>True Confidence:</b> {best_true_conf:.1f}%<br>
@@ -5063,6 +5103,7 @@ elif nav == "AI Slip":
                 info_col1, info_col2 = st.columns(2)
                 with info_col1:
                     st.caption(f"Category: {best_log_category}")
+                    st.caption(f"Sport Scope: {selected_sport}")
                     st.caption(f"Active AI Picks Edge Threshold: {active_ai_pick_threshold:.2f}%")
                     if tags_text:
                         st.caption(f"AI Tags: {tags_text}")
@@ -5074,11 +5115,11 @@ elif nav == "AI Slip":
                 auto_log_col1, auto_log_col2 = st.columns([1, 1])
 
                 with auto_log_col1:
-                    if st.button("➕ Add Best AI Single to Bet Log", key=f"add_best_single_{play_id}"):
+                    if st.button("➕ Add Best AI Single to Bet Log", key=f"add_best_single_{selected_sport}_{play_id}"):
                         bet_entry = {
                             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                             "date": datetime.now().strftime("%Y-%m-%d"),
-                            "sport": str(best_row.get("sport", "NBA")).strip() or "NBA",
+                            "sport": selected_sport,
                             "game": _clean_text(best_row.get("game"), ""),
                             "market": _clean_text(best_row.get("market"), ""),
                             "selection": _clean_text(best_row.get("selection"), ""),
@@ -5098,17 +5139,19 @@ elif nav == "AI Slip":
 
                         existing_log = st.session_state.get("bet_log", [])
                         existing_ids = set(
-                            str(x.get("play_id", "")).strip()
+                            f"{str(x.get('sport', '')).strip().upper()}__{str(x.get('play_id', '')).strip()}"
                             for x in existing_log
                             if str(x.get("play_id", "")).strip()
                         )
 
-                        if play_id in existing_ids:
-                            st.info("This AI single is already in the bet log.")
+                        composite_id = f"{selected_sport}__{play_id}"
+
+                        if composite_id in existing_ids:
+                            st.info("This AI single is already in the bet log for this sport.")
                         else:
                             existing_log.append(bet_entry)
                             st.session_state["bet_log"] = existing_log
-                            st.session_state.setdefault("auto_logged_ids", set()).add(play_id)
+                            st.session_state.setdefault("auto_logged_ids", set()).add(composite_id)
                             save_bet_log(st.session_state["bet_log"])
                             st.success("Best AI Single added to bet log.")
 
@@ -5214,12 +5257,12 @@ elif nav == "AI Slip":
                 best_parlay = parlay_options[0]
 
             if best_parlay is None:
-                st.info(f"Not enough smart-filtered plays cleared the current AI Parlay threshold of {active_ai_parlay_threshold:.2f}% to build a parlay yet.")
+                st.info(f"Not enough smart-filtered {selected_sport} plays cleared the current AI Parlay threshold of {active_ai_parlay_threshold:.2f}% to build a parlay yet.")
             else:
                 parlay_legs = best_parlay["legs"]
                 parlay_play_id = "PARLAY__" + hashlib.md5(
                     "|".join(
-                        f"{str(x.get('game', ''))}_{str(x.get('market', ''))}_{str(x.get('selection', ''))}"
+                        f"{selected_sport}_{str(x.get('game', ''))}_{str(x.get('market', ''))}_{str(x.get('selection', ''))}"
                         for x in parlay_legs
                     ).encode()
                 ).hexdigest()[:16]
@@ -5231,10 +5274,11 @@ elif nav == "AI Slip":
                             {best_parlay["type"]} • {best_parlay["leg_count"]} Legs
                         </div>
                         <div style="font-size:0.82rem;opacity:0.85;margin-top:4px;">
-                            Suggested AI-built parlay based on smart-filtered singles
+                            Suggested AI-built {selected_sport} parlay based on smart-filtered singles
                         </div>
                         <hr style="margin:10px 0;">
                         <div style="font-size:0.86rem;line-height:1.6;">
+                            <b>Sport:</b> {selected_sport}<br>
                             <b>Parlay Odds:</b> {_to_american_string(best_parlay["parlay_odds"])}<br>
                             <b>Total Edge:</b> {best_parlay["total_edge"]:.2f}%<br>
                             <b>Avg True Confidence:</b> {best_parlay["avg_true_conf"]:.1f}%<br>
@@ -5264,23 +5308,25 @@ elif nav == "AI Slip":
                         unsafe_allow_html=True
                     )
 
-                if st.button("➕ Add AI Parlay to Bet Log", key=f"add_ai_parlay_{parlay_play_id}"):
+                if st.button("➕ Add AI Parlay to Bet Log", key=f"add_ai_parlay_{selected_sport}_{parlay_play_id}"):
                     existing_log = st.session_state.get("bet_log", [])
                     existing_ids = set(
-                        str(x.get("play_id", "")).strip()
+                        f"{str(x.get('sport', '')).strip().upper()}__{str(x.get('play_id', '')).strip()}"
                         for x in existing_log
                         if str(x.get("play_id", "")).strip()
                     )
 
-                    if parlay_play_id in existing_ids:
-                        st.info("This AI parlay is already in the bet log.")
+                    composite_id = f"{selected_sport}__{parlay_play_id}"
+
+                    if composite_id in existing_ids:
+                        st.info("This AI parlay is already in the bet log for this sport.")
                     else:
                         leg_summary = " | ".join(str(x.get("selection", "")).strip() for x in parlay_legs)
 
                         parlay_entry = {
                             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                             "date": datetime.now().strftime("%Y-%m-%d"),
-                            "sport": "NBA",
+                            "sport": selected_sport,
                             "game": "Parlay",
                             "market": f"{best_parlay['leg_count']}-Leg Parlay",
                             "selection": leg_summary,
@@ -5300,12 +5346,12 @@ elif nav == "AI Slip":
 
                         existing_log.append(parlay_entry)
                         st.session_state["bet_log"] = existing_log
-                        st.session_state.setdefault("auto_logged_ids", set()).add(parlay_play_id)
+                        st.session_state.setdefault("auto_logged_ids", set()).add(composite_id)
                         save_bet_log(st.session_state["bet_log"])
                         st.success("AI Parlay added to bet log.")
 
             st.markdown("---")
-            st.subheader("📋 Top Smart-Filtered Candidates")
+            st.subheader(f"📋 Top Smart-Filtered {selected_sport} Candidates")
 
             preview_cols = [
                 "selection",

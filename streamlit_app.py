@@ -4707,9 +4707,6 @@ elif nav == "AI Slip":
             return raw * 100.0
         return raw
 
-    removed_by_learning_filters = 0
-    removed_by_thresholds = 0
-
     learning_state = st.session_state.get("learning_state", {})
     if not isinstance(learning_state, dict):
         learning_state = {}
@@ -4734,6 +4731,15 @@ elif nav == "AI Slip":
         default_thresholds_percent["AI Picks"]
     )
 
+    active_ai_parlay_threshold = _normalize_threshold_percent(
+        category_thresholds.get("AI Parlays", default_thresholds_percent["AI Parlays"]),
+        default_thresholds_percent["AI Parlays"]
+    )
+
+    removed_by_learning_filters = 0
+    removed_by_thresholds = 0
+    removed_summary_rows = []
+
     if ai_df.empty:
         if current_api_mode in ["limit_hit", "waiting_reset"]:
             st.info("Odds API limit reached. AI Slip will populate once the API resets or cached data is available.")
@@ -4750,6 +4756,7 @@ elif nav == "AI Slip":
         ai_df["rank_score_num"] = ai_df["rank_score"].apply(_safe_float)
         ai_df["books_seen_num"] = ai_df["books_seen"].apply(_safe_int)
         ai_df["market_clean"] = ai_df["market"].apply(lambda x: _clean_text(x, "").lower())
+        ai_df["log_category_clean"] = ai_df["log_category"].apply(lambda x: _clean_text(x, "AI Picks"))
 
         original_count = len(ai_df)
 
@@ -4760,21 +4767,52 @@ elif nav == "AI Slip":
                 return False
             return bool(flag.get("is_filtered", False))
 
-        ai_df = ai_df[~ai_df["market_clean"].apply(_is_market_filtered)].copy()
-        removed_by_learning_filters = max(0, original_count - len(ai_df))
+        # -------------------------------------------------
+        # SMART FILTERING STEP 1: REMOVE BAD PLAY TYPES
+        # -------------------------------------------------
+        filtered_out_market_df = ai_df[ai_df["market_clean"].apply(_is_market_filtered)].copy()
+        if not filtered_out_market_df.empty:
+            removed_by_learning_filters = len(filtered_out_market_df)
 
-        before_threshold_count = len(ai_df)
+            for _, row in filtered_out_market_df.head(10).iterrows():
+                flag = bad_play_type_flags.get(str(row.get("market_clean", "")).strip().lower(), {})
+                removed_summary_rows.append({
+                    "Selection": _clean_text(row.get("selection")),
+                    "Market": _clean_text(row.get("market")),
+                    "Reason": str(flag.get("reason", "Filtered by learning engine")).strip() or "Filtered by learning engine"
+                })
+
+        ai_df = ai_df[~ai_df["market_clean"].apply(_is_market_filtered)].copy()
+
+        # -------------------------------------------------
+        # SMART FILTERING STEP 2: ENFORCE AI PICK THRESHOLD
+        # -------------------------------------------------
+        below_threshold_df = ai_df[ai_df["edge_num"] < active_ai_pick_threshold].copy()
+        if not below_threshold_df.empty:
+            removed_by_thresholds = len(below_threshold_df)
+
+            for _, row in below_threshold_df.head(10).iterrows():
+                removed_summary_rows.append({
+                    "Selection": _clean_text(row.get("selection")),
+                    "Market": _clean_text(row.get("market")),
+                    "Reason": f"Below AI Picks threshold ({active_ai_pick_threshold:.2f}%)"
+                })
+
         ai_df = ai_df[ai_df["edge_num"] >= active_ai_pick_threshold].copy()
-        removed_by_thresholds = max(0, before_threshold_count - len(ai_df))
 
         if removed_by_learning_filters > 0:
-            st.info(f"Learning filter removed {removed_by_learning_filters} AI Slip play(s) based on weak historical play-type performance.")
+            st.info(f"Smart filtering removed {removed_by_learning_filters} play(s) based on weak play-type performance.")
 
         if removed_by_thresholds > 0:
-            st.info(f"Threshold filter removed {removed_by_thresholds} AI Slip play(s) below the current AI Picks edge requirement of {active_ai_pick_threshold:.2f}%.")
+            st.info(f"Threshold filtering removed {removed_by_thresholds} play(s) below the current AI Picks edge requirement of {active_ai_pick_threshold:.2f}%.")
+
+        if removed_summary_rows:
+            removed_df = pd.DataFrame(removed_summary_rows)
+            st.markdown("### 🚫 Filtered Out Plays")
+            st.dataframe(removed_df, use_container_width=True, hide_index=True)
 
         if ai_df.empty:
-            st.info("All current AI Slip plays were filtered out by active learning rules or edge thresholds.")
+            st.info("All current AI Slip plays were filtered out by smart filtering or active edge thresholds.")
         else:
             ai_df = ai_df.sort_values(
                 by=["rank_score_num", "true_confidence_num", "edge_num", "books_seen_num"],
@@ -4893,11 +4931,6 @@ elif nav == "AI Slip":
             st.markdown("---")
             st.subheader("🧩 AI Parlay Intelligence")
 
-            active_ai_parlay_threshold = _normalize_threshold_percent(
-                category_thresholds.get("AI Parlays", default_thresholds_percent["AI Parlays"]),
-                default_thresholds_percent["AI Parlays"]
-            )
-
             parlay_candidates = ai_df.copy()
             parlay_candidates = parlay_candidates[
                 (parlay_candidates["true_confidence_num"] >= SHARP_PARLAY_MIN_TRUE_CONF - 6)
@@ -4994,7 +5027,7 @@ elif nav == "AI Slip":
                 best_parlay = parlay_options[0]
 
             if best_parlay is None:
-                st.info(f"Not enough filtered AI Slip plays cleared the current AI Parlay threshold of {active_ai_parlay_threshold:.2f}% to build a parlay yet.")
+                st.info(f"Not enough smart-filtered plays cleared the current AI Parlay threshold of {active_ai_parlay_threshold:.2f}% to build a parlay yet.")
             else:
                 parlay_legs = best_parlay["legs"]
                 parlay_play_id = "PARLAY__" + hashlib.md5(
@@ -5011,7 +5044,7 @@ elif nav == "AI Slip":
                             {best_parlay["type"]} • {best_parlay["leg_count"]} Legs
                         </div>
                         <div style="font-size:0.82rem;opacity:0.85;margin-top:4px;">
-                            Suggested AI-built parlay based on filtered top-ranked singles
+                            Suggested AI-built parlay based on smart-filtered singles
                         </div>
                         <hr style="margin:10px 0;">
                         <div style="font-size:0.86rem;line-height:1.6;">
@@ -5085,7 +5118,7 @@ elif nav == "AI Slip":
                         st.success("AI Parlay added to bet log.")
 
             st.markdown("---")
-            st.subheader("📋 Top AI Slip Candidates")
+            st.subheader("📋 Top Smart-Filtered Candidates")
 
             preview_cols = [
                 "selection",

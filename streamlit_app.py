@@ -5289,8 +5289,9 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
     with weight_col2:
         st.metric("Matchup Quality", f"{weights['matchup_quality'] * 100:.1f}%")
         st.metric("History", f"{weights['historical_performance'] * 100:.1f}%")
-        last_learning_update = str(learning_state.get("last_learning_update", "")).strip()
-        st.caption(f"Last learning update: {last_learning_update if last_learning_update else 'None'}")
+
+    last_learning_update = str(learning_state.get("last_learning_update", "")).strip()
+    st.caption(f"Last learning update: {last_learning_update if last_learning_update else 'None'}")
 
     st.markdown("### Category Edge Thresholds")
 
@@ -5312,7 +5313,8 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
             "Min Edge Required %": float(category_thresholds.get(category_name, default_thresholds[category_name]))
         })
 
-    st.dataframe(pd.DataFrame(threshold_rows), use_container_width=True, hide_index=True)
+    threshold_df = pd.DataFrame(threshold_rows)
+    st.dataframe(threshold_df, use_container_width=True, hide_index=True)
 
     st.markdown("### Play Type Performance / Auto-Filter Status")
 
@@ -5393,6 +5395,7 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
         return ""
 
     settled_df = bet_log_df.copy()
+
     if not settled_df.empty:
         settled_df["derived_result"] = settled_df.apply(_derive_settled_result, axis=1)
         settled_df["profit_num"] = settled_df["profit"].apply(lambda x: _safe_float(x, 0.0))
@@ -5404,6 +5407,7 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
         settled_df = settled_df[settled_df["derived_result"] != ""].copy()
 
     min_samples_required = int(learning_state.get("category_min_samples", 8) or 8)
+
     bad_play_type_flags = learning_state.get("bad_play_type_flags", {})
     if not isinstance(bad_play_type_flags, dict):
         bad_play_type_flags = {}
@@ -5501,8 +5505,8 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
             if total_units > 0:
                 roi = (total_profit / total_units) * 100.0
 
-            win_rate = 0.0
             graded_non_push = int((group["derived_result"].isin(["Win", "Loss"])).sum())
+            win_rate = 0.0
             if graded_non_push > 0:
                 win_rate = (wins / graded_non_push) * 100.0
 
@@ -5515,8 +5519,16 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
             })
 
         category_df = pd.DataFrame(category_rows)
-        category_df = category_df.sort_values(by=["Bets", "ROI %"], ascending=[False, False]).reset_index(drop=True)
-        st.dataframe(category_df, use_container_width=True, hide_index=True)
+
+        if not category_df.empty:
+            category_df = category_df.sort_values(
+                by=["Bets", "ROI %"],
+                ascending=[False, False]
+            ).reset_index(drop=True)
+
+            st.dataframe(category_df, use_container_width=True, hide_index=True)
+        else:
+            st.info("No settled category data yet.")
 
     st.markdown("### CLV Learning Notes")
     st.caption(

@@ -5406,7 +5406,93 @@ with t3:
         st.metric("Loosened", threshold_status_counts["Loosened"])
     with tcol3:
         st.metric("Base", threshold_status_counts["Base"])
+# =========================================================
+# V33 SELF-LEARNING ENGINE (AUTO THRESHOLD ADJUSTMENT)
+# =========================================================
+learning_state = st.session_state.get("learning_state", {})
+if not isinstance(learning_state, dict):
+    learning_state = {}
 
+category_thresholds = learning_state.get("category_thresholds", {})
+if not isinstance(category_thresholds, dict):
+    category_thresholds = {}
+
+bad_play_type_flags = learning_state.get("bad_play_type_flags", {})
+if not isinstance(bad_play_type_flags, dict):
+    bad_play_type_flags = {}
+
+MIN_SAMPLES = int(learning_state.get("category_min_samples", 8) or 8)
+
+def _clamp(val, low, high):
+    return max(low, min(high, val))
+
+def _adjust_threshold(current, change):
+    return _clamp(current + change, 1.5, 7.5)
+
+# Only run learning if we actually have settled data
+if not settled_df.empty:
+
+    grouped = settled_df.groupby("market_clean", dropna=False)
+
+    updated_flags = {}
+    updated_thresholds = dict(category_thresholds)
+
+    for market_name, group in grouped:
+        total_bets = len(group)
+
+        if total_bets < MIN_SAMPLES:
+            continue
+
+        total_profit = float(group["profit_num"].sum())
+        total_units = float(group["units_num"].sum())
+
+        roi = 0.0
+        if total_units > 0:
+            roi = (total_profit / total_units) * 100.0
+
+        avg_true_conf = float(group["true_confidence_num"].mean())
+
+        # -----------------------------
+        # LOSING PLAY TYPE → tighten
+        # -----------------------------
+        if roi < -5 and avg_true_conf < 65:
+            updated_flags[market_name] = {
+                "is_filtered": True,
+                "reason": f"Low ROI ({round(roi,2)}%) + weak confidence"
+            }
+
+            for cat in ["Top Plays", "AI Picks"]:
+                current = float(updated_thresholds.get(cat, 3.0))
+                updated_thresholds[cat] = _adjust_threshold(current, +0.5)
+
+        # -----------------------------
+        # WINNING PLAY TYPE → loosen
+        # -----------------------------
+        elif roi > 5 and avg_true_conf > 68:
+            updated_flags[market_name] = {
+                "is_filtered": False,
+                "reason": f"Strong ROI ({round(roi,2)}%)"
+            }
+
+            for cat in ["Top Plays", "AI Picks"]:
+                current = float(updated_thresholds.get(cat, 3.0))
+                updated_thresholds[cat] = _adjust_threshold(current, -0.25)
+
+        # -----------------------------
+        # NEUTRAL → no change
+        # -----------------------------
+        else:
+            updated_flags[market_name] = {
+                "is_filtered": False,
+                "reason": "Neutral performance"
+            }
+
+    # Save learning updates
+    learning_state["bad_play_type_flags"] = updated_flags
+    learning_state["category_thresholds"] = updated_thresholds
+    learning_state["last_learning_update"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    st.session_state["learning_state"] = learning_state
     st.markdown("### Play Type Performance / Auto-Filter Status")
 
     bet_log_records = st.session_state.get("bet_log", [])

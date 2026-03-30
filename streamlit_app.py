@@ -4596,89 +4596,438 @@ elif nav == "AI Slip":
         st.caption("Using all live games returned by the API.")
 
     current_api_mode = st.session_state.get("api_mode", "idle")
+    effective_games = get_effective_odds_games()
 
-    if len(get_effective_odds_games()) == 0:
+    if len(effective_games) == 0:
         if current_api_mode == "waiting_reset":
             reset_expected = str(st.session_state.get("odds_api_reset_expected", "")).strip()
             if reset_expected:
                 st.warning(f"The Odds API is waiting for reset. Expected reset around {reset_expected}.")
             else:
                 st.warning("The Odds API is waiting for reset.")
+        elif current_api_mode == "limit_hit":
+            st.warning("The Odds API limit has been hit. Cached data will be used when available.")
+        elif current_api_mode == "no_key":
+            st.warning("No Odds API key found. Add your key in Streamlit secrets to load live odds.")
         else:
             st.warning("Press 'Refresh Live Odds' in the sidebar to load live odds.")
 
-    elif best_row is not None:
-        risk_level = "Low" if float(best_row["units"]) <= 0.60 else "Moderate"
+    ai_df = best_plays_df.copy() if best_plays_df is not None else pd.DataFrame()
 
-        st.markdown(
-            f"""
-            <div class="slip-card">
-                <div class="slip-kicker">🔥 AI Recommended Single</div>
-                <div class="slip-title">{best_row['selection']}</div>
-                <div class="slip-meta">{best_row['game']} • {prop_market_label(best_row['market']) if is_prop_market(best_row['market']) else str(best_row['market']).title()}</div>
-                <div class="slip-meta"><strong>Odds:</strong> {best_row['odds']}</div>
-                <div class="slip-meta"><strong>Implied Probability:</strong> {float(best_row.get('implied_prob', 0)):.1f}%</div>
-                <div class="slip-meta"><strong>True Probability:</strong> {float(best_row.get('true_prob', 0)):.1f}%</div>
-                <div class="slip-meta"><strong>Value Edge:</strong> {float(best_row.get('edge', 0)):.2f}%</div>
-                <div class="slip-meta"><strong>Confidence:</strong> {best_row['confidence']}</div>
-                <div class="slip-meta"><strong>True Confidence:</strong> {best_row['true_confidence']:.1f}</div>
-                <div class="slip-meta"><strong>Quality Label:</strong> {best_row['quality_label']}</div>
-                <div class="slip-meta"><strong>Type:</strong> Single best bet</div>
-                <div class="slip-meta"><strong>Risk Level:</strong> {risk_level}</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+    required_cols = [
+        "game",
+        "market",
+        "selection",
+        "odds",
+        "edge",
+        "score",
+        "units",
+        "tier",
+        "quality_label",
+        "status",
+        "confidence",
+        "books_seen",
+        "best_price",
+        "consensus",
+        "price_edge",
+        "ai_tags",
+        "true_confidence",
+        "quality_score",
+        "decision_reasons",
+        "rank_score",
+        "play_id",
+        "log_category",
+    ]
+    for col in required_cols:
+        if col not in ai_df.columns:
+            ai_df[col] = ""
 
-        render_play_card(best_row, show_best_badge=True)
+    if ai_df.empty:
+        st.info("No AI Slip plays available yet. Load odds first, then return here.")
     else:
-        if current_api_mode == "waiting_reset":
-            st.info("No active AI single available right now. Cached odds are being used while the API waits for reset.")
-        else:
-            st.info("No active AI single available.")
+        ai_df = ai_df.copy()
 
-    st.subheader("🎯 AI Parlay Intelligence")
+        def _safe_float(v, default=0.0):
+            try:
+                if v is None or str(v).strip() == "":
+                    return float(default)
+                return float(v)
+            except:
+                return float(default)
 
-    if best_parlay is None:
-        st.info("Not enough qualifying legs.")
-    else:
-        render_parlay_card(best_parlay)
+        def _safe_int(v, default=0):
+            try:
+                if v is None or str(v).strip() == "":
+                    return int(default)
+                return int(float(v))
+            except:
+                return int(default)
 
-    with st.expander("Show top parlay candidates", expanded=False):
-        render_parlay_table(sharp_candidates, "Sharp Approved")
-        render_parlay_table(fallback_candidates, "Fallback")
+        def _clean_text(v, fallback="—"):
+            raw = str(v).strip()
+            return raw if raw else fallback
 
-    st.subheader("🧠 AI Portfolio Allocation")
+        def _to_american_string(v):
+            try:
+                val = int(round(float(v)))
+                if val > 0:
+                    return f"+{val}"
+                return str(val)
+            except:
+                return str(v)
 
-    if not portfolio:
-        st.info("No portfolio available.")
-    else:
-        rows = []
+        def _format_percent(v, digits=1):
+            try:
+                return f"{float(v):.{digits}f}%"
+            except:
+                return "—"
 
-        for item in portfolio:
-            data = item["data"]
+        def _risk_label(units, true_conf, edge):
+            units = _safe_float(units)
+            true_conf = _safe_float(true_conf)
+            edge = _safe_float(edge)
 
-            if item["type"] == "Single":
-                summary = f"{data['selection']} ({data['game']})"
-                odds = data["odds"]
-                conf = data["true_confidence"]
-            else:
-                summary = " | ".join([leg["selection"] for leg in data["legs"]])
-                odds = data["combined_odds"]
-                conf = data["avg_true_conf"]
+            if true_conf >= 74 and edge >= 5.5 and units <= 0.75:
+                return "Low"
+            if true_conf >= 68 and edge >= 4.25 and units <= 1.00:
+                return "Moderate"
+            return "Elevated"
 
-            rows.append(
-                {
-                    "Label": item["label"],
-                    "Type": item["type"],
-                    "Units": item["units"],
-                    "Odds": odds,
-                    "Confidence": conf,
-                    "Summary": summary,
-                }
+        def _parlay_risk_label(legs, avg_true_conf, total_edge):
+            if legs <= 2 and avg_true_conf >= 70 and total_edge >= 8:
+                return "Moderate"
+            if legs <= 3 and avg_true_conf >= 66 and total_edge >= 7:
+                return "Elevated"
+            return "High"
+
+        def _normalize_for_sort(df):
+            df = df.copy()
+            df["true_confidence_num"] = df["true_confidence"].apply(_safe_float)
+            df["edge_num"] = df["edge"].apply(_safe_float)
+            df["units_num"] = df["units"].apply(_safe_float)
+            df["rank_score_num"] = df["rank_score"].apply(_safe_float)
+            df["books_seen_num"] = df["books_seen"].apply(_safe_int)
+            return df
+
+        ai_df = _normalize_for_sort(ai_df)
+
+        ai_df = ai_df.sort_values(
+            by=["rank_score_num", "true_confidence_num", "edge_num", "books_seen_num"],
+            ascending=[False, False, False, False]
+        ).reset_index(drop=True)
+
+        best_row = ai_df.iloc[0].to_dict() if not ai_df.empty else None
+        top_rows = ai_df.head(6).to_dict("records")
+
+        st.subheader("🎯 Best AI Single")
+
+        if best_row is not None:
+            best_units = _safe_float(best_row.get("units", 0))
+            best_true_conf = _safe_float(best_row.get("true_confidence", 0))
+            best_edge = _safe_float(best_row.get("edge", 0))
+            best_books = _safe_int(best_row.get("books_seen", 0))
+            best_risk = _risk_label(best_units, best_true_conf, best_edge)
+
+            play_id = str(best_row.get("play_id", "")).strip()
+            if not play_id:
+                play_id = hashlib.md5(
+                    (
+                        str(best_row.get("game", "")) +
+                        str(best_row.get("market", "")) +
+                        str(best_row.get("selection", ""))
+                    ).encode()
+                ).hexdigest()[:16]
+
+            best_log_category = str(best_row.get("log_category", "")).strip()
+            if not best_log_category:
+                best_log_category = "AI Picks"
+
+            st.markdown(
+                f"""
+                <div class="slip-card">
+                    <div style="font-size:1.05rem;font-weight:700;">
+                        {_clean_text(best_row.get("selection"))}
+                    </div>
+                    <div style="font-size:0.82rem;opacity:0.85;margin-top:4px;">
+                        {_clean_text(best_row.get("game"))} • {_clean_text(best_row.get("market"))}
+                    </div>
+                    <hr style="margin:10px 0;">
+                    <div style="font-size:0.86rem;line-height:1.6;">
+                        <b>Odds:</b> {_to_american_string(best_row.get("odds"))}<br>
+                        <b>Edge:</b> {best_edge:.2f}%<br>
+                        <b>True Confidence:</b> {best_true_conf:.1f}%<br>
+                        <b>Books Seen:</b> {best_books}<br>
+                        <b>Consensus:</b> {_clean_text(best_row.get("consensus"))}<br>
+                        <b>Price Edge:</b> {_clean_text(best_row.get("price_edge"))}<br>
+                        <b>Units:</b> {best_units:.2f}u<br>
+                        <b>Risk:</b> {best_risk}<br>
+                        <b>Quality:</b> {_clean_text(best_row.get("quality_label"))}
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True
             )
 
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            tags_text = str(best_row.get("ai_tags", "")).strip()
+            reasons_text = str(best_row.get("decision_reasons", "")).strip()
+
+            info_col1, info_col2 = st.columns(2)
+            with info_col1:
+                st.caption(f"Category: {best_log_category}")
+                if tags_text:
+                    st.caption(f"AI Tags: {tags_text}")
+            with info_col2:
+                st.caption(f"Play ID: {play_id}")
+                if reasons_text:
+                    st.caption(f"Why it ranked first: {reasons_text}")
+
+            auto_log_col1, auto_log_col2 = st.columns([1, 1])
+
+            with auto_log_col1:
+                if st.button("➕ Add Best AI Single to Bet Log", key=f"add_best_single_{play_id}"):
+                    bet_entry = {
+                        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "date": datetime.now().strftime("%Y-%m-%d"),
+                        "sport": str(best_row.get("sport", "NBA")).strip() or "NBA",
+                        "game": _clean_text(best_row.get("game"), ""),
+                        "market": _clean_text(best_row.get("market"), ""),
+                        "selection": _clean_text(best_row.get("selection"), ""),
+                        "odds": _to_american_string(best_row.get("odds")),
+                        "edge": round(best_edge, 2),
+                        "confidence": round(_safe_float(best_row.get("confidence", 0)), 2),
+                        "true_confidence": round(best_true_conf, 2),
+                        "units": round(best_units, 2),
+                        "result": "",
+                        "profit": "",
+                        "status": "Open",
+                        "play_id": play_id,
+                        "log_category": best_log_category,
+                        "source": "AI Slip",
+                        "notes": reasons_text,
+                    }
+
+                    existing_log = st.session_state.get("bet_log", [])
+                    existing_ids = set(str(x.get("play_id", "")).strip() for x in existing_log if str(x.get("play_id", "")).strip())
+
+                    if play_id in existing_ids:
+                        st.info("This AI single is already in the bet log.")
+                    else:
+                        existing_log.append(bet_entry)
+                        st.session_state["bet_log"] = existing_log
+                        st.session_state.setdefault("auto_logged_ids", set()).add(play_id)
+                        save_bet_log(st.session_state["bet_log"])
+                        st.success("Best AI Single added to bet log.")
+
+            with auto_log_col2:
+                st.metric("Recommended Stake", f"{best_units:.2f}u")
+
+        st.markdown("---")
+        st.subheader("🧩 AI Parlay Intelligence")
+
+        parlay_candidates = ai_df.copy()
+        parlay_candidates = parlay_candidates[
+            (parlay_candidates["true_confidence_num"] >= SHARP_PARLAY_MIN_TRUE_CONF - 6)
+            & (parlay_candidates["edge_num"] >= max(2.0, MIN_WATCH_EDGE))
+        ].copy()
+
+        parlay_candidates = parlay_candidates.drop_duplicates(subset=["selection", "market"], keep="first")
+        parlay_candidates = parlay_candidates.head(8).reset_index(drop=True)
+
+        best_parlay = None
+        parlay_options = []
+
+        if len(parlay_candidates) >= 2:
+            max_legs = min(MAX_PARLAY_LEGS, len(parlay_candidates))
+
+            for leg_count in range(MIN_PARLAY_LEGS, max_legs + 1):
+                for combo in combinations(parlay_candidates.to_dict("records"), leg_count):
+                    odds_list = [_safe_float(x.get("odds", 0)) for x in combo]
+                    if any(o == 0 for o in odds_list):
+                        continue
+
+                    def american_to_decimal(american_odds):
+                        american_odds = _safe_float(american_odds)
+                        if american_odds > 0:
+                            return 1 + (american_odds / 100.0)
+                        return 1 + (100.0 / abs(american_odds))
+
+                    decimal_price = 1.0
+                    for o in odds_list:
+                        decimal_price *= american_to_decimal(o)
+
+                    american_parlay_odds = int(round((decimal_price - 1) * 100)) if decimal_price >= 2 else int(round(-100 / (decimal_price - 1)))
+                    if american_parlay_odds < MIN_PARLAY_ODDS:
+                        continue
+
+                    avg_true_conf = sum(_safe_float(x.get("true_confidence", 0)) for x in combo) / len(combo)
+                    total_edge = sum(_safe_float(x.get("edge", 0)) for x in combo)
+                    avg_books = sum(_safe_int(x.get("books_seen", 0)) for x in combo) / len(combo)
+
+                    same_game_count = len(set(str(x.get("game", "")).strip() for x in combo))
+                    correlation_penalty = 0.00 if same_game_count == len(combo) else 0.08
+
+                    score = (
+                        (avg_true_conf * 0.55)
+                        + (total_edge * 3.25)
+                        + (avg_books * 1.20)
+                        - (len(combo) * 4.00)
+                        - (correlation_penalty * 100)
+                    )
+
+                    parlay_type = "Sharp Parlay" if (
+                        avg_true_conf >= SHARP_PARLAY_MIN_TRUE_CONF
+                        and correlation_penalty <= SHARP_PARLAY_MAX_PENALTY
+                    ) else "Fallback Parlay"
+
+                    units = (
+                        PARLAY_UNIT_SHARP
+                        if parlay_type == "Sharp Parlay"
+                        else (PARLAY_UNIT_FALLBACK_2 if len(combo) == 2 else PARLAY_UNIT_FALLBACK_3)
+                    )
+
+                    parlay_record = {
+                        "legs": combo,
+                        "leg_count": len(combo),
+                        "avg_true_conf": avg_true_conf,
+                        "total_edge": total_edge,
+                        "avg_books": avg_books,
+                        "parlay_odds": american_parlay_odds,
+                        "score": score,
+                        "type": parlay_type,
+                        "units": units,
+                        "risk": _parlay_risk_label(len(combo), avg_true_conf, total_edge),
+                    }
+                    parlay_options.append(parlay_record)
+
+        if parlay_options:
+            parlay_options = sorted(
+                parlay_options,
+                key=lambda x: (
+                    x["score"],
+                    x["avg_true_conf"],
+                    x["total_edge"],
+                    -x["leg_count"]
+                ),
+                reverse=True
+            )
+            best_parlay = parlay_options[0]
+
+        if best_parlay is None:
+            st.info("Not enough strong correlated-free plays to build an AI parlay yet.")
+        else:
+            parlay_legs = best_parlay["legs"]
+            parlay_play_id = "PARLAY__" + hashlib.md5(
+                "|".join(
+                    f"{str(x.get('game', ''))}_{str(x.get('market', ''))}_{str(x.get('selection', ''))}"
+                    for x in parlay_legs
+                ).encode()
+            ).hexdigest()[:16]
+
+            st.markdown(
+                f"""
+                <div class="slip-card">
+                    <div style="font-size:1.02rem;font-weight:700;">
+                        {best_parlay["type"]} • {best_parlay["leg_count"]} Legs
+                    </div>
+                    <div style="font-size:0.82rem;opacity:0.85;margin-top:4px;">
+                        Suggested AI-built parlay based on top-ranked singles
+                    </div>
+                    <hr style="margin:10px 0;">
+                    <div style="font-size:0.86rem;line-height:1.6;">
+                        <b>Parlay Odds:</b> {_to_american_string(best_parlay["parlay_odds"])}<br>
+                        <b>Total Edge:</b> {best_parlay["total_edge"]:.2f}%<br>
+                        <b>Avg True Confidence:</b> {best_parlay["avg_true_conf"]:.1f}%<br>
+                        <b>Avg Books Seen:</b> {best_parlay["avg_books"]:.1f}<br>
+                        <b>Units:</b> {best_parlay["units"]:.2f}u<br>
+                        <b>Risk:</b> {best_parlay["risk"]}
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+            st.markdown("**Legs**")
+            for idx, leg in enumerate(parlay_legs, start=1):
+                st.markdown(
+                    f"""
+                    <div class="play-card">
+                        <b>{idx}. {_clean_text(leg.get("selection"))}</b><br>
+                        <span style="font-size:0.82rem;">
+                            {_clean_text(leg.get("game"))} • {_clean_text(leg.get("market"))}<br>
+                            Odds: {_to_american_string(leg.get("odds"))} |
+                            Edge: {_safe_float(leg.get("edge")):.2f}% |
+                            True Conf: {_safe_float(leg.get("true_confidence")):.1f}%
+                        </span>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+
+            if st.button("➕ Add AI Parlay to Bet Log", key=f"add_ai_parlay_{parlay_play_id}"):
+                existing_log = st.session_state.get("bet_log", [])
+                existing_ids = set(str(x.get("play_id", "")).strip() for x in existing_log if str(x.get("play_id", "")).strip())
+
+                if parlay_play_id in existing_ids:
+                    st.info("This AI parlay is already in the bet log.")
+                else:
+                    leg_summary = " | ".join(str(x.get("selection", "")).strip() for x in parlay_legs)
+
+                    parlay_entry = {
+                        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "date": datetime.now().strftime("%Y-%m-%d"),
+                        "sport": "NBA",
+                        "game": "Parlay",
+                        "market": f"{best_parlay['leg_count']}-Leg Parlay",
+                        "selection": leg_summary,
+                        "odds": _to_american_string(best_parlay["parlay_odds"]),
+                        "edge": round(best_parlay["total_edge"], 2),
+                        "confidence": round(best_parlay["avg_true_conf"], 2),
+                        "true_confidence": round(best_parlay["avg_true_conf"], 2),
+                        "units": round(best_parlay["units"], 2),
+                        "result": "",
+                        "profit": "",
+                        "status": "Open",
+                        "play_id": parlay_play_id,
+                        "log_category": "AI Parlays",
+                        "source": "AI Slip",
+                        "notes": best_parlay["type"],
+                    }
+
+                    existing_log.append(parlay_entry)
+                    st.session_state["bet_log"] = existing_log
+                    st.session_state.setdefault("auto_logged_ids", set()).add(parlay_play_id)
+                    save_bet_log(st.session_state["bet_log"])
+                    st.success("AI Parlay added to bet log.")
+
+        st.markdown("---")
+        st.subheader("📋 Top AI Slip Candidates")
+
+        preview_cols = [
+            "selection",
+            "game",
+            "market",
+            "odds",
+            "edge_num",
+            "true_confidence_num",
+            "units_num",
+            "books_seen_num",
+            "quality_label",
+        ]
+        preview_df = ai_df[preview_cols].copy()
+        preview_df = preview_df.rename(columns={
+            "edge_num": "edge",
+            "true_confidence_num": "true_confidence",
+            "units_num": "units",
+            "books_seen_num": "books_seen",
+        })
+
+        preview_df["odds"] = preview_df["odds"].apply(_to_american_string)
+        preview_df["edge"] = preview_df["edge"].apply(lambda x: round(_safe_float(x), 2))
+        preview_df["true_confidence"] = preview_df["true_confidence"].apply(lambda x: round(_safe_float(x), 1))
+        preview_df["units"] = preview_df["units"].apply(lambda x: round(_safe_float(x), 2))
+        preview_df["books_seen"] = preview_df["books_seen"].apply(lambda x: _safe_int(x))
+
+        st.dataframe(preview_df, use_container_width=True, hide_index=True)
 # =========================================================
 # BET LOG
 # =========================================================

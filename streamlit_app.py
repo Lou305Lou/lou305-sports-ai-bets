@@ -5920,8 +5920,7 @@ except:
             preview_df["units"] = preview_df["units"].apply(lambda x: round(_safe_float(x), 2))
             preview_df["books_seen"] = preview_df["books_seen"].apply(lambda x: _safe_int(x))
 
-            st.dataframe(preview_df, use_container_width=True, hide_index=True)
-# =========================================================
+            st.dataframe(preview_df, use_container_width=True, hide_index=# =========================================================
 # BET LOG
 # =========================================================
 if nav == "Bet Log":
@@ -5929,25 +5928,177 @@ if nav == "Bet Log":
 
     sync_manual_results_into_bet_log()
 
-    st.subheader("📊 ROI Dashboard")
+    # =========================================================
+    # LOCAL HELPERS
+    # =========================================================
+    def _safe_num(series_or_value, default=0.0):
+        try:
+            if isinstance(series_or_value, pd.Series):
+                return pd.to_numeric(series_or_value, errors="coerce").fillna(default)
+            return float(series_or_value)
+        except Exception:
+            return default
 
+    def _normalize_result_text(value):
+        raw = str(value).strip().title()
+        if raw in ["Win", "Loss", "Push", "Pending"]:
+            return raw
+        return "Pending"
+
+    def _normalize_bet_type(value):
+        raw = str(value).strip().lower()
+
+        if raw in ["moneyline", "ml"]:
+            return "Moneyline"
+        if raw == "spread":
+            return "Spread"
+        if raw in ["total", "totals"]:
+            return "Total"
+        if raw.startswith("prop"):
+            return "Prop"
+        if raw == "parlay":
+            return "Parlay"
+
+        return str(value).strip().title() if str(value).strip() else "Other"
+
+    def _normalize_category(value):
+        raw = str(value).strip()
+        if not raw:
+            return "Uncategorized"
+
+        parts = [p.strip() for p in raw.split("|") if str(p).strip()]
+        if not parts:
+            return "Uncategorized"
+
+        for label in ["Top Plays", "AI Picks", "AI Parlays", "Watchlist"]:
+            if label in parts:
+                return label
+
+        for label in ["Top Play", "AI Slip", "AI Parlay", "Watchlist"]:
+            if label in parts:
+                mapping = {
+                    "Top Play": "Top Plays",
+                    "AI Slip": "AI Picks",
+                    "AI Parlay": "AI Parlays",
+                    "Watchlist": "Watchlist",
+                }
+                return mapping[label]
+
+        return parts[0]
+
+    def _extract_date_only(value):
+        raw = str(value).strip()
+        if not raw:
+            return ""
+        if "T" in raw:
+            return raw.split("T")[0]
+        if " " in raw:
+            return raw.split(" ")[0]
+        return raw[:10]
+
+    def _american_profit_from_stake(odds, stake):
+        odds_val = american_to_int(odds)
+        stake = safe_float(stake, 0.0)
+
+        if odds_val is None or stake <= 0:
+            return 0.0
+
+        if odds_val > 0:
+            return round(stake * (odds_val / 100.0), 2)
+
+        return round(stake * (100.0 / abs(odds_val)), 2)
+
+    def _sim_profit(row, mode_label, stake_amount):
+        result = _normalize_result_text(row.get("result", "Pending"))
+        odds = row.get("odds", "")
+        units_val = safe_float(row.get("units", 1.0), 1.0)
+
+        if mode_label == "Per Unit":
+            stake = units_val * safe_float(stake_amount, 0.0)
+        else:
+            stake = safe_float(stake_amount, 0.0)
+
+        if result == "Win":
+            return _american_profit_from_stake(odds, stake)
+        if result == "Loss":
+            return round(-stake, 2)
+        return 0.0
+
+    def _sim_stake(row, mode_label, stake_amount):
+        units_val = safe_float(row.get("units", 1.0), 1.0)
+        if mode_label == "Per Unit":
+            return round(units_val * safe_float(stake_amount, 0.0), 2)
+        return round(safe_float(stake_amount, 0.0), 2)
+
+    def _build_group_summary(df, group_col):
+        if df.empty or group_col not in df.columns:
+            return pd.DataFrame()
+
+        grouped_rows = []
+        for group_name, grp in df.groupby(group_col):
+            picks = len(grp)
+            wins = int((grp["result_clean"] == "Win").sum())
+            losses = int((grp["result_clean"] == "Loss").sum())
+            pushes = int((grp["result_clean"] == "Push").sum())
+            settled = wins + losses + pushes
+
+            total_units_profit = round(_safe_num(grp["profit"], 0.0).sum(), 2)
+            total_sim_profit = round(_safe_num(grp["sim_profit"], 0.0).sum(), 2)
+            total_sim_staked = round(_safe_num(grp["sim_stake"], 0.0).sum(), 2)
+
+            win_rate = round((wins / (wins + losses) * 100.0), 1) if (wins + losses) > 0 else 0.0
+            roi = round((total_sim_profit / total_sim_staked * 100.0), 2) if total_sim_staked > 0 else 0.0
+
+            grouped_rows.append(
+                {
+                    group_col: group_name,
+                    "Picks": picks,
+                    "Wins": wins,
+                    "Losses": losses,
+                    "Pushes": pushes,
+                    "Win Rate %": win_rate,
+                    "Units P&L": total_units_profit,
+                    "Sim $ P&L": total_sim_profit,
+                    "Sim ROI %": roi,
+                }
+            )
+
+        out = pd.DataFrame(grouped_rows)
+        if not out.empty and "Sim $ P&L" in out.columns:
+            out = out.sort_values(by=["Sim $ P&L", "Win Rate %"], ascending=[False, False])
+
+        return out.reset_index(drop=True)
+
+    # =========================================================
+    # LOAD + CLEAN LOG DATA
+    # =========================================================
     log_df_full = pd.DataFrame(st.session_state.get("bet_log", []))
-    roi_df = build_roi_dashboard(log_df_full)
 
-    if roi_df.empty:
-        st.info("No settled bets yet.")
-    else:
-        st.dataframe(roi_df, use_container_width=True, hide_index=True)
-
-    if len(st.session_state.get("bet_log", [])) == 0:
+    if log_df_full.empty:
         st.info("No bets logged yet.")
     else:
-        log_df = pd.DataFrame(st.session_state["bet_log"]).copy()
+        log_df = log_df_full.copy()
 
-        if "units" in log_df.columns:
-            log_df["units"] = pd.to_numeric(log_df["units"], errors="coerce").fillna(0).round(2)
-        if "profit" in log_df.columns:
-            log_df["profit"] = pd.to_numeric(log_df["profit"], errors="coerce").fillna(0).round(2)
+        for col in ["units", "profit", "implied_prob", "true_prob", "true_confidence", "edge", "clv_diff"]:
+            if col in log_df.columns:
+                log_df[col] = pd.to_numeric(log_df[col], errors="coerce")
+
+        if "units" not in log_df.columns:
+            log_df["units"] = 1.0
+        if "profit" not in log_df.columns:
+            log_df["profit"] = 0.0
+        if "sport" not in log_df.columns:
+            log_df["sport"] = get_selected_sport()
+        if "market" not in log_df.columns:
+            log_df["market"] = ""
+        if "log_category" not in log_df.columns:
+            log_df["log_category"] = ""
+        if "timestamp" not in log_df.columns:
+            log_df["timestamp"] = ""
+
+        log_df["units"] = pd.to_numeric(log_df["units"], errors="coerce").fillna(0.0).round(2)
+        log_df["profit"] = pd.to_numeric(log_df["profit"], errors="coerce").fillna(0.0).round(2)
+
         if "implied_prob" in log_df.columns:
             log_df["implied_prob"] = pd.to_numeric(log_df["implied_prob"], errors="coerce").round(2)
         if "true_prob" in log_df.columns:
@@ -5959,9 +6110,170 @@ if nav == "Bet Log":
         if "clv_diff" in log_df.columns:
             log_df["clv_diff"] = pd.to_numeric(log_df["clv_diff"], errors="coerce").round(2)
 
-        st.dataframe(log_df, use_container_width=True, hide_index=True)
+        log_df["result_clean"] = log_df["result"].apply(_normalize_result_text)
+        log_df["bet_type"] = log_df["market"].apply(_normalize_bet_type)
+        log_df["category_clean"] = log_df["log_category"].apply(_normalize_category)
+        log_df["date_only"] = log_df["timestamp"].apply(_extract_date_only)
 
-        st.subheader("Update Results")
+        # =========================================================
+        # ROI DASHBOARD
+        # =========================================================
+        st.subheader("📊 ROI Dashboard")
+        roi_df = build_roi_dashboard(log_df_full)
+
+        if roi_df.empty:
+            st.info("No settled bets yet.")
+        else:
+            st.dataframe(roi_df, use_container_width=True, hide_index=True)
+
+        # =========================================================
+        # STAKE SIMULATOR
+        # =========================================================
+        st.subheader("💵 Stake Simulator")
+
+        sim_col1, sim_col2 = st.columns([1.2, 1.4])
+
+        with sim_col1:
+            stake_mode = st.radio(
+                "Simulation Mode",
+                ["Flat Bet", "Per Unit"],
+                horizontal=True,
+                key="stake_mode_toggle",
+            )
+
+        with sim_col2:
+            preset_choice = st.radio(
+                "Stake Size",
+                ["$5", "$10", "$25", "$50", "Custom"],
+                horizontal=True,
+                key="stake_size_toggle",
+            )
+
+        if preset_choice == "Custom":
+            custom_stake = st.number_input(
+                "Custom Stake Amount",
+                min_value=1.0,
+                max_value=10000.0,
+                value=10.0,
+                step=1.0,
+                key="custom_stake_amount",
+            )
+            selected_stake_amount = float(custom_stake)
+        else:
+            selected_stake_amount = float(str(preset_choice).replace("$", ""))
+
+        st.caption(
+            f"Viewing simulated dollar results using **{stake_mode}** mode at **${selected_stake_amount:.2f}**."
+        )
+
+        log_df["sim_stake"] = log_df.apply(
+            lambda r: _sim_stake(r, stake_mode, selected_stake_amount),
+            axis=1,
+        )
+        log_df["sim_profit"] = log_df.apply(
+            lambda r: _sim_profit(r, stake_mode, selected_stake_amount),
+            axis=1,
+        )
+
+        settled_df = log_df[log_df["result_clean"].isin(["Win", "Loss", "Push"])].copy()
+
+        total_picks = int(len(log_df))
+        settled_count = int(len(settled_df))
+        wins = int((settled_df["result_clean"] == "Win").sum())
+        losses = int((settled_df["result_clean"] == "Loss").sum())
+        pushes = int((settled_df["result_clean"] == "Push").sum())
+        total_units_profit = round(_safe_num(settled_df["profit"], 0.0).sum(), 2)
+        total_sim_profit = round(_safe_num(settled_df["sim_profit"], 0.0).sum(), 2)
+        total_sim_staked = round(_safe_num(settled_df["sim_stake"], 0.0).sum(), 2)
+
+        overall_win_rate = round((wins / (wins + losses) * 100.0), 1) if (wins + losses) > 0 else 0.0
+        overall_roi = round((total_sim_profit / total_sim_staked * 100.0), 2) if total_sim_staked > 0 else 0.0
+
+        sum_col1, sum_col2, sum_col3, sum_col4 = st.columns(4)
+        sum_col1.metric("Logged Bets", total_picks)
+        sum_col2.metric("Settled", settled_count)
+        sum_col3.metric("Win Rate", f"{overall_win_rate:.1f}%")
+        sum_col4.metric("Units P&L", f"{total_units_profit:+.2f}u")
+
+        sum_col5, sum_col6 = st.columns(2)
+        sum_col5.metric("Simulated $ P&L", f"${total_sim_profit:+,.2f}")
+        sum_col6.metric("Simulated ROI", f"{overall_roi:.2f}%")
+
+        # =========================================================
+        # PERFORMANCE BREAKDOWNS
+        # =========================================================
+        st.subheader("📈 Performance Breakdowns")
+
+        by_sport_df = _build_group_summary(settled_df, "sport")
+        by_type_df = _build_group_summary(settled_df, "bet_type")
+        by_category_df = _build_group_summary(settled_df, "category_clean")
+        by_date_df = _build_group_summary(settled_df, "date_only")
+
+        breakdown_tab1, breakdown_tab2, breakdown_tab3, breakdown_tab4 = st.tabs(
+            ["By Sport", "By Bet Type", "By Category", "By Date"]
+        )
+
+        with breakdown_tab1:
+            if by_sport_df.empty:
+                st.info("No settled sport data yet.")
+            else:
+                st.dataframe(by_sport_df, use_container_width=True, hide_index=True)
+
+        with breakdown_tab2:
+            if by_type_df.empty:
+                st.info("No settled bet-type data yet.")
+            else:
+                st.dataframe(by_type_df, use_container_width=True, hide_index=True)
+
+        with breakdown_tab3:
+            if by_category_df.empty:
+                st.info("No settled category data yet.")
+            else:
+                st.dataframe(by_category_df, use_container_width=True, hide_index=True)
+
+        with breakdown_tab4:
+            if by_date_df.empty:
+                st.info("No settled date data yet.")
+            else:
+                by_date_df = by_date_df.sort_values(by="date_only", ascending=False)
+                st.dataframe(by_date_df, use_container_width=True, hide_index=True)
+
+        # =========================================================
+        # FULL LOG TABLE
+        # =========================================================
+        st.subheader("📋 Full Bet Log")
+
+        display_cols = [c for c in [
+            "sport",
+            "timestamp",
+            "game",
+            "market",
+            "selection",
+            "odds",
+            "units",
+            "profit",
+            "sim_stake",
+            "sim_profit",
+            "implied_prob",
+            "true_prob",
+            "true_confidence",
+            "edge",
+            "books_seen",
+            "consensus",
+            "result",
+            "category_clean",
+            "clv_diff",
+            "clv_result",
+            "play_id",
+        ] if c in log_df.columns]
+
+        display_df = log_df[display_cols].copy()
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
+
+        # =========================================================
+        # UPDATE RESULTS
+        # =========================================================
+        st.subheader("✍️ Update Results")
 
         selectable_labels = []
         selectable_map = {}

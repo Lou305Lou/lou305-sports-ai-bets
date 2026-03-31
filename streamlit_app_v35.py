@@ -6084,10 +6084,7 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
     # =========================================================
     # DEFAULT LEARNING STATE
     # =========================================================
-    if "learning_state" not in st.session_state or not isinstance(st.session_state["learning_state"], dict):
-        st.session_state["learning_state"] = {}
-
-    learning_state = st.session_state["learning_state"]
+    learning_state = get_learning_state_for_sport(selected_sport)
 
     default_learning_state = {
         "weights": {

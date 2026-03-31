@@ -65,6 +65,41 @@ def get_selected_sport():
     if raw in SUPPORTED_SPORTS:
         return raw
     return DEFAULT_SPORT
+# =========================================================
+# SPORT SELECTOR (V35 BLOCK 3)
+# =========================================================
+
+st.sidebar.markdown("### 🏆 Select Sport")
+
+# Build dropdown options
+sport_options = list(SUPPORTED_SPORTS.keys())
+
+# Ensure current selection is valid
+current_selected = st.session_state.get("selected_sport", DEFAULT_SPORT)
+if current_selected not in sport_options:
+    current_selected = DEFAULT_SPORT
+
+# UI selector
+selected_sport_ui = st.sidebar.selectbox(
+    "Choose Sport",
+    sport_options,
+    index=sport_options.index(current_selected)
+)
+
+# Sync UI → session state
+st.session_state["selected_sport"] = selected_sport_ui
+
+# Always use helper (single source of truth)
+CURRENT_SPORT = get_selected_sport()
+
+# Convenience accessors (CRITICAL FOR NEXT BLOCKS)
+CURRENT_SPORT_CONFIG = SUPPORTED_SPORTS.get(CURRENT_SPORT, {})
+
+CURRENT_ODDS_KEY = CURRENT_SPORT_CONFIG.get("sport_key", "")
+CURRENT_SPORTSDATA_SLUG = CURRENT_SPORT_CONFIG.get("sportsdata_slug", "")
+
+# Debug (safe to remove later)
+st.sidebar.caption(f"Active Sport: {CURRENT_SPORT}")
 
 def get_sport_config(sport=None):
     sport_name = str(sport or get_selected_sport()).strip().upper()
@@ -225,9 +260,13 @@ def get_odds_api_key():
 
 ODDS_API_KEY = get_odds_api_key()
 
-# Main endpoint (NBA only for now)
-ODDS_API_URL = "https://api.the-odds-api.com/v4/sports/basketball_nba/odds"
+# =========================================================
+# ODDS API ENDPOINT (MULTI-SPORT - V35 BLOCK 4)
+# =========================================================
 
+CURRENT_SPORT_KEY = get_current_sport_key()
+
+ODDS_API_URL = f"https://api.the-odds-api.com/v4/sports/{CURRENT_SPORT_KEY}/odds"
 # Free-plan friendly bookmaker set
 ODDS_BOOKMAKERS = "draftkings,fanduel,betmgm"
 # =========================================================
@@ -1179,7 +1218,7 @@ def safe_get_json(url, params=None, timeout=20):
     except:
         return None
 
-def sportsdata_enabled():
+def sportsdata_enabled(): 
     return bool(st.session_state.get("sportsdata_enabled", True) and SPORTSDATA_API_KEY)
 
 def normalize_sport_for_sportsdata(sport_label):

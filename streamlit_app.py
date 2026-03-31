@@ -5920,7 +5920,8 @@ except:
             preview_df["units"] = preview_df["units"].apply(lambda x: round(_safe_float(x), 2))
             preview_df["books_seen"] = preview_df["books_seen"].apply(lambda x: _safe_int(x))
 
-            st.dataframe(preview_df, use_container_width=True, hide_index=# =========================================================
+            st.dataframe(preview_df, use_container_width=True, hide_index=
+# =========================================================
 # BET LOG
 # =========================================================
 if nav == "Bet Log":
@@ -6199,44 +6200,337 @@ if nav == "Bet Log":
         sum_col5.metric("Simulated $ P&L", f"${total_sim_profit:+,.2f}")
         sum_col6.metric("Simulated ROI", f"{overall_roi:.2f}%")
 
-        # =========================================================
+                # =========================================================
         # PERFORMANCE BREAKDOWNS
         # =========================================================
         st.subheader("📈 Performance Breakdowns")
 
-        by_sport_df = _build_group_summary(settled_df, "sport")
-        by_type_df = _build_group_summary(settled_df, "bet_type")
-        by_category_df = _build_group_summary(settled_df, "category_clean")
-        by_date_df = _build_group_summary(settled_df, "date_only")
+        # =========================================================
+        # DASHBOARD FILTERS
+        # =========================================================
+        filter_col1, filter_col2, filter_col3, filter_col4 = st.columns(4)
 
-        breakdown_tab1, breakdown_tab2, breakdown_tab3, breakdown_tab4 = st.tabs(
-            ["By Sport", "By Bet Type", "By Category", "By Date"]
+        all_sports = ["All"] + sorted([str(x).strip().upper() for x in log_df["sport"].dropna().unique() if str(x).strip()])
+        all_bet_types = ["All"] + sorted([str(x).strip() for x in log_df["bet_type"].dropna().unique() if str(x).strip()])
+        all_categories = ["All"] + sorted([str(x).strip() for x in log_df["category_clean"].dropna().unique() if str(x).strip()])
+        all_dates = sorted([str(x).strip() for x in log_df["date_only"].dropna().unique() if str(x).strip()], reverse=True)
+
+        with filter_col1:
+            dashboard_sport_filter = st.selectbox(
+                "Sport Filter",
+                all_sports,
+                index=0,
+                key="dashboard_sport_filter",
+            )
+
+        with filter_col2:
+            dashboard_type_filter = st.selectbox(
+                "Bet Type Filter",
+                all_bet_types,
+                index=0,
+                key="dashboard_type_filter",
+            )
+
+        with filter_col3:
+            dashboard_category_filter = st.selectbox(
+                "Category Filter",
+                all_categories,
+                index=0,
+                key="dashboard_category_filter",
+            )
+
+        with filter_col4:
+            dashboard_date_mode = st.selectbox(
+                "Date Range",
+                ["All", "Last 7", "Last 14", "Last 30", "Single Date"],
+                index=0,
+                key="dashboard_date_mode",
+            )
+
+        filtered_dashboard_df = settled_df.copy()
+
+        if dashboard_sport_filter != "All":
+            filtered_dashboard_df = filtered_dashboard_df[
+                filtered_dashboard_df["sport"].astype(str).str.upper() == dashboard_sport_filter
+            ].copy()
+
+        if dashboard_type_filter != "All":
+            filtered_dashboard_df = filtered_dashboard_df[
+                filtered_dashboard_df["bet_type"].astype(str) == dashboard_type_filter
+            ].copy()
+
+        if dashboard_category_filter != "All":
+            filtered_dashboard_df = filtered_dashboard_df[
+                filtered_dashboard_df["category_clean"].astype(str) == dashboard_category_filter
+            ].copy()
+
+        if dashboard_date_mode == "Single Date":
+            single_date_choice = st.selectbox(
+                "Choose Date",
+                ["All"] + all_dates,
+                index=0,
+                key="dashboard_single_date_choice",
+            )
+            if single_date_choice != "All":
+                filtered_dashboard_df = filtered_dashboard_df[
+                    filtered_dashboard_df["date_only"].astype(str) == single_date_choice
+                ].copy()
+        elif dashboard_date_mode in ["Last 7", "Last 14", "Last 30"]:
+            days_map = {"Last 7": 7, "Last 14": 14, "Last 30": 30}
+            day_cutoff = pd.Timestamp.now().normalize() - pd.Timedelta(days=days_map[dashboard_date_mode] - 1)
+
+            filtered_dashboard_df["timestamp_dt_tmp"] = pd.to_datetime(
+                filtered_dashboard_df["timestamp"],
+                errors="coerce",
+            )
+            filtered_dashboard_df = filtered_dashboard_df[
+                filtered_dashboard_df["timestamp_dt_tmp"] >= day_cutoff
+            ].copy()
+            filtered_dashboard_df = filtered_dashboard_df.drop(columns=["timestamp_dt_tmp"], errors="ignore")
+
+        # =========================================================
+        # FILTERED SUMMARY CARDS
+        # =========================================================
+        f_total_picks = int(len(filtered_dashboard_df))
+        f_wins = int((filtered_dashboard_df["result_clean"] == "Win").sum()) if not filtered_dashboard_df.empty else 0
+        f_losses = int((filtered_dashboard_df["result_clean"] == "Loss").sum()) if not filtered_dashboard_df.empty else 0
+        f_pushes = int((filtered_dashboard_df["result_clean"] == "Push").sum()) if not filtered_dashboard_df.empty else 0
+        f_units_profit = round(_safe_num(filtered_dashboard_df["profit"], 0.0).sum(), 2) if not filtered_dashboard_df.empty else 0.0
+        f_sim_profit = round(_safe_num(filtered_dashboard_df["sim_profit"], 0.0).sum(), 2) if not filtered_dashboard_df.empty else 0.0
+        f_sim_staked = round(_safe_num(filtered_dashboard_df["sim_stake"], 0.0).sum(), 2) if not filtered_dashboard_df.empty else 0.0
+        f_win_rate = round((f_wins / (f_wins + f_losses) * 100.0), 1) if (f_wins + f_losses) > 0 else 0.0
+        f_roi = round((f_sim_profit / f_sim_staked * 100.0), 2) if f_sim_staked > 0 else 0.0
+
+        card_col1, card_col2, card_col3, card_col4 = st.columns(4)
+        card_col1.metric("Filtered Picks", f_total_picks)
+        card_col2.metric("Filtered Win Rate", f"{f_win_rate:.1f}%")
+        card_col3.metric("Filtered Units P&L", f"{f_units_profit:+.2f}u")
+        card_col4.metric("Filtered Sim $ P&L", f"${f_sim_profit:+,.2f}")
+
+        card_col5, card_col6, card_col7 = st.columns(3)
+        card_col5.metric("Filtered ROI", f"{f_roi:.2f}%")
+        card_col6.metric("Wins / Losses", f"{f_wins}-{f_losses}")
+        card_col7.metric("Pushes", f_pushes)
+
+        # =========================================================
+        # FILTERED BREAKDOWNS
+        # =========================================================
+        filtered_by_sport_df = _build_group_summary(filtered_dashboard_df, "sport")
+        filtered_by_type_df = _build_group_summary(filtered_dashboard_df, "bet_type")
+        filtered_by_category_df = _build_group_summary(filtered_dashboard_df, "category_clean")
+        filtered_by_date_df = _build_group_summary(filtered_dashboard_df, "date_only")
+
+        sport_card_rows = []
+        if not filtered_by_sport_df.empty:
+            for _, row in filtered_by_sport_df.iterrows():
+                sport_card_rows.append(
+                    f"""
+                    <div style="
+                        border:1px solid #e5e7eb;
+                        border-radius:16px;
+                        padding:14px 16px;
+                        margin-bottom:10px;">
+                        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;">
+                            <div>
+                                <div style="font-size:22px;font-weight:700;">{row['sport']}</div>
+                                <div style="font-size:15px;opacity:0.8;">
+                                    {int(row['Wins'])}W - {int(row['Losses'])}L - {int(row['Pushes'])}P ({int(row['Picks'])} picks)
+                                </div>
+                            </div>
+                            <div style="text-align:right;">
+                                <div style="font-size:34px;font-weight:800;">{row['Win Rate %']:.0f}%</div>
+                                <div style="font-size:24px;font-weight:700;">${row['Sim $ P&L']:+,.2f}</div>
+                                <div style="font-size:18px;font-weight:600;">{row['Sim ROI %']:.2f}% ROI</div>
+                            </div>
+                        </div>
+                    </div>
+                    """
+                )
+
+        type_card_rows = []
+        if not filtered_by_type_df.empty:
+            for _, row in filtered_by_type_df.iterrows():
+                type_card_rows.append(
+                    f"""
+                    <div style="
+                        border:1px solid #e5e7eb;
+                        border-radius:16px;
+                        padding:14px 16px;
+                        margin-bottom:10px;">
+                        <div style="font-size:18px;font-weight:700;margin-bottom:8px;">{row['bet_type']}</div>
+                        <div style="font-size:30px;font-weight:800;">{row['Win Rate %']:.0f}%</div>
+                        <div style="font-size:16px;opacity:0.8;">{int(row['Wins'])}W - {int(row['Losses'])}L - {int(row['Pushes'])}P ({int(row['Picks'])} picks)</div>
+                        <div style="margin-top:8px;font-size:22px;font-weight:700;">${row['Sim $ P&L']:+,.2f}</div>
+                        <div style="font-size:16px;font-weight:600;">{row['Sim ROI %']:.2f}% ROI</div>
+                    </div>
+                    """
+                )
+
+        visual_tab1, visual_tab2, visual_tab3 = st.tabs(
+            ["By Sport Cards", "By Bet Type Cards", "Filtered Tables"]
         )
 
-        with breakdown_tab1:
-            if by_sport_df.empty:
-                st.info("No settled sport data yet.")
+        with visual_tab1:
+            if sport_card_rows:
+                for html in sport_card_rows:
+                    st.markdown(html, unsafe_allow_html=True)
             else:
-                st.dataframe(by_sport_df, use_container_width=True, hide_index=True)
+                st.info("No filtered sport data yet.")
 
-        with breakdown_tab2:
-            if by_type_df.empty:
-                st.info("No settled bet-type data yet.")
+        with visual_tab2:
+            if type_card_rows:
+                for html in type_card_rows:
+                    st.markdown(html, unsafe_allow_html=True)
             else:
-                st.dataframe(by_type_df, use_container_width=True, hide_index=True)
+                st.info("No filtered bet-type data yet.")
 
-        with breakdown_tab3:
-            if by_category_df.empty:
-                st.info("No settled category data yet.")
-            else:
-                st.dataframe(by_category_df, use_container_width=True, hide_index=True)
+        with visual_tab3:
+            ft_col1, ft_col2 = st.columns(2)
 
-        with breakdown_tab4:
-            if by_date_df.empty:
-                st.info("No settled date data yet.")
+            with ft_col1:
+                if filtered_by_sport_df.empty:
+                    st.info("No sport summary yet.")
+                else:
+                    st.markdown("**By Sport**")
+                    st.dataframe(filtered_by_sport_df, use_container_width=True, hide_index=True)
+
+                if filtered_by_category_df.empty:
+                    st.info("No category summary yet.")
+                else:
+                    st.markdown("**By Category**")
+                    st.dataframe(filtered_by_category_df, use_container_width=True, hide_index=True)
+
+            with ft_col2:
+                if filtered_by_type_df.empty:
+                    st.info("No bet-type summary yet.")
+                else:
+                    st.markdown("**By Bet Type**")
+                    st.dataframe(filtered_by_type_df, use_container_width=True, hide_index=True)
+
+                if filtered_by_date_df.empty:
+                    st.info("No date summary yet.")
+                else:
+                    filtered_by_date_df = filtered_by_date_df.sort_values(by="date_only", ascending=False)
+                    st.markdown("**By Date**")
+                    st.dataframe(filtered_by_date_df, use_container_width=True, hide_index=True)
+                # =========================================================
+        # BANKROLL SIMULATOR (MULTI-STAKE VIEW)
+        # =========================================================
+        st.subheader("💰 Bankroll Simulator")
+
+        if filtered_dashboard_df.empty:
+            st.info("No settled bets available for simulation.")
+        else:
+            sim_col1, sim_col2 = st.columns([2, 1])
+
+            with sim_col1:
+                stake_mode = st.selectbox(
+                    "Stake Mode",
+                    ["Flat Bet ($5)", "Flat Bet ($10)", "Flat Bet ($25)", "Flat Bet ($50)", "Custom"],
+                    index=1,
+                    key="bankroll_stake_mode",
+                )
+
+            with sim_col2:
+                if stake_mode == "Custom":
+                    custom_stake = st.number_input(
+                        "Custom Stake ($)",
+                        min_value=1.0,
+                        max_value=1000.0,
+                        value=10.0,
+                        step=1.0,
+                        key="bankroll_custom_stake",
+                    )
+                else:
+                    custom_stake = None
+
+            # Determine stake value
+            if stake_mode == "Flat Bet ($5)":
+                stake_size = 5.0
+            elif stake_mode == "Flat Bet ($10)":
+                stake_size = 10.0
+            elif stake_mode == "Flat Bet ($25)":
+                stake_size = 25.0
+            elif stake_mode == "Flat Bet ($50)":
+                stake_size = 50.0
             else:
-                by_date_df = by_date_df.sort_values(by="date_only", ascending=False)
-                st.dataframe(by_date_df, use_container_width=True, hide_index=True)
+                stake_size = float(custom_stake or 10.0)
+
+            sim_df = filtered_dashboard_df.copy()
+
+            # Ensure odds numeric
+            sim_df["odds_num"] = sim_df["odds"].apply(american_to_int)
+
+            sim_profit_list = []
+            cumulative_profit = []
+            running_total = 0.0
+
+            for _, row in sim_df.iterrows():
+                odds = row.get("odds_num")
+                result = str(row.get("result_clean", "")).lower()
+
+                profit = 0.0
+
+                if odds is not None:
+                    if result == "win":
+                        if odds > 0:
+                            profit = stake_size * (odds / 100.0)
+                        else:
+                            profit = stake_size / (abs(odds) / 100.0)
+                    elif result == "loss":
+                        profit = -stake_size
+                    elif result == "push":
+                        profit = 0.0
+
+                running_total += profit
+                sim_profit_list.append(profit)
+                cumulative_profit.append(running_total)
+
+            sim_df["sim_profit_recalc"] = sim_profit_list
+            sim_df["bankroll_curve"] = cumulative_profit
+
+            total_profit_sim = round(sum(sim_profit_list), 2)
+            total_bets_sim = len(sim_profit_list)
+            roi_sim = round((total_profit_sim / (stake_size * total_bets_sim) * 100.0), 2) if total_bets_sim > 0 else 0.0
+
+            sim_stat1, sim_stat2, sim_stat3 = st.columns(3)
+            sim_stat1.metric("Stake Size", f"${stake_size:.2f}")
+            sim_stat2.metric("Total Profit", f"${total_profit_sim:+,.2f}")
+            sim_stat3.metric("ROI", f"{roi_sim:.2f}%")
+
+            # =========================================================
+            # BANKROLL CHART
+            # =========================================================
+            chart_df = sim_df.copy()
+            chart_df = chart_df.reset_index(drop=True)
+
+            if "bankroll_curve" in chart_df.columns:
+                chart_df["Bet #"] = chart_df.index + 1
+
+                import matplotlib.pyplot as plt
+
+                plt.figure()
+                plt.plot(chart_df["Bet #"], chart_df["bankroll_curve"])
+                plt.xlabel("Bet Number")
+                plt.ylabel("Profit ($)")
+                plt.title("Bankroll Growth")
+
+                st.pyplot(plt)
+
+            # Optional table
+            with st.expander("View Simulation Data"):
+                st.dataframe(
+                    sim_df[[
+                        "selection",
+                        "game",
+                        "odds",
+                        "result_clean",
+                        "sim_profit_recalc",
+                        "bankroll_curve",
+                    ]],
+                    use_container_width=True,
+                    hide_index=True,
+                )
 
         # =========================================================
         # FULL LOG TABLE

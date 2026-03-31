@@ -5283,6 +5283,44 @@ nav = st.radio(
 st.session_state["nav_choice"] = nav
 st.markdown("</div>", unsafe_allow_html=True)
 
+    # =========================================================
+    # AUTO-LOG TOP PLAYS
+    # =========================================================
+    try:
+        active_auto_log_df = pd.DataFrame()
+
+        if "top_plays_df" in locals() and isinstance(top_plays_df, pd.DataFrame):
+            active_auto_log_df = top_plays_df.copy()
+
+        elif "active_df" in locals() and isinstance(active_df, pd.DataFrame):
+            active_auto_log_df = active_df.copy()
+
+        elif "plays_df" in locals() and isinstance(plays_df, pd.DataFrame) and not plays_df.empty:
+            if "status" in plays_df.columns:
+                active_auto_log_df = plays_df[
+                    plays_df["status"].astype(str).str.strip() == "Active"
+                ].copy()
+
+        if not active_auto_log_df.empty:
+            active_auto_log_df = attach_selected_sport_to_dataframe(
+                active_auto_log_df,
+                get_selected_sport(),
+            )
+            active_auto_log_df = normalize_dataframe_for_selected_sport(
+                active_auto_log_df,
+                get_selected_sport(),
+            )
+
+            added_top_play_logs = auto_log_active_plays(active_auto_log_df)
+
+            if added_top_play_logs > 0:
+                st.caption(
+                    f"Auto-logged {added_top_play_logs} Top Play(s) for {get_selected_sport()}."
+                )
+    except Exception:
+        pass
+
+
 # =========================================================
 # TOP PLAYS
 # =========================================================

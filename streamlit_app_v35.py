@@ -1922,12 +1922,17 @@ def update_learning_from_results(sport=None):
         avg_clv_score = stats.get("avg_clv_score", 0.0)
 
         if bets >= min_samples and (roi <= -0.12 or (roi <= -0.06 and avg_clv_score < -0.15)):
-            bad_flags[play_type] = True
+            bad_flags[play_type] = {
+                "is_filtered": True,
+                "reason": f"Auto-filtered from results: ROI {round(roi * 100, 2)}%, CLV score {round(avg_clv_score, 4)}",
+            }
         else:
-            bad_flags[play_type] = False
+            bad_flags[play_type] = {
+                "is_filtered": False,
+                "reason": "Not filtered",
+            }
 
-    learning_state["bad_category_flags"] = bad_flags
-
+    learning_state["bad_play_type_flags"] = bad_flags
     # -----------------------------------------------------
     # CATEGORY THRESHOLDS
     # -----------------------------------------------------

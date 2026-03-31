@@ -6066,18 +6066,18 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
         if sport_bet_log:
             _df = pd.DataFrame(sport_bet_log).copy()
 
-            for required_col in ["status", "profit", "market", "log_category", "true_confidence", "edge"]:
+            for required_col in ["result", "profit", "market", "log_category", "true_confidence", "edge"]:
                 if required_col not in _df.columns:
-                    _df[required_col] = ""
+                   _df[required_col] = ""
 
-            _df["status_clean"] = _df["status"].astype(str).str.strip().str.lower()
+            _df["result_clean"] = _df["result"].astype(str).str.strip().str.lower()
             _df["profit_num"] = pd.to_numeric(_df["profit"], errors="coerce").fillna(0.0)
             _df["true_conf_num"] = pd.to_numeric(_df["true_confidence"], errors="coerce").fillna(0.0)
             _df["edge_num"] = pd.to_numeric(_df["edge"], errors="coerce").fillna(0.0)
             _df["market_clean"] = _df["market"].astype(str).str.strip().str.lower()
             _df["category_clean"] = _df["log_category"].astype(str).str.strip()
 
-            settled_df = _df[_df["status_clean"].isin(["win", "loss"])].copy()
+            settled_df = _df[_df["result_clean"].isin(["win", "loss"])].copy()
     except:
         settled_df = pd.DataFrame()
 

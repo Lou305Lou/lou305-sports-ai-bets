@@ -6432,8 +6432,6 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
         f"Last learning refresh: {learning_state.get('last_learning_refresh', 'Not available')}"
     )
 
-    learning_state["category_min_samples"] = 3
-    learning_state["accelerated_learning_mode"] = True
 
     # =========================================================
     # HELPER FUNCTIONS

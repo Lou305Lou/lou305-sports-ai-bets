@@ -814,12 +814,13 @@ def prepare_selected_sport_context():
     """
     sync_selected_sport_state_to_legacy_keys()
 
+
 def finalize_selected_sport_context():
     """
     After older odds-fetch code runs, push any updated legacy keys back into
     the selected sport's dedicated storage bucket.
     """
-    sync_legacy_keys_to_selected_s
+    sync_legacy_keys_to_selected_sport_state()
 
 # =========================================================
 # MULTI-SPORT DISPLAY / LOG HELPERS
@@ -2334,23 +2335,7 @@ def parse_today_games(games_text: str):
 
     return games
 
-# =========================================================
-# MULTI-SPORT SIDEBAR SELECTOR
-# =========================================================
-st.sidebar.markdown("### 🏟️ Sport")
 
-selected_sport = st.sidebar.selectbox(
-    "Choose sport",
-    options=list(SUPPORTED_SPORTS.keys()),
-    index=list(SUPPORTED_SPORTS.keys()).index(get_selected_sport()),
-    key="selected_sport",
-)
-
-active_sport_cfg = get_sport_config(selected_sport)
-
-st.sidebar.caption(
-    f"Active sport: {selected_sport} • Odds key: {active_sport_cfg['sport_key']} • Learning tracked separately by sport"
-)
 # =========================================================
 # SIDEBAR CONTROLS (V34.1 IMPROVED UX)
 # =========================================================
@@ -2368,6 +2353,7 @@ st.sidebar.caption(
 )
 
 today_games = parse_today_games(str(today_games_text).upper())
+selected_sport = get_selected_sport()
 
 # =========================================================
 # SIDEBAR - SPORTSDATA CONTROLS

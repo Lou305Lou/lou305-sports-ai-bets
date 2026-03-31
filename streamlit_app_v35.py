@@ -643,27 +643,9 @@ if "api_calls_today" not in st.session_state:
 
 if "api_call_date" not in st.session_state:
     st.session_state["api_call_date"] = datetime.now().strftime("%Y-%m-%d")
-
-if "learning_state" not in st.session_state:
-    st.session_state["learning_state"] = {
-        "weights": {
-            "true_probability": 0.30,
-            "price_edge": 0.25,
-            "market_signal": 0.15,
-            "matchup_quality": 0.15,
-            "historical_performance": 0.15,
-        },
-        "category_thresholds": {
-            "Top Plays": 0.030,
-            "AI Picks": 0.035,
-            "AI Parlays": 0.050,
-            "Watchlist": 0.020,
-        },
-        "category_min_samples": 8,
-        "bad_category_flags": {},
-        "play_type_stats": {},
-        "last_learning_run": None,
-    }
+    
+if "learning_state_by_sport" not in st.session_state:
+    st.session_state["learning_state_by_sport"] = {}
 
 # =========================================================
 # SPORTS DATA FEED CONTROL

@@ -6084,50 +6084,353 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
     # =========================================================
     # DEFAULT LEARNING STATE
     # =========================================================
+    if "learning_state" not in st.session_state or not isinstance(st.session_state["learning_state"], dict):
+        st.session_state["learning_state"] = {}
+
+    learning_state = st.session_state["learning_state"]
+
     default_learning_state = {
         "weights": {
             "true_probability": 0.30,
             "price_edge": 0.25,
             "market_signal": 0.15,
             "matchup_quality": 0.15,
-            "historical_performance": 0.15
+            "historical_performance": 0.15,
         },
         "category_thresholds": {
             "Top Plays": 0.030,
             "AI Picks": 0.035,
             "AI Parlays": 0.050,
-            "Watchlist": 0.020
+            "Watchlist": 0.020,
         },
-        "last_update": None,
-        "play_type_stats": {},
+        "category_min_samples": 8,
+        "market_type_stats": {},
         "category_stats": {},
-        "bad_play_type_flags": {},
-        "category_min_samples": 3,
-        "accelerated_learning_mode": True
+        "bad_market_flags": [],
+        "bad_category_flags": [],
+        "last_learning_refresh": "",
+        "learning_notes": [],
     }
 
-    learning_state = get_learning_state_for_sport(selected_sport)
-    if not isinstance(learning_state, dict):
-        learning_state = default_learning_state.copy()
-
-    for key, val in default_learning_state.items():
+    for key, value in default_learning_state.items():
         if key not in learning_state:
-            learning_state[key] = val
+            learning_state[key] = value
 
-    if not isinstance(learning_state.get("weights", {}), dict):
+    if not isinstance(learning_state.get("weights"), dict):
         learning_state["weights"] = default_learning_state["weights"].copy()
 
-    if not isinstance(learning_state.get("category_thresholds", {}), dict):
+    if not isinstance(learning_state.get("category_thresholds"), dict):
         learning_state["category_thresholds"] = default_learning_state["category_thresholds"].copy()
 
-    if not isinstance(learning_state.get("play_type_stats", {}), dict):
-        learning_state["play_type_stats"] = {}
+    if not isinstance(learning_state.get("market_type_stats"), dict):
+        learning_state["market_type_stats"] = {}
 
-    if not isinstance(learning_state.get("category_stats", {}), dict):
+    if not isinstance(learning_state.get("category_stats"), dict):
         learning_state["category_stats"] = {}
 
-    if not isinstance(learning_state.get("bad_play_type_flags", {}), dict):
-        learning_state["bad_play_type_flags"] = {}
+    if not isinstance(learning_state.get("bad_market_flags"), list):
+        learning_state["bad_market_flags"] = []
+
+    if not isinstance(learning_state.get("bad_category_flags"), list):
+        learning_state["bad_category_flags"] = []
+
+    if not isinstance(learning_state.get("learning_notes"), list):
+        learning_state["learning_notes"] = []
+
+    # =========================================================
+    # LEARNING CONTROLS
+    # =========================================================
+    learning_col1, learning_col2, learning_col3 = st.columns(3)
+
+    with learning_col1:
+        learning_enabled = st.toggle(
+            "Enable Controlled Learning",
+            value=True,
+            key=f"learning_enabled_{selected_sport}",
+        )
+
+    with learning_col2:
+        auto_filter_bad_types = st.toggle(
+            "Auto-Filter Bad Play Types",
+            value=True,
+            key=f"auto_filter_bad_types_{selected_sport}",
+        )
+
+    with learning_col3:
+        min_sample_size = st.number_input(
+            "Minimum Samples Before Learning Applies",
+            min_value=3,
+            max_value=50,
+            value=int(learning_state.get("category_min_samples", 8)),
+            step=1,
+            key=f"learning_min_samples_{selected_sport}",
+        )
+
+    learning_state["category_min_samples"] = int(min_sample_size)
+
+    st.caption(
+        "Controlled learning adjusts filtering logic and play-type confidence only. "
+        "It does not auto-increase bet sizing."
+    )
+
+    # =========================================================
+    # SETTLED PERFORMANCE SUMMARY
+    # =========================================================
+    total_settled_bets = int(len(settled_df))
+    total_wins = int((settled_df["result_clean"] == "win").sum()) if not settled_df.empty else 0
+    total_losses = int((settled_df["result_clean"] == "loss").sum()) if not settled_df.empty else 0
+    total_profit = float(settled_df["profit_num"].sum()) if not settled_df.empty else 0.0
+    overall_win_rate = (total_wins / total_settled_bets * 100.0) if total_settled_bets > 0 else 0.0
+
+    summary_col1, summary_col2, summary_col3, summary_col4 = st.columns(4)
+    summary_col1.metric("Settled Bets", total_settled_bets)
+    summary_col2.metric("Wins", total_wins)
+    summary_col3.metric("Win Rate", f"{overall_win_rate:.1f}%")
+    summary_col4.metric("Profit", f"{total_profit:.2f}u")
+
+    # =========================================================
+    # BUILD MARKET TYPE STATS
+    # =========================================================
+    market_type_stats = {}
+    category_stats = {}
+    learning_notes = []
+    bad_market_flags = []
+    bad_category_flags = []
+
+    if not settled_df.empty:
+        market_grouped = (
+            settled_df.groupby("market_clean", dropna=False)
+            .agg(
+                bets=("result_clean", "count"),
+                wins=("result_clean", lambda s: (s == "win").sum()),
+                losses=("result_clean", lambda s: (s == "loss").sum()),
+                profit=("profit_num", "sum"),
+                avg_true_conf=("true_conf_num", "mean"),
+                avg_edge=("edge_num", "mean"),
+            )
+            .reset_index()
+        )
+
+        for _, row in market_grouped.iterrows():
+            market_name = str(row["market_clean"]).strip()
+            if not market_name:
+                continue
+
+            bets = int(row["bets"])
+            wins = int(row["wins"])
+            losses = int(row["losses"])
+            profit = float(row["profit"])
+            avg_true_conf = float(row["avg_true_conf"]) if pd.notna(row["avg_true_conf"]) else 0.0
+            avg_edge = float(row["avg_edge"]) if pd.notna(row["avg_edge"]) else 0.0
+            win_rate = (wins / bets * 100.0) if bets > 0 else 0.0
+            roi_per_bet = (profit / bets) if bets > 0 else 0.0
+
+            market_type_stats[market_name] = {
+                "bets": bets,
+                "wins": wins,
+                "losses": losses,
+                "profit": round(profit, 4),
+                "win_rate": round(win_rate, 2),
+                "roi_per_bet": round(roi_per_bet, 4),
+                "avg_true_conf": round(avg_true_conf, 2),
+                "avg_edge": round(avg_edge, 2),
+            }
+
+            if bets >= int(min_sample_size):
+                if profit < 0 or win_rate < 45.0:
+                    bad_market_flags.append(market_name)
+
+        category_grouped = (
+            settled_df.groupby("category_clean", dropna=False)
+            .agg(
+                bets=("result_clean", "count"),
+                wins=("result_clean", lambda s: (s == "win").sum()),
+                losses=("result_clean", lambda s: (s == "loss").sum()),
+                profit=("profit_num", "sum"),
+                avg_true_conf=("true_conf_num", "mean"),
+                avg_edge=("edge_num", "mean"),
+            )
+            .reset_index()
+        )
+
+        for _, row in category_grouped.iterrows():
+            category_name = str(row["category_clean"]).strip()
+            if not category_name:
+                continue
+
+            bets = int(row["bets"])
+            wins = int(row["wins"])
+            losses = int(row["losses"])
+            profit = float(row["profit"])
+            avg_true_conf = float(row["avg_true_conf"]) if pd.notna(row["avg_true_conf"]) else 0.0
+            avg_edge = float(row["avg_edge"]) if pd.notna(row["avg_edge"]) else 0.0
+            win_rate = (wins / bets * 100.0) if bets > 0 else 0.0
+            roi_per_bet = (profit / bets) if bets > 0 else 0.0
+
+            category_stats[category_name] = {
+                "bets": bets,
+                "wins": wins,
+                "losses": losses,
+                "profit": round(profit, 4),
+                "win_rate": round(win_rate, 2),
+                "roi_per_bet": round(roi_per_bet, 4),
+                "avg_true_conf": round(avg_true_conf, 2),
+                "avg_edge": round(avg_edge, 2),
+            }
+
+            if bets >= int(min_sample_size):
+                if profit < 0 or win_rate < 45.0:
+                    bad_category_flags.append(category_name)
+
+    # =========================================================
+    # CONTROLLED LEARNING ADJUSTMENTS
+    # =========================================================
+    adjusted_category_thresholds = learning_state.get("category_thresholds", {}).copy()
+
+    if learning_enabled:
+        for category_name, stats in category_stats.items():
+            current_threshold = float(
+                adjusted_category_thresholds.get(
+                    category_name,
+                    default_learning_state["category_thresholds"].get(category_name, 0.03)
+                )
+            )
+
+            bets = int(stats.get("bets", 0))
+            profit = float(stats.get("profit", 0.0))
+            win_rate = float(stats.get("win_rate", 0.0))
+
+            if bets >= int(min_sample_size):
+                if profit > 0 and win_rate >= 55.0:
+                    adjusted_category_thresholds[category_name] = max(0.01, current_threshold - 0.0025)
+                elif profit < 0 or win_rate < 45.0:
+                    adjusted_category_thresholds[category_name] = min(0.10, current_threshold + 0.0050)
+
+        if total_settled_bets >= int(min_sample_size):
+            if overall_win_rate >= 55.0 and total_profit > 0:
+                learning_notes.append("Recent settled performance is positive. Slightly loosening qualified category thresholds.")
+            elif overall_win_rate < 45.0 or total_profit < 0:
+                learning_notes.append("Recent settled performance is weak. Tightening category thresholds for better selectivity.")
+
+    learning_state["market_type_stats"] = market_type_stats
+    learning_state["category_stats"] = category_stats
+    learning_state["category_thresholds"] = adjusted_category_thresholds
+    learning_state["bad_market_flags"] = bad_market_flags if auto_filter_bad_types else []
+    learning_state["bad_category_flags"] = bad_category_flags if auto_filter_bad_types else []
+    learning_state["learning_notes"] = learning_notes
+    learning_state["last_learning_refresh"] = pd.Timestamp.now().strftime("%Y-%m-%d %I:%M:%S %p")
+
+    st.session_state["learning_state"] = learning_state
+
+    # =========================================================
+    # TRUE PROBABILITY EMPHASIS
+    # =========================================================
+    st.markdown("#### 🎯 True Probability Emphasis")
+    st.caption(
+        "True probability remains the largest learning weight so the engine does not overreact "
+        "to short-term variance from weaker market types or categories."
+    )
+
+    weight_df = pd.DataFrame(
+        [
+            {"Factor": "True Probability", "Weight": float(learning_state["weights"].get("true_probability", 0.30))},
+            {"Factor": "Price Edge", "Weight": float(learning_state["weights"].get("price_edge", 0.25))},
+            {"Factor": "Market Signal", "Weight": float(learning_state["weights"].get("market_signal", 0.15))},
+            {"Factor": "Matchup Quality", "Weight": float(learning_state["weights"].get("matchup_quality", 0.15))},
+            {"Factor": "Historical Performance", "Weight": float(learning_state["weights"].get("historical_performance", 0.15))},
+        ]
+    )
+
+    st.dataframe(weight_df, use_container_width=True, hide_index=True)
+
+    # =========================================================
+    # CATEGORY THRESHOLDS TABLE
+    # =========================================================
+    st.markdown("#### 📊 Adaptive Category Thresholds")
+
+    threshold_rows = []
+    for category_name in ["Top Plays", "AI Picks", "AI Parlays", "Watchlist"]:
+        threshold_rows.append(
+            {
+                "Category": category_name,
+                "Threshold": round(float(adjusted_category_thresholds.get(category_name, 0.03)), 4),
+                "Flagged Bad Type": "Yes" if category_name in learning_state.get("bad_category_flags", []) else "No",
+            }
+        )
+
+    threshold_df = pd.DataFrame(threshold_rows)
+    st.dataframe(threshold_df, use_container_width=True, hide_index=True)
+
+    # =========================================================
+    # MARKET PERFORMANCE TABLE
+    # =========================================================
+    st.markdown("#### 🧠 Market Type Performance")
+
+    if market_type_stats:
+        market_stats_df = pd.DataFrame(
+            [
+                {
+                    "Market": market_name,
+                    "Bets": stats["bets"],
+                    "Wins": stats["wins"],
+                    "Losses": stats["losses"],
+                    "Win Rate %": stats["win_rate"],
+                    "Profit": stats["profit"],
+                    "ROI/Bet": stats["roi_per_bet"],
+                    "Avg True Conf": stats["avg_true_conf"],
+                    "Avg Edge": stats["avg_edge"],
+                    "Filtered": "Yes" if market_name in learning_state.get("bad_market_flags", []) else "No",
+                }
+                for market_name, stats in market_type_stats.items()
+            ]
+        ).sort_values(by=["Profit", "Win Rate %"], ascending=[False, False])
+
+        st.dataframe(market_stats_df, use_container_width=True, hide_index=True)
+    else:
+        st.info("No settled market-type data yet for this sport.")
+
+    # =========================================================
+    # CATEGORY PERFORMANCE TABLE
+    # =========================================================
+    st.markdown("#### 📚 Category Performance")
+
+    if category_stats:
+        category_stats_df = pd.DataFrame(
+            [
+                {
+                    "Category": category_name,
+                    "Bets": stats["bets"],
+                    "Wins": stats["wins"],
+                    "Losses": stats["losses"],
+                    "Win Rate %": stats["win_rate"],
+                    "Profit": stats["profit"],
+                    "ROI/Bet": stats["roi_per_bet"],
+                    "Avg True Conf": stats["avg_true_conf"],
+                    "Avg Edge": stats["avg_edge"],
+                    "Filtered": "Yes" if category_name in learning_state.get("bad_category_flags", []) else "No",
+                }
+                for category_name, stats in category_stats.items()
+            ]
+        ).sort_values(by=["Profit", "Win Rate %"], ascending=[False, False])
+
+        st.dataframe(category_stats_df, use_container_width=True, hide_index=True)
+    else:
+        st.info("No settled category data yet for this sport.")
+
+    # =========================================================
+    # LEARNING NOTES
+    # =========================================================
+    st.markdown("#### 📝 Learning Notes")
+
+    if learning_state.get("learning_notes"):
+        for note in learning_state["learning_notes"]:
+            st.caption(f"• {note}")
+    else:
+        st.caption("• Learning engine is active, but more settled samples are needed before stronger adjustments are made.")
+
+    st.caption(
+        f"Last learning refresh: {learning_state.get('last_learning_refresh', 'Not available')}"
+    )
 
     learning_state["category_min_samples"] = 3
     learning_state["accelerated_learning_mode"] = True

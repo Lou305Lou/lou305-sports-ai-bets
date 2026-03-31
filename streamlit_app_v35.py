@@ -1713,7 +1713,11 @@ def safe_clv_score(row):
     return 0.0
 
 
-def compute_true_probability(row):
+def get_active_learning_state(sport=None):
+    return get_learning_state_for_sport(sport or get_selected_sport())
+
+
+def compute_true_probability(row, sport=None):
     """
     Controlled true probability estimate.
     V33.2 adds a SMALL CLV-aware adjustment.
@@ -1729,7 +1733,17 @@ def compute_true_probability(row):
     multi_ai_score = safe_float(row.get("multi_ai_score", row.get("score", 50)), 50)
     clv_signal = safe_clv_score(row)
 
-    weights = st.session_state["learning_state"]["weights"]
+    learning_state = get_active_learning_state(sport)
+    weights = learning_state.get(
+        "weights",
+        {
+            "true_probability": 0.30,
+            "price_edge": 0.25,
+            "market_signal": 0.15,
+            "matchup_quality": 0.15,
+            "historical_performance": 0.15,
+        },
+    )
 
     projection_component = clamp(model_projection, 0.01, 0.99)
     market_component = clamp(model_market, 0.01, 0.99)
@@ -1741,11 +1755,11 @@ def compute_true_probability(row):
     price_nudge = clamp(implied_prob + (price_edge * 0.25), 0.01, 0.99)
 
     weighted_prob = (
-        projection_component * weights["true_probability"] +
-        price_nudge * weights["price_edge"] +
-        market_component * weights["market_signal"] +
-        matchup_quality * weights["matchup_quality"] +
-        history_component * weights["historical_performance"]
+        projection_component * safe_float(weights.get("true_probability", 0.30), 0.30) +
+        price_nudge * safe_float(weights.get("price_edge", 0.25), 0.25) +
+        market_component * safe_float(weights.get("market_signal", 0.15), 0.15) +
+        matchup_quality * safe_float(weights.get("matchup_quality", 0.15), 0.15) +
+        history_component * safe_float(weights.get("historical_performance", 0.15), 0.15)
     )
 
     # very small CLV nudge only after base probability is formed
@@ -1757,11 +1771,11 @@ def compute_true_probability(row):
     return clamp(true_probability, 0.01, 0.99)
 
 
-def enrich_play_with_learning_fields(row):
+def enrich_play_with_learning_fields(row, sport=None):
     row = dict(row)
 
     implied_probability = american_odds_to_implied_prob(row.get("odds", 0))
-    true_probability = compute_true_probability(row)
+    true_probability = compute_true_probability(row, sport=sport)
     edge = true_probability - implied_probability
 
     row["implied_probability"] = round(implied_probability, 4)
@@ -1773,18 +1787,24 @@ def enrich_play_with_learning_fields(row):
     return row
 
 
-def should_allow_play(row):
-    learning_state = st.session_state["learning_state"]
-    row = enrich_play_with_learning_fields(row)
+def should_allow_play(row, sport=None):
+    learning_state = get_active_learning_state(sport)
+    row = enrich_play_with_learning_fields(row, sport=sport)
 
     category = row.get("primary_category", "Uncategorized")
     play_type = row.get("play_type", "other")
     edge = safe_float(row.get("edge", 0.0), 0.0)
 
-    category_threshold = learning_state["category_thresholds"].get(category, 0.03)
-    bad_flags = learning_state.get("bad_category_flags", {})
+    category_threshold = safe_float(
+        learning_state.get("category_thresholds", {}).get(category, 0.03),
+        0.03
+    )
 
-    if bad_flags.get(play_type, False):
+    bad_play_type_flags = learning_state.get("bad_play_type_flags", {})
+    if isinstance(bad_play_type_flags.get(play_type), dict):
+        if bool(bad_play_type_flags.get(play_type, {}).get("is_filtered", False)):
+            return False, f"Filtered by learning engine: {play_type} underperforming"
+    elif bool(bad_play_type_flags.get(play_type, False)):
         return False, f"Filtered by learning engine: {play_type} underperforming"
 
     if edge < category_threshold:
@@ -1809,8 +1829,9 @@ def calculate_bet_profit(odds, stake, result):
     return 0.0
 
 
-def update_learning_from_results():
-    bet_log = st.session_state.get("bet_log", [])
+def update_learning_from_results(sport=None):
+    selected_sport_name = str(sport or get_selected_sport()).strip().upper()
+    bet_log = get_bet_log_for_sport(selected_sport_name)
     if not bet_log:
         return
 
@@ -1831,7 +1852,7 @@ def update_learning_from_results():
 
     enriched_rows = []
     for _, row in graded.iterrows():
-        enriched_rows.append(enrich_play_with_learning_fields(row.to_dict()))
+        enriched_rows.append(enrich_play_with_learning_fields(row.to_dict(), sport=selected_sport_name))
     graded = pd.DataFrame(enriched_rows)
 
     if "stake" not in graded.columns:
@@ -1852,7 +1873,7 @@ def update_learning_from_results():
     graded["clv_result"] = graded["clv_result"].astype(str).str.strip()
     graded["clv_score"] = graded.apply(safe_clv_score, axis=1)
 
-    learning_state = st.session_state["learning_state"]
+    learning_state = get_active_learning_state(selected_sport_name)
     min_samples = safe_float(learning_state.get("category_min_samples", 8), 8)
 
     # -----------------------------------------------------
@@ -1926,7 +1947,6 @@ def update_learning_from_results():
             elif roi > 0.08:
                 current_threshold -= 0.003
 
-            # CLV-specific tightening/loosening
             if avg_clv_score < -0.12:
                 current_threshold += 0.003
             elif avg_clv_score > 0.12:
@@ -1951,14 +1971,14 @@ def update_learning_from_results():
         weights = dict(learning_state.get("weights", {}))
 
         if win_edge > loss_edge:
-            weights["true_probability"] = clamp(weights["true_probability"] + 0.01, 0.22, 0.38)
-            weights["price_edge"] = clamp(weights["price_edge"] + 0.005, 0.18, 0.32)
-            weights["market_signal"] = clamp(weights["market_signal"] - 0.005, 0.10, 0.22)
+            weights["true_probability"] = clamp(safe_float(weights.get("true_probability", 0.30), 0.30) + 0.01, 0.22, 0.38)
+            weights["price_edge"] = clamp(safe_float(weights.get("price_edge", 0.25), 0.25) + 0.005, 0.18, 0.32)
+            weights["market_signal"] = clamp(safe_float(weights.get("market_signal", 0.15), 0.15) - 0.005, 0.10, 0.22)
 
         if win_clv_score > loss_clv_score:
-            weights["market_signal"] = clamp(weights["market_signal"] + 0.006, 0.10, 0.24)
-            weights["historical_performance"] = clamp(weights["historical_performance"] + 0.004, 0.10, 0.24)
-            weights["matchup_quality"] = clamp(weights["matchup_quality"] - 0.004, 0.10, 0.22)
+            weights["market_signal"] = clamp(safe_float(weights.get("market_signal", 0.15), 0.15) + 0.006, 0.10, 0.24)
+            weights["historical_performance"] = clamp(safe_float(weights.get("historical_performance", 0.15), 0.15) + 0.004, 0.10, 0.24)
+            weights["matchup_quality"] = clamp(safe_float(weights.get("matchup_quality", 0.15), 0.15) - 0.004, 0.10, 0.22)
 
         total = sum(weights.values())
         if total > 0:
@@ -1968,11 +1988,11 @@ def update_learning_from_results():
         learning_state["weights"] = weights
 
     learning_state["last_learning_run"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    st.session_state["learning_state"] = learning_state
+    save_learning_state_for_sport(learning_state, selected_sport_name)
 
 
-def get_learning_summary_rows():
-    learning_state = st.session_state.get("learning_state", {})
+def get_learning_summary_rows(sport=None):
+    learning_state = get_active_learning_state(sport)
     stats = learning_state.get("play_type_stats", {})
 
     rows = []
@@ -2024,13 +2044,12 @@ def get_row_category_for_learning(row):
     return "Uncategorized"
 
 
-def enrich_play_with_learning_fields_compat(row):
+def enrich_play_with_learning_fields_compat(row, sport=None):
     row = dict(row)
 
     if "category" not in row or not str(row.get("category", "")).strip():
         row["category"] = get_row_category_for_learning(row)
 
-    # Support both app field names and learning-engine field names
     if "model_projection" not in row:
         row["model_projection"] = clamp(safe_float(row.get("true_prob", 50.0), 50.0) / 100.0, 0.01, 0.99)
 
@@ -2053,9 +2072,8 @@ def enrich_play_with_learning_fields_compat(row):
     if "stake" not in row:
         row["stake"] = safe_float(row.get("units", 1.0), 1.0)
 
-    enriched = enrich_play_with_learning_fields(row)
+    enriched = enrich_play_with_learning_fields(row, sport=sport)
 
-    # Keep both naming systems available
     enriched["implied_prob"] = round(safe_float(enriched.get("implied_probability", 0.0), 0.0) * 100.0, 2)
     enriched["true_prob"] = round(safe_float(enriched.get("true_probability", 0.0), 0.0) * 100.0, 2)
     enriched["edge"] = round(
@@ -2074,8 +2092,9 @@ BAD_PLAYTYPE_THRESHOLD = -0.25
 GOOD_PLAYTYPE_THRESHOLD = 0.10
 
 
-def get_learning_activation_metrics():
-    df = pd.DataFrame(st.session_state.get("bet_log", []))
+def get_learning_activation_metrics(sport=None):
+    selected_sport_name = str(sport or get_selected_sport()).strip().upper()
+    df = pd.DataFrame(get_bet_log_for_sport(selected_sport_name))
     if df.empty:
         return {}
 
@@ -2107,12 +2126,12 @@ def get_learning_activation_metrics():
     return summary
 
 
-def get_dynamic_edge_threshold(category):
-    learning_state = st.session_state.get("learning_state", {})
+def get_dynamic_edge_threshold(category, sport=None):
+    learning_state = get_active_learning_state(sport)
     thresholds = learning_state.get("category_thresholds", {})
 
     base_threshold = float(thresholds.get(category, 0.02))
-    activation = get_learning_activation_metrics()
+    activation = get_learning_activation_metrics(sport)
 
     for _, stats in activation.items():
         if int(stats.get("bets", 0)) < LEARNING_MIN_SAMPLE:
@@ -2127,8 +2146,8 @@ def get_dynamic_edge_threshold(category):
     return max(0.01, min(base_threshold, 0.10))
 
 
-def should_block_play_type(play_type):
-    activation = get_learning_activation_metrics()
+def should_block_play_type(play_type, sport=None):
+    activation = get_learning_activation_metrics(sport)
     stats = activation.get(str(play_type).strip().lower())
 
     if not stats:
@@ -2140,15 +2159,15 @@ def should_block_play_type(play_type):
     return float(stats.get("roi", 0.0)) < BAD_PLAYTYPE_THRESHOLD
 
 
-def apply_v33_learning_filters(play):
+def apply_v33_learning_filters(play, sport=None):
     play_type = str(play.get("play_type", "")).lower()
     category = str(play.get("category", "Top Plays")).strip() or "Top Plays"
 
-    if should_block_play_type(play_type):
+    if should_block_play_type(play_type, sport=sport):
         return False, "Play type underperforming (auto-blocked)"
 
     edge = safe_float(play.get("edge", 0), 0) / 100.0
-    min_edge = get_dynamic_edge_threshold(category)
+    min_edge = get_dynamic_edge_threshold(category, sport=sport)
 
     if edge < min_edge:
         return False, f"Edge below dynamic threshold ({round(min_edge * 100, 2)}%)"
@@ -2156,22 +2175,23 @@ def apply_v33_learning_filters(play):
     return True, "Passed V33.1 filters"
 
 
-def apply_learning_engine_to_df(df, category_name):
+def apply_learning_engine_to_df(df, category_name, sport=None):
     if df is None or df.empty:
         return df
 
+    selected_sport_name = str(sport or get_selected_sport()).strip().upper()
     rows = []
 
     for _, row in df.iterrows():
         item = row.to_dict()
         item["category"] = category_name
+        item["sport"] = selected_sport_name
 
-        item = enrich_play_with_learning_fields_compat(item)
+        item = enrich_play_with_learning_fields_compat(item, sport=selected_sport_name)
 
-        allowed, reason = should_allow_play(item)
+        allowed, reason = should_allow_play(item, sport=selected_sport_name)
 
-        # Apply V33.1 filters on top of base learning checks
-        v33_allowed, v33_reason = apply_v33_learning_filters(item)
+        v33_allowed, v33_reason = apply_v33_learning_filters(item, sport=selected_sport_name)
         if not v33_allowed:
             allowed = False
             reason = v33_reason

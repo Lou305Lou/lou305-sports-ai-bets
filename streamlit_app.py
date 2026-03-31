@@ -5924,7 +5924,7 @@ except:
 # =========================================================
 # BET LOG
 # =========================================================
-elif nav == "Bet Log":
+if nav == "Bet Log":
     st.header("🧾 Bet Log")
 
     sync_manual_results_into_bet_log()

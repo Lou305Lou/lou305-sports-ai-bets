@@ -5297,15 +5297,21 @@ elif nav == "AI Slip":
         else:
             st.warning(f"Press 'Refresh Live Odds' in the sidebar to load live {selected_sport} odds.")
 
-    ai_df = pd.DataFrame()
+ai_df = pd.DataFrame()
 
-    try:
-        if "best_plays_df" in locals() and best_plays_df is not None:
-            ai_df = best_plays_df.copy()
-        elif "best_plays_df" in globals() and best_plays_df is not None:
-            ai_df = best_plays_df.copy()
-    except:
+try:
+    if "active_df" in locals() and active_df is not None and not active_df.empty:
+        ai_df = active_df.copy()
+    elif "active_df" in globals() and active_df is not None and not active_df.empty:
+        ai_df = active_df.copy()
+    elif "watch_df" in locals() and watch_df is not None and not watch_df.empty:
+        ai_df = watch_df.copy()
+    elif "watch_df" in globals() and watch_df is not None and not watch_df.empty:
+        ai_df = watch_df.copy()
+    else:
         ai_df = pd.DataFrame()
+except:
+    ai_df = pd.DataFrame()
 
     required_cols = [
         "sport",

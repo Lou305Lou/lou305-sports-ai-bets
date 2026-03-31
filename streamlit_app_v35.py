@@ -3110,11 +3110,22 @@ def generate_ai_plays():
         "decision_reasons",
         "rank_score",
         "play_id",
+        "learning_status",
+        "learning_reason",
+        "category",
+        "primary_category",
+        "play_type",
+        "sport",
     ]
 
     live_games = get_effective_odds_games()
     if not live_games:
         return pd.DataFrame(columns=empty_cols)
+
+    selected_sport_name = get_selected_sport()
+    learning_state = get_learning_state_for_sport(selected_sport_name)
+    bad_play_type_flags = learning_state.get("bad_play_type_flags", {})
+    adjusted_thresholds = learning_state.get("category_thresholds", {})
 
     allowed_games = set(today_games) if today_games else None
     rows = []
@@ -3123,6 +3134,8 @@ def generate_ai_plays():
         return normalize_team_name(str(name).strip())
 
     def add_scored_row(row, base_tags):
+        row["sport"] = selected_sport_name
+
         tp, ip, ed = estimate_true_probability_pct(row)
         row["true_prob"] = tp
         row["implied_prob"] = ip
@@ -3470,6 +3483,7 @@ def generate_ai_plays():
                     "consensus": prop_consensus,
                     "price_edge": price_edge,
                     "ai_tags": [],
+                    "sport": selected_sport_name,
                 }
 
                 prop_tags = [
@@ -3533,6 +3547,7 @@ def generate_ai_plays():
                 "consensus": consensus,
                 "price_edge": price_edge,
                 "ai_tags": [],
+                "sport": selected_sport_name,
             }
             add_scored_row(row, ["API live odds", "moneyline", "best price"])
 
@@ -3572,6 +3587,7 @@ def generate_ai_plays():
                 "consensus": consensus,
                 "price_edge": price_edge,
                 "ai_tags": [],
+                "sport": selected_sport_name,
             }
             add_scored_row(row, ["API live odds", "spread", "best line"])
 
@@ -3609,6 +3625,7 @@ def generate_ai_plays():
                 "consensus": consensus,
                 "price_edge": price_edge,
                 "ai_tags": [],
+                "sport": selected_sport_name,
             }
             add_scored_row(row, ["API live odds", "total", "best line"])
 
@@ -3617,6 +3634,8 @@ def generate_ai_plays():
     df = pd.DataFrame(rows)
     if df.empty:
         return pd.DataFrame(columns=empty_cols)
+
+    df = normalize_dataframe_for_selected_sport(df, selected_sport_name)
 
     if "selection" in df.columns:
         df = df.drop_duplicates(subset=["game", "market", "selection", "odds"]).copy()
@@ -3689,6 +3708,7 @@ def generate_ai_plays():
         .head(TOP_PLAYS_LIMIT)
         .copy()
     )
+    active_local["category"] = "Top Plays"
 
     watch_local = (
         df[df["status"] == "Watch"]
@@ -3696,6 +3716,13 @@ def generate_ai_plays():
         .head(WATCHLIST_LIMIT)
         .copy()
     )
+    watch_local["category"] = "Watchlist"
+
+    active_local = apply_learning_engine_to_df(active_local, "Top Plays", sport=selected_sport_name)
+    watch_local = apply_learning_engine_to_df(watch_local, "Watchlist", sport=selected_sport_name)
+
+    if active_local.empty and watch_local.empty:
+        return pd.DataFrame(columns=empty_cols)
 
     active_rows = []
     running_units = 0.0
@@ -3703,9 +3730,46 @@ def generate_ai_plays():
     for _, row in active_local.iterrows():
         proposed_units = float(row["units"])
 
+        row_play_type = str(row.get("play_type", "")).strip().lower()
+        play_type_blocked = False
+        flag_info = bad_play_type_flags.get(row_play_type, {})
+
+        if isinstance(flag_info, dict):
+            play_type_blocked = bool(flag_info.get("is_filtered", False))
+        else:
+            play_type_blocked = bool(flag_info)
+
+        if play_type_blocked:
+            row2 = row.copy()
+            row2["status"] = "Watch"
+            row2["category"] = "Watchlist"
+            row2["watch_tier"] = classify_watch_tier(row2)
+            row2["units"] = scale_watch_units(row2)
+            row2["learning_status"] = "Filtered"
+            row2["learning_reason"] = f"Play type filtered: {row_play_type}"
+            watch_local = pd.concat([watch_local, pd.DataFrame([row2])], ignore_index=True)
+            continue
+
+        top_play_threshold = safe_float(adjusted_thresholds.get("Top Plays", 0.03), 0.03)
+        row_edge_decimal = safe_float(row.get("edge", 0.0), 0.0) / 100.0
+        if row_edge_decimal < top_play_threshold:
+            row2 = row.copy()
+            row2["status"] = "Watch"
+            row2["category"] = "Watchlist"
+            row2["watch_tier"] = classify_watch_tier(row2)
+            row2["units"] = scale_watch_units(row2)
+            row2["learning_status"] = "Filtered"
+            row2["learning_reason"] = (
+                f"Moved to Watchlist by learning threshold "
+                f"({round(row_edge_decimal, 4)} < {round(top_play_threshold, 4)})"
+            )
+            watch_local = pd.concat([watch_local, pd.DataFrame([row2])], ignore_index=True)
+            continue
+
         if len(active_rows) >= MAX_ACTIVE_PLAYS:
             row2 = row.copy()
             row2["status"] = "Watch"
+            row2["category"] = "Watchlist"
             row2["watch_tier"] = classify_watch_tier(row2)
             row2["units"] = scale_watch_units(row2)
             watch_local = pd.concat([watch_local, pd.DataFrame([row2])], ignore_index=True)
@@ -3714,6 +3778,7 @@ def generate_ai_plays():
         if running_units + proposed_units > MAX_TOTAL_UNITS:
             row2 = row.copy()
             row2["status"] = "Watch"
+            row2["category"] = "Watchlist"
             row2["watch_tier"] = classify_watch_tier(row2)
             row2["units"] = scale_watch_units(row2)
             watch_local = pd.concat([watch_local, pd.DataFrame([row2])], ignore_index=True)
@@ -3723,6 +3788,9 @@ def generate_ai_plays():
         running_units += proposed_units
 
     active_final = pd.DataFrame(active_rows) if active_rows else pd.DataFrame(columns=df.columns)
+
+    if not watch_local.empty:
+        watch_local = apply_learning_engine_to_df(watch_local, "Watchlist", sport=selected_sport_name)
 
     if not watch_local.empty:
         watch_priority = {"Near Active": 3, "Monitor": 2, "Weak Watch": 1}
@@ -3736,6 +3804,8 @@ def generate_ai_plays():
 
     if combined.empty:
         return pd.DataFrame(columns=empty_cols)
+
+    combined = normalize_dataframe_for_selected_sport(combined, selected_sport_name)
 
     status_order = {"Active": 0, "Watch": 1}
     combined["status_sort"] = combined["status"].map(status_order).fillna(9)

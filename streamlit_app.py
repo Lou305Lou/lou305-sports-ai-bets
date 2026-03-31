@@ -5920,7 +5920,7 @@ except:
             preview_df["units"] = preview_df["units"].apply(lambda x: round(_safe_float(x), 2))
             preview_df["books_seen"] = preview_df["books_seen"].apply(lambda x: _safe_int(x))
 
-            st.dataframe(preview_df, use_container_width=True, hide_index=
+            st.dataframe(preview_df, use_container_width=True, hide_index=True)
 # =========================================================
 # BET LOG
 # =========================================================

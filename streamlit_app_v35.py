@@ -6412,7 +6412,7 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
     learning_state["learning_notes"] = learning_notes
     learning_state["last_learning_refresh"] = pd.Timestamp.now().strftime("%Y-%m-%d %I:%M:%S %p")
 
-    st.session_state["learning_state"] = learning_state
+    save_learning_state_for_sport(learning_state, selected_sport)
 
     # =========================================================
     # TRUE PROBABILITY EMPHASIS
@@ -6720,8 +6720,8 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
     learning_state["category_min_samples"] = min_samples
     learning_state["accelerated_learning_mode"] = min_samples <= 3
 
-    st.session_state["learning_state"] = learning_state
     save_learning_state_for_sport(learning_state, selected_sport)
+
 
     # =========================================================
     # LEARNING WEIGHTS DISPLAY

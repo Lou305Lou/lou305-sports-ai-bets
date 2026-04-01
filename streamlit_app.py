@@ -330,7 +330,7 @@ def load_bet_log():
         # Normalize core text fields
         for col in ["play_id", "game", "market", "selection", "odds", "log_category", "result"]:
             if col in df.columns:
-                df[col] = df[col].astype(str).fillna("").str.strip()
+                df[col] = df[col].fillna("").astype(str).replace({"nan": "", "None": "", "none": ""}).str.strip()
 
         # Clean result labels
         if "result" in df.columns:
@@ -343,6 +343,7 @@ def load_bet_log():
                     "": "Pending",
                     "nan": "Pending",
                     "None": "Pending",
+                    "none": "Pending",
                 }
             )
             df["result"] = df["result"].apply(
@@ -372,7 +373,7 @@ def load_bet_log():
         # Fill text blanks only after numeric conversion
         text_cols = [c for c in df.columns if c not in numeric_cols]
         for col in text_cols:
-            df[col] = df[col].fillna("")
+            df[col] = df[col].fillna("").astype(str).replace({"nan": "", "None": "", "none": ""}).str.strip()
 
         # Backfill stake from units if needed
         if "stake" in df.columns and "units" in df.columns:
@@ -380,7 +381,7 @@ def load_bet_log():
 
         # Deduplicate by play_id for non-blank IDs
         if "play_id" in df.columns:
-            df["play_id"] = df["play_id"].astype(str).str.strip()
+            df["play_id"] = df["play_id"].fillna("").astype(str).str.strip()
             non_blank_ids = df["play_id"] != ""
 
             df_with_ids = df[non_blank_ids].drop_duplicates(
@@ -389,6 +390,10 @@ def load_bet_log():
             )
             df_without_ids = df[~non_blank_ids]
             df = pd.concat([df_with_ids, df_without_ids], ignore_index=True)
+
+        # Final column order
+        ordered_cols = REQUIRED_BET_LOG_COLUMNS + [c for c in df.columns if c not in REQUIRED_BET_LOG_COLUMNS]
+        df = df[ordered_cols]
 
         return df.to_dict("records")
 
@@ -414,7 +419,7 @@ def save_bet_log(records=None):
         # Normalize text fields
         for col in ["play_id", "game", "market", "selection", "odds", "log_category", "result"]:
             if col in df.columns:
-                df[col] = df[col].astype(str).fillna("").str.strip()
+                df[col] = df[col].fillna("").astype(str).replace({"nan": "", "None": "", "none": ""}).str.strip()
 
         # Normalize result values
         if "result" in df.columns:
@@ -427,6 +432,7 @@ def save_bet_log(records=None):
                     "": "Pending",
                     "nan": "Pending",
                     "None": "Pending",
+                    "none": "Pending",
                 }
             )
             df["result"] = df["result"].apply(
@@ -459,7 +465,7 @@ def save_bet_log(records=None):
 
         # De-duplicate saved rows by play_id
         if "play_id" in df.columns:
-            df["play_id"] = df["play_id"].astype(str).str.strip()
+            df["play_id"] = df["play_id"].fillna("").astype(str).str.strip()
             non_blank_ids = df["play_id"] != ""
 
             df_with_ids = df[non_blank_ids].drop_duplicates(

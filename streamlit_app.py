@@ -5357,7 +5357,17 @@ except Exception:
 try:
     snapshot_saved = False
 
-    if "plays_df" in locals() and isinstance(plays_df, pd.DataFrame) and not plays_df.empty:
+    # -----------------------------------------------------
+    # ONLY SAVE SNAPSHOT IF WE HAVE A REAL PLAYSET
+    # -----------------------------------------------------
+    valid_snapshot = (
+        "plays_df" in locals()
+        and isinstance(plays_df, pd.DataFrame)
+        and not plays_df.empty
+        and len(plays_df) >= 3
+    )
+
+    if valid_snapshot:
         st.session_state["snapshot_plays_df"] = plays_df.copy()
         snapshot_saved = True
 
@@ -5370,10 +5380,10 @@ try:
         # -----------------------------------------------------
         # WATCHLIST SNAPSHOT
         # -----------------------------------------------------
-        if "watchlist_df" in locals() and isinstance(watchlist_df, pd.DataFrame):
+        if "watchlist_df" in locals() and isinstance(watchlist_df, pd.DataFrame) and not watchlist_df.empty:
             st.session_state["snapshot_watchlist_df"] = watchlist_df.copy()
 
-        elif "watch_df" in locals() and isinstance(watch_df, pd.DataFrame):
+        elif "watch_df" in locals() and isinstance(watch_df, pd.DataFrame) and not watch_df.empty:
             st.session_state["snapshot_watchlist_df"] = watch_df.copy()
 
         # -----------------------------------------------------
@@ -5383,18 +5393,27 @@ try:
             st.session_state["snapshot_top_plays_df"] = top_plays_df.copy()
 
         elif "active_df" in locals() and isinstance(active_df, pd.DataFrame) and not active_df.empty:
-            st.session_state["snapshot_top_plays_df"] = (
-                active_df.sort_values(
-                    ["rank_score", "true_confidence"],
-                    ascending=False,
+            sort_cols = [c for c in ["rank_score", "true_confidence"] if c in active_df.columns]
+
+            if sort_cols:
+                st.session_state["snapshot_top_plays_df"] = (
+                    active_df.sort_values(
+                        by=sort_cols,
+                        ascending=[False] * len(sort_cols),
+                    )
+                    .head(TOP_PLAYS_LIMIT)
+                    .reset_index(drop=True)
+                    .copy()
                 )
-                .head(TOP_PLAYS_LIMIT)
-                .reset_index(drop=True)
-                .copy()
-            )
+            else:
+                st.session_state["snapshot_top_plays_df"] = (
+                    active_df.head(TOP_PLAYS_LIMIT)
+                    .reset_index(drop=True)
+                    .copy()
+                )
 
         # -----------------------------------------------------
-        # AI SLIP SNAPSHOT (CRITICAL FIX)
+        # AI SLIP SNAPSHOT
         # -----------------------------------------------------
         if "ai_slip_df" in locals() and isinstance(ai_slip_df, pd.DataFrame) and not ai_slip_df.empty:
             st.session_state["snapshot_ai_slip_df"] = ai_slip_df.copy()
@@ -5408,7 +5427,7 @@ try:
         # -----------------------------------------------------
         # PARLAY SNAPSHOT
         # -----------------------------------------------------
-        if "parlay_df" in locals() and isinstance(parlay_df, pd.DataFrame):
+        if "parlay_df" in locals() and isinstance(parlay_df, pd.DataFrame) and not parlay_df.empty:
             st.session_state["snapshot_parlay_df"] = parlay_df.copy()
 
         # -----------------------------------------------------
@@ -5487,641 +5506,84 @@ if nav == "Top Plays":
         else:
             render_mobile_or_table(top_df, best_first=True)
 # =========================================================
-# WATCHLIST
+# WATCHLIST (STABLE + FALLBACK SAFE)
 # =========================================================
-elif nav == "Watchlist":
+if nav == "Watchlist":
     st.header("👀 Watchlist")
     st.caption("Near-qualified plays only.")
 
     current_api_mode = st.session_state.get("api_mode", "idle")
 
-    if len(get_effective_odds_games()) == 0:
+    snapshot_watchlist_df = st.session_state.get("snapshot_watchlist_df", pd.DataFrame())
+    snapshot_active_df = st.session_state.get("snapshot_active_df", pd.DataFrame())
+
+    watch_df = pd.DataFrame()
+
+    # -----------------------------------------------------
+    # PRIMARY SOURCE
+    # -----------------------------------------------------
+    if not snapshot_watchlist_df.empty:
+        watch_df = snapshot_watchlist_df.copy()
+
+    # -----------------------------------------------------
+    # FALLBACK → BUILD FROM ACTIVE
+    # -----------------------------------------------------
+    elif not snapshot_active_df.empty:
+        watch_df = snapshot_active_df.copy()
+
+        if "true_confidence" in watch_df.columns:
+            watch_df = watch_df[
+                (watch_df["true_confidence"] >= MIN_WATCHLIST_CONF)
+                & (watch_df["true_confidence"] < MIN_ACTIVE_TRUE_CONF)
+            ]
+
+    # -----------------------------------------------------
+    # FINAL CHECK
+    # -----------------------------------------------------
+    if watch_df.empty:
         if current_api_mode == "waiting_reset":
-            reset_expected = str(st.session_state.get("odds_api_reset_expected", "")).strip()
-            if reset_expected:
-                st.warning(f"The Odds API is waiting for reset. Expected reset around {reset_expected}.")
-            else:
-                st.warning("The Odds API is waiting for reset.")
+            st.info("Watchlist unavailable while API is waiting for reset.")
         else:
-            st.warning("Press 'Refresh Live Odds' in the sidebar to load live odds.")
+            st.warning("No near-qualified plays available.")
     else:
-        snapshot_watchlist_df = st.session_state.get("snapshot_watchlist_df", pd.DataFrame())
-        snapshot_plays_df = st.session_state.get("snapshot_plays_df", pd.DataFrame())
-
-        if not snapshot_watchlist_df.empty:
-            wl_df = snapshot_watchlist_df.copy()
-
-        elif not snapshot_plays_df.empty:
-            if "status" in snapshot_plays_df.columns:
-                wl_df = snapshot_plays_df[
-                    snapshot_plays_df["status"].astype(str).str.strip() == "Watchlist"
-                ].copy()
-            else:
-                wl_df = pd.DataFrame()
-
-            if not wl_df.empty:
-                sort_cols = [c for c in ["rank_score", "true_confidence"] if c in wl_df.columns]
-                if sort_cols:
-                    wl_df = wl_df.sort_values(sort_cols, ascending=False).reset_index(drop=True)
-                wl_df = wl_df.head(WATCHLIST_LIMIT)
-        else:
-            wl_df = pd.DataFrame()
-
-        if wl_df.empty:
-            if current_api_mode == "waiting_reset":
-                st.info("No watchlist plays available right now. Cached odds are being used while the API waits for reset.")
-            else:
-                st.info("No plays met the watchlist criteria for the current live slate.")
-        else:
-            render_mobile_or_table(wl_df)
+        render_mobile_or_table(watch_df, best_first=True)
 
 # =========================================================
-# AI SLIP + PARLAY INTELLIGENCE
+# AI SLIP (STABLE + FALLBACK SAFE)
 # =========================================================
-elif nav == "AI Slip":
-    selected_sport = get_selected_sport()
-    st.header(f"🧠 AI Slip — {selected_sport}")
+if nav == "AI Slip":
+    st.header("🧠 AI Slip")
+    st.caption("Best combined plays based on current slate.")
 
-    if today_games:
-        st.caption(f"{selected_sport} Filtered Slate: " + " | ".join(today_games))
-    else:
-        st.caption(f"Using all live {selected_sport} games returned by the API.")
+    current_api_mode = st.session_state.get("api_mode", "idle")
 
-    current_api_mode = str(get_api_mode_for_sport(selected_sport)).strip().lower()
-    effective_games = get_effective_odds_games_for_sport(selected_sport)
+    snapshot_ai_slip_df = st.session_state.get("snapshot_ai_slip_df", pd.DataFrame())
+    snapshot_active_df = st.session_state.get("snapshot_active_df", pd.DataFrame())
 
-    if len(effective_games) == 0:
+    ai_df = pd.DataFrame()
+
+    # -----------------------------------------------------
+    # PRIMARY
+    # -----------------------------------------------------
+    if not snapshot_ai_slip_df.empty:
+        ai_df = snapshot_ai_slip_df.copy()
+
+    # -----------------------------------------------------
+    # FALLBACK → USE ACTIVE PLAYS
+    # -----------------------------------------------------
+    elif not snapshot_active_df.empty:
+        ai_df = snapshot_active_df.copy().head(5)
+
+    # -----------------------------------------------------
+    # FINAL CHECK
+    # -----------------------------------------------------
+    if ai_df.empty:
         if current_api_mode == "waiting_reset":
-            reset_expected = get_api_reset_expected_for_sport(selected_sport)
-            if reset_expected:
-                st.warning(f"The Odds API is waiting for reset for {selected_sport}. Expected reset around {reset_expected}.")
-            else:
-                st.warning(f"The Odds API is waiting for reset for {selected_sport}.")
-        elif current_api_mode == "limit_hit":
-            st.warning(f"The Odds API limit has been hit for {selected_sport}. Cached data will be used when available.")
-        elif current_api_mode in ["key_error", "invalid_key", "auth_error", "no_key"]:
-            st.warning("Your Odds API key is not being accepted right now.")
+            st.info("AI Slip unavailable while API waits for reset.")
         else:
-            st.warning(f"Press 'Refresh Live Odds' in the sidebar to load live {selected_sport} odds.")
+            st.warning("No valid plays available for AI Slip.")
     else:
-        ai_df = pd.DataFrame()
-
-        snapshot_ai_slip_df = st.session_state.get("snapshot_ai_slip_df", pd.DataFrame())
-        snapshot_active_df = st.session_state.get("snapshot_active_df", pd.DataFrame())
-        snapshot_watchlist_df = st.session_state.get("snapshot_watchlist_df", pd.DataFrame())
-        snapshot_best_row = st.session_state.get("snapshot_best_row", None)
-        snapshot_parlay_df = st.session_state.get("snapshot_parlay_df", pd.DataFrame())
-
-        try:
-            if isinstance(snapshot_ai_slip_df, pd.DataFrame) and not snapshot_ai_slip_df.empty:
-                ai_df = snapshot_ai_slip_df.copy()
-            elif isinstance(snapshot_active_df, pd.DataFrame) and not snapshot_active_df.empty:
-                ai_df = snapshot_active_df.copy()
-            elif isinstance(snapshot_watchlist_df, pd.DataFrame) and not snapshot_watchlist_df.empty:
-                ai_df = snapshot_watchlist_df.copy()
-            else:
-                ai_df = pd.DataFrame()
-        except Exception:
-            ai_df = pd.DataFrame()
-
-        required_cols = [
-            "sport",
-            "game",
-            "market",
-            "selection",
-            "odds",
-            "edge",
-            "score",
-            "units",
-            "tier",
-            "quality_label",
-            "status",
-            "confidence",
-            "books_seen",
-            "best_price",
-            "consensus",
-            "price_edge",
-            "ai_tags",
-            "true_confidence",
-            "quality_score",
-            "decision_reasons",
-            "rank_score",
-            "play_id",
-            "log_category",
-        ]
-
-        for col in required_cols:
-            if col not in ai_df.columns:
-                ai_df[col] = ""
-
-        def _safe_float(v, default=0.0):
-            try:
-                if v is None or str(v).strip() == "":
-                    return float(default)
-                return float(v)
-            except:
-                return float(default)
-
-        def _safe_int(v, default=0):
-            try:
-                if v is None or str(v).strip() == "":
-                    return int(default)
-                return int(float(v))
-            except:
-                return int(default)
-
-        def _clean_text(v, fallback="—"):
-            raw = str(v).strip()
-            return raw if raw else fallback
-
-        def _to_american_string(v):
-            try:
-                val = int(round(float(v)))
-                if val > 0:
-                    return f"+{val}"
-                return str(val)
-            except:
-                return str(v)
-
-        def _risk_label(units, true_conf, edge):
-            units = _safe_float(units)
-            true_conf = _safe_float(true_conf)
-            edge = _safe_float(edge)
-
-            if true_conf >= 74 and edge >= 5.5 and units <= 0.75:
-                return "Low"
-            if true_conf >= 68 and edge >= 4.25 and units <= 1.00:
-                return "Moderate"
-            return "Elevated"
-
-        def _parlay_risk_label(legs, avg_true_conf, total_edge):
-            if legs <= 2 and avg_true_conf >= 70 and total_edge >= 8:
-                return "Moderate"
-            if legs <= 3 and avg_true_conf >= 66 and total_edge >= 7:
-                return "Elevated"
-            return "High"
-
-        def _normalize_threshold_percent(v, default_percent):
-            raw = _safe_float(v, default_percent)
-            if raw <= 0:
-                return float(default_percent)
-            if raw <= 1:
-                return raw * 100.0
-            return raw
-
-        learning_state = get_learning_state_for_sport(selected_sport)
-        if not isinstance(learning_state, dict):
-            learning_state = {}
-
-        category_thresholds = learning_state.get("category_thresholds", {})
-        if not isinstance(category_thresholds, dict):
-            category_thresholds = {}
-
-        bad_play_type_flags = learning_state.get("bad_play_type_flags", {})
-        if not isinstance(bad_play_type_flags, dict):
-            bad_play_type_flags = {}
-
-        default_thresholds_percent = {
-            "Top Plays": 3.0,
-            "AI Picks": 3.5,
-            "AI Parlays": 5.0,
-            "Watchlist": 2.0,
-        }
-
-        active_ai_pick_threshold = _normalize_threshold_percent(
-            category_thresholds.get("AI Picks", default_thresholds_percent["AI Picks"]),
-            default_thresholds_percent["AI Picks"]
-        )
-
-        active_ai_parlay_threshold = _normalize_threshold_percent(
-            category_thresholds.get("AI Parlays", default_thresholds_percent["AI Parlays"]),
-            default_thresholds_percent["AI Parlays"]
-        )
-
-        removed_by_learning_filters = 0
-        removed_by_thresholds = 0
-        removed_summary_rows = []
-
-        if ai_df.empty:
-            if current_api_mode in ["limit_hit", "waiting_reset"]:
-                st.info(f"{selected_sport} Odds API limit reached. AI Slip will populate once the API resets or cached data is available.")
-            elif current_api_mode in ["key_error", "invalid_key", "auth_error", "no_key"]:
-                st.info("Odds API key issue detected. Fix the key and refresh live odds to generate AI Slip plays.")
-            else:
-                st.info(f"No {selected_sport} AI Slip plays available yet. Load odds first, then return here.")
-        else:
-            ai_df = ai_df.copy()
-
-            if "sport" in ai_df.columns:
-                ai_df["sport"] = ai_df["sport"].astype(str).str.upper().str.strip()
-                sport_filtered_df = ai_df[ai_df["sport"].isin(["", selected_sport])].copy()
-                if not sport_filtered_df.empty:
-                    ai_df = sport_filtered_df
-
-            ai_df["true_confidence_num"] = ai_df["true_confidence"].apply(_safe_float)
-            ai_df["edge_num"] = ai_df["edge"].apply(_safe_float)
-            ai_df["units_num"] = ai_df["units"].apply(_safe_float)
-            ai_df["rank_score_num"] = ai_df["rank_score"].apply(_safe_float)
-            ai_df["books_seen_num"] = ai_df["books_seen"].apply(_safe_int)
-            ai_df["market_clean"] = ai_df["market"].apply(lambda x: _clean_text(x, "").lower())
-            ai_df["log_category_clean"] = ai_df["log_category"].apply(lambda x: _clean_text(x, "AI Picks"))
-
-            def _is_market_filtered(market_name):
-                market_name = str(market_name).strip().lower()
-                flag = bad_play_type_flags.get(market_name, {})
-                if not isinstance(flag, dict):
-                    return False
-                return bool(flag.get("is_filtered", False))
-
-            filtered_out_market_df = ai_df[ai_df["market_clean"].apply(_is_market_filtered)].copy()
-            if not filtered_out_market_df.empty:
-                removed_by_learning_filters = len(filtered_out_market_df)
-
-                for _, row in filtered_out_market_df.head(10).iterrows():
-                    flag = bad_play_type_flags.get(str(row.get("market_clean", "")).strip().lower(), {})
-                    removed_summary_rows.append({
-                        "Selection": _clean_text(row.get("selection")),
-                        "Market": _clean_text(row.get("market")),
-                        "Reason": str(flag.get("reason", "Filtered by learning engine")).strip() or "Filtered by learning engine"
-                    })
-
-            ai_df = ai_df[~ai_df["market_clean"].apply(_is_market_filtered)].copy()
-
-            below_threshold_df = ai_df[ai_df["edge_num"] < active_ai_pick_threshold].copy()
-            if not below_threshold_df.empty:
-                removed_by_thresholds = len(below_threshold_df)
-
-                for _, row in below_threshold_df.head(10).iterrows():
-                    removed_summary_rows.append({
-                        "Selection": _clean_text(row.get("selection")),
-                        "Market": _clean_text(row.get("market")),
-                        "Reason": f"Below AI Picks threshold ({active_ai_pick_threshold:.2f}%)"
-                    })
-
-            ai_df = ai_df[ai_df["edge_num"] >= active_ai_pick_threshold].copy()
-
-            if removed_by_learning_filters > 0:
-                st.info(f"{selected_sport} smart filtering removed {removed_by_learning_filters} play(s) based on weak play-type performance.")
-
-            if removed_by_thresholds > 0:
-                st.info(f"{selected_sport} threshold filtering removed {removed_by_thresholds} play(s) below the current AI Picks edge requirement of {active_ai_pick_threshold:.2f}%.")
-
-            if removed_summary_rows:
-                removed_df = pd.DataFrame(removed_summary_rows)
-                st.markdown("### 🚫 Filtered Out Plays")
-                st.dataframe(removed_df, use_container_width=True, hide_index=True)
-
-            if ai_df.empty:
-                st.info(f"All current {selected_sport} AI Slip plays were filtered out by smart filtering or active edge thresholds.")
-            else:
-                ai_df = ai_df.sort_values(
-                    by=["rank_score_num", "true_confidence_num", "edge_num", "books_seen_num"],
-                    ascending=[False, False, False, False]
-                ).reset_index(drop=True)
-
-                best_row = ai_df.iloc[0].to_dict() if not ai_df.empty else None
-                if isinstance(snapshot_best_row, dict) and snapshot_best_row:
-                    best_row = snapshot_best_row
-
-                st.subheader("🎯 Best AI Single")
-
-                if best_row is not None:
-                    best_units = _safe_float(best_row.get("units", 0))
-                    best_true_conf = _safe_float(best_row.get("true_confidence", 0))
-                    best_edge = _safe_float(best_row.get("edge", 0))
-                    best_books = _safe_int(best_row.get("books_seen", 0))
-                    best_risk = _risk_label(best_units, best_true_conf, best_edge)
-
-                    play_id = str(best_row.get("play_id", "")).strip()
-                    if not play_id:
-                        play_id = hashlib.md5(
-                            (
-                                str(selected_sport) +
-                                str(best_row.get("game", "")) +
-                                str(best_row.get("market", "")) +
-                                str(best_row.get("selection", ""))
-                            ).encode()
-                        ).hexdigest()[:16]
-
-                    best_log_category = str(best_row.get("log_category", "")).strip()
-                    if not best_log_category:
-                        best_log_category = "AI Picks"
-
-                    st.markdown(
-                        f"""
-                        <div class="slip-card">
-                            <div style="font-size:1.05rem;font-weight:700;">
-                                {_clean_text(best_row.get("selection"))}
-                            </div>
-                            <div style="font-size:0.82rem;opacity:0.85;margin-top:4px;">
-                                {_clean_text(best_row.get("game"))} • {_clean_text(best_row.get("market"))}
-                            </div>
-                            <hr style="margin:10px 0;">
-                            <div style="font-size:0.86rem;line-height:1.6;">
-                                <b>Sport:</b> {selected_sport}<br>
-                                <b>Odds:</b> {_to_american_string(best_row.get("odds"))}<br>
-                                <b>Edge:</b> {best_edge:.2f}%<br>
-                                <b>True Confidence:</b> {best_true_conf:.1f}%<br>
-                                <b>Books Seen:</b> {best_books}<br>
-                                <b>Consensus:</b> {_clean_text(best_row.get("consensus"))}<br>
-                                <b>Price Edge:</b> {_clean_text(best_row.get("price_edge"))}<br>
-                                <b>Units:</b> {best_units:.2f}u<br>
-                                <b>Risk:</b> {best_risk}<br>
-                                <b>Quality:</b> {_clean_text(best_row.get("quality_label"))}
-                            </div>
-                        </div>
-                        """,
-                        unsafe_allow_html=True
-                    )
-
-                    tags_text = str(best_row.get("ai_tags", "")).strip()
-                    reasons_text = str(best_row.get("decision_reasons", "")).strip()
-
-                    info_col1, info_col2 = st.columns(2)
-                    with info_col1:
-                        st.caption(f"Category: {best_log_category}")
-                        st.caption(f"Sport Scope: {selected_sport}")
-                        st.caption(f"Active AI Picks Edge Threshold: {active_ai_pick_threshold:.2f}%")
-                        if tags_text:
-                            st.caption(f"AI Tags: {tags_text}")
-                    with info_col2:
-                        st.caption(f"Play ID: {play_id}")
-                        if reasons_text:
-                            st.caption(f"Why it ranked first: {reasons_text}")
-
-                    auto_log_col1, auto_log_col2 = st.columns([1, 1])
-
-                    with auto_log_col1:
-                        if st.button("➕ Add Best AI Single to Bet Log", key=f"add_best_single_{selected_sport}_{play_id}"):
-                            bet_entry = {
-                                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                "date": datetime.now().strftime("%Y-%m-%d"),
-                                "sport": selected_sport,
-                                "game": _clean_text(best_row.get("game"), ""),
-                                "market": _clean_text(best_row.get("market"), ""),
-                                "selection": _clean_text(best_row.get("selection"), ""),
-                                "odds": _to_american_string(best_row.get("odds")),
-                                "edge": round(best_edge, 2),
-                                "confidence": round(_safe_float(best_row.get("confidence", 0)), 2),
-                                "true_confidence": round(best_true_conf, 2),
-                                "units": round(best_units, 2),
-                                "result": "",
-                                "profit": "",
-                                "status": "Open",
-                                "play_id": play_id,
-                                "log_category": best_log_category,
-                                "source": "AI Slip",
-                                "notes": reasons_text,
-                            }
-
-                            existing_log = st.session_state.get("bet_log", [])
-                            existing_ids = set(
-                                f"{str(x.get('sport', '')).strip().upper()}__{str(x.get('play_id', '')).strip()}"
-                                for x in existing_log
-                                if str(x.get("play_id", "")).strip()
-                            )
-
-                            composite_id = f"{selected_sport}__{play_id}"
-
-                            if composite_id in existing_ids:
-                                st.info("This AI single is already in the bet log for this sport.")
-                            else:
-                                existing_log.append(bet_entry)
-                                st.session_state["bet_log"] = existing_log
-                                st.session_state.setdefault("auto_logged_ids", set()).add(composite_id)
-                                save_bet_log(st.session_state["bet_log"])
-                                st.success("Best AI Single added to bet log.")
-
-                    with auto_log_col2:
-                        st.metric("Recommended Stake", f"{best_units:.2f}u")
-
-                st.markdown("---")
-                st.subheader("🧩 AI Parlay Intelligence")
-
-                if isinstance(snapshot_parlay_df, pd.DataFrame) and not snapshot_parlay_df.empty:
-                    st.dataframe(snapshot_parlay_df, use_container_width=True, hide_index=True)
-                else:
-                    parlay_candidates = ai_df.copy()
-                    parlay_candidates = parlay_candidates[
-                        (parlay_candidates["true_confidence_num"] >= SHARP_PARLAY_MIN_TRUE_CONF - 6)
-                        & (parlay_candidates["edge_num"] >= max(active_ai_parlay_threshold, 2.0))
-                    ].copy()
-
-                    parlay_candidates = parlay_candidates.drop_duplicates(subset=["selection", "market"], keep="first")
-                    parlay_candidates = parlay_candidates.head(8).reset_index(drop=True)
-
-                    best_parlay = None
-                    parlay_options = []
-
-                    if len(parlay_candidates) >= 2:
-                        max_legs = min(MAX_PARLAY_LEGS, len(parlay_candidates))
-
-                        for leg_count in range(MIN_PARLAY_LEGS, max_legs + 1):
-                            for combo in combinations(parlay_candidates.to_dict("records"), leg_count):
-                                odds_list = [_safe_float(x.get("odds", 0)) for x in combo]
-                                if any(o == 0 for o in odds_list):
-                                    continue
-
-                                def american_to_decimal(american_odds):
-                                    american_odds = _safe_float(american_odds)
-                                    if american_odds > 0:
-                                        return 1 + (american_odds / 100.0)
-                                    return 1 + (100.0 / abs(american_odds))
-
-                                decimal_price = 1.0
-                                for o in odds_list:
-                                    decimal_price *= american_to_decimal(o)
-
-                                if decimal_price <= 1:
-                                    continue
-
-                                if decimal_price >= 2:
-                                    american_parlay_odds = int(round((decimal_price - 1) * 100))
-                                else:
-                                    american_parlay_odds = int(round(-100 / (decimal_price - 1)))
-
-                                if american_parlay_odds < MIN_PARLAY_ODDS:
-                                    continue
-
-                                avg_true_conf = sum(_safe_float(x.get("true_confidence", 0)) for x in combo) / len(combo)
-                                total_edge = sum(_safe_float(x.get("edge", 0)) for x in combo)
-                                avg_books = sum(_safe_int(x.get("books_seen", 0)) for x in combo) / len(combo)
-
-                                unique_games = len(set(str(x.get("game", "")).strip() for x in combo))
-                                correlation_penalty = 0.00 if unique_games == len(combo) else 0.08
-
-                                score = (
-                                    (avg_true_conf * 0.55)
-                                    + (total_edge * 3.25)
-                                    + (avg_books * 1.20)
-                                    - (len(combo) * 4.00)
-                                    - (correlation_penalty * 100)
-                                )
-
-                                parlay_type = "Sharp Parlay" if (
-                                    avg_true_conf >= SHARP_PARLAY_MIN_TRUE_CONF
-                                    and correlation_penalty <= SHARP_PARLAY_MAX_PENALTY
-                                ) else "Fallback Parlay"
-
-                                units = (
-                                    PARLAY_UNIT_SHARP
-                                    if parlay_type == "Sharp Parlay"
-                                    else (PARLAY_UNIT_FALLBACK_2 if len(combo) == 2 else PARLAY_UNIT_FALLBACK_3)
-                                )
-
-                                parlay_record = {
-                                    "legs": combo,
-                                    "leg_count": len(combo),
-                                    "avg_true_conf": avg_true_conf,
-                                    "total_edge": total_edge,
-                                    "avg_books": avg_books,
-                                    "parlay_odds": american_parlay_odds,
-                                    "score": score,
-                                    "type": parlay_type,
-                                    "units": units,
-                                    "risk": _parlay_risk_label(len(combo), avg_true_conf, total_edge),
-                                }
-                                parlay_options.append(parlay_record)
-
-                    if parlay_options:
-                        parlay_options = sorted(
-                            parlay_options,
-                            key=lambda x: (
-                                x["score"],
-                                x["avg_true_conf"],
-                                x["total_edge"],
-                                -x["leg_count"]
-                            ),
-                            reverse=True
-                        )
-                        best_parlay = parlay_options[0]
-                    else:
-                        best_parlay = None
-
-                    if best_parlay is None:
-                        st.info(f"Not enough smart-filtered {selected_sport} plays cleared the current AI Parlay threshold of {active_ai_parlay_threshold:.2f}% to build a parlay yet.")
-                    else:
-                        parlay_legs = best_parlay["legs"]
-                        parlay_play_id = "PARLAY__" + hashlib.md5(
-                            "|".join(
-                                f"{selected_sport}_{str(x.get('game', ''))}_{str(x.get('market', ''))}_{str(x.get('selection', ''))}"
-                                for x in parlay_legs
-                            ).encode()
-                        ).hexdigest()[:16]
-
-                        st.markdown(
-                            f"""
-                            <div class="slip-card">
-                                <div style="font-size:1.02rem;font-weight:700;">
-                                    {best_parlay["type"]} • {best_parlay["leg_count"]} Legs
-                                </div>
-                                <div style="font-size:0.82rem;opacity:0.85;margin-top:4px;">
-                                    Suggested AI-built {selected_sport} parlay based on smart-filtered singles
-                                </div>
-                                <hr style="margin:10px 0;">
-                                <div style="font-size:0.86rem;line-height:1.6;">
-                                    <b>Sport:</b> {selected_sport}<br>
-                                    <b>Parlay Odds:</b> {_to_american_string(best_parlay["parlay_odds"])}<br>
-                                    <b>Total Edge:</b> {best_parlay["total_edge"]:.2f}%<br>
-                                    <b>Avg True Confidence:</b> {best_parlay["avg_true_conf"]:.1f}%<br>
-                                    <b>Avg Books Seen:</b> {best_parlay["avg_books"]:.1f}<br>
-                                    <b>Units:</b> {best_parlay["units"]:.2f}u<br>
-                                    <b>Risk:</b> {best_parlay["risk"]}
-                                </div>
-                            </div>
-                            """,
-                            unsafe_allow_html=True
-                        )
-
-                        st.markdown("**Legs**")
-                        for idx, leg in enumerate(parlay_legs, start=1):
-                            st.markdown(
-                                f"""
-                                <div class="play-card">
-                                    <b>{idx}. {_clean_text(leg.get("selection"))}</b><br>
-                                    <span style="font-size:0.82rem;">
-                                        {_clean_text(leg.get("game"))} • {_clean_text(leg.get("market"))}<br>
-                                        Odds: {_to_american_string(leg.get("odds"))} |
-                                        Edge: {_safe_float(leg.get("edge")):.2f}% |
-                                        True Conf: {_safe_float(leg.get("true_confidence")):.1f}%
-                                    </span>
-                                </div>
-                                """,
-                                unsafe_allow_html=True
-                            )
-
-                        if st.button("➕ Add AI Parlay to Bet Log", key=f"add_ai_parlay_{selected_sport}_{parlay_play_id}"):
-                            existing_log = st.session_state.get("bet_log", [])
-                            existing_ids = set(
-                                f"{str(x.get('sport', '')).strip().upper()}__{str(x.get('play_id', '')).strip()}"
-                                for x in existing_log
-                                if str(x.get("play_id", "")).strip()
-                            )
-
-                            composite_id = f"{selected_sport}__{parlay_play_id}"
-
-                            if composite_id in existing_ids:
-                                st.info("This AI parlay is already in the bet log for this sport.")
-                            else:
-                                leg_summary = " | ".join(str(x.get("selection", "")).strip() for x in parlay_legs)
-
-                                parlay_entry = {
-                                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                    "date": datetime.now().strftime("%Y-%m-%d"),
-                                    "sport": selected_sport,
-                                    "game": "Parlay",
-                                    "market": f"{best_parlay['leg_count']}-Leg Parlay",
-                                    "selection": leg_summary,
-                                    "odds": _to_american_string(best_parlay["parlay_odds"]),
-                                    "edge": round(best_parlay["total_edge"], 2),
-                                    "confidence": round(best_parlay["avg_true_conf"], 2),
-                                    "true_confidence": round(best_parlay["avg_true_conf"], 2),
-                                    "units": round(best_parlay["units"], 2),
-                                    "result": "",
-                                    "profit": "",
-                                    "status": "Open",
-                                    "play_id": parlay_play_id,
-                                    "log_category": "AI Parlays",
-                                    "source": "AI Slip",
-                                    "notes": best_parlay["type"],
-                                }
-
-                                existing_log.append(parlay_entry)
-                                st.session_state["bet_log"] = existing_log
-                                st.session_state.setdefault("auto_logged_ids", set()).add(composite_id)
-                                save_bet_log(st.session_state["bet_log"])
-                                st.success("AI Parlay added to bet log.")
-
-                st.markdown("---")
-                st.subheader(f"📋 Top Smart-Filtered {selected_sport} Candidates")
-
-                preview_cols = [
-                    "selection",
-                    "game",
-                    "market",
-                    "odds",
-                    "edge_num",
-                    "true_confidence_num",
-                    "units_num",
-                    "books_seen_num",
-                    "quality_label",
-                ]
-
-                preview_df = ai_df[preview_cols].copy()
-                preview_df = preview_df.rename(columns={
-                    "edge_num": "edge",
-                    "true_confidence_num": "true_confidence",
-                    "units_num": "units",
-                    "books_seen_num": "books_seen",
-                })
-
-                preview_df["odds"] = preview_df["odds"].apply(_to_american_string)
-                preview_df["edge"] = preview_df["edge"].apply(lambda x: round(_safe_float(x), 2))
-                preview_df["true_confidence"] = preview_df["true_confidence"].apply(lambda x: round(_safe_float(x), 1))
-                preview_df["units"] = preview_df["units"].apply(lambda x: round(_safe_float(x), 2))
-                preview_df["books_seen"] = preview_df["books_seen"].apply(lambda x: _safe_int(x))
-
-                st.dataframe(preview_df, use_container_width=True, hide_index=True)
+        render_mobile_or_table(ai_df, best_first=True)
 # =========================================================
 # BET LOG
 # =========================================================

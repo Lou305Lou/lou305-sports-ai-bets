@@ -1,6 +1,8 @@
 # =========================================================
 # IMPORTS + API CONFIG (CLEAN MASTER BLOCK)
 # =========================================================
+import os
+import json
 import re
 import hashlib
 import random
@@ -14,7 +16,6 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 st.set_page_config(page_title="Sports Betting AI Dashboard V34", layout="wide")
-
 # =========================================================
 # MULTI-SPORT STATE + HELPERS
 # =========================================================

@@ -676,7 +676,46 @@ if "snapshot_generated_at" not in st.session_state:
 
 if "snapshot_refresh_id" not in st.session_state:
     st.session_state["snapshot_refresh_id"] = 0
+# =========================================================
+# SNAPSHOT PERSISTENCE HELPERS
+# =========================================================
+SNAPSHOT_STORE_FILE = "tab_snapshot_store.json"
 
+def load_saved_tab_snapshots():
+    try:
+        if not os.path.exists(SNAPSHOT_STORE_FILE):
+            return
+
+        with open(SNAPSHOT_STORE_FILE, "r") as f:
+            payload = json.load(f)
+
+        mapping = {
+            "snapshot_top_plays_df": "snapshot_top_plays_df",
+            "snapshot_active_df": "snapshot_active_df",
+            "snapshot_watchlist_df": "snapshot_watchlist_df",
+            "snapshot_ai_slip_df": "snapshot_ai_slip_df",
+            "snapshot_parlay_df": "snapshot_parlay_df",
+        }
+
+        for payload_key, session_key in mapping.items():
+            rows = payload.get(payload_key, [])
+            if rows and session_key not in st.session_state:
+                st.session_state[session_key] = pd.DataFrame(rows)
+
+        if "snapshot_best_row" not in st.session_state:
+            best_row = payload.get("snapshot_best_row", {})
+            st.session_state["snapshot_best_row"] = best_row if isinstance(best_row, dict) else {}
+
+        if "snapshot_generated_at" not in st.session_state:
+            st.session_state["snapshot_generated_at"] = payload.get("snapshot_generated_at", "")
+
+    except Exception:
+        pass
+
+
+if "tab_snapshots_loaded" not in st.session_state:
+    load_saved_tab_snapshots()
+    st.session_state["tab_snapshots_loaded"] = True
 # =========================================================
 # SPORTS DATA FEED CONTROL
 # =========================================================
@@ -5393,7 +5432,7 @@ try:
             snapshot_best_row = best_row
 
     # -----------------------------------------------------
-    # SAVE ONLY IF WE HAVE SOMETHING REAL
+    # SAVE ONLY IF WE HAVE REAL DATA
     # -----------------------------------------------------
     has_any_snapshot_data = any([
         not snapshot_top_df.empty,
@@ -5432,26 +5471,13 @@ try:
             st.session_state["snapshot_refresh_id"] = 0
 
         st.session_state["snapshot_refresh_id"] += 1
+
+        # -------------------------------------------------
+        # SAVE SNAPSHOT TO DISK SO IT SURVIVES APP RELOADS
+        # -------------------------------------------------
+        save_tab_snapshots_to_disk()
+
         snapshot_saved = True
-
-        # -------------------------------------------------
-        # OPTIONAL DISK PERSISTENCE SO DATA SURVIVES RELOAD
-        # -------------------------------------------------
-        try:
-            snapshot_payload = {
-                "snapshot_top_plays_df": snapshot_top_df.to_dict("records") if not snapshot_top_df.empty else [],
-                "snapshot_active_df": snapshot_active_df.to_dict("records") if not snapshot_active_df.empty else [],
-                "snapshot_watchlist_df": snapshot_watch_df.to_dict("records") if not snapshot_watch_df.empty else [],
-                "snapshot_ai_slip_df": snapshot_ai_df.to_dict("records") if not snapshot_ai_df.empty else [],
-                "snapshot_parlay_df": snapshot_parlay_df.to_dict("records") if not snapshot_parlay_df.empty else [],
-                "snapshot_best_row": snapshot_best_row if snapshot_best_row is not None else {},
-                "snapshot_generated_at": st.session_state.get("snapshot_generated_at", ""),
-            }
-
-            with open("tab_snapshot_store.json", "w") as f:
-                json.dump(snapshot_payload, f)
-        except Exception:
-            pass
 
 except Exception as e:
     st.warning(f"Snapshot save error: {e}")

@@ -700,15 +700,27 @@ def load_saved_tab_snapshots():
 
         for payload_key, session_key in mapping.items():
             rows = payload.get(payload_key, [])
-            if rows and session_key not in st.session_state:
-                st.session_state[session_key] = pd.DataFrame(rows)
+            current_val = st.session_state.get(session_key, pd.DataFrame())
 
-        if "snapshot_best_row" not in st.session_state:
-            best_row = payload.get("snapshot_best_row", {})
-            st.session_state["snapshot_best_row"] = best_row if isinstance(best_row, dict) else {}
+            if rows:
+                if not isinstance(current_val, pd.DataFrame) or current_val.empty:
+                    st.session_state[session_key] = pd.DataFrame(rows)
 
-        if "snapshot_generated_at" not in st.session_state:
-            st.session_state["snapshot_generated_at"] = payload.get("snapshot_generated_at", "")
+        best_row = payload.get("snapshot_best_row", {})
+        current_best = st.session_state.get("snapshot_best_row", None)
+        if isinstance(best_row, dict) and best_row:
+            if current_best in [None, {}, ""]:
+                st.session_state["snapshot_best_row"] = best_row
+
+        saved_generated_at = str(payload.get("snapshot_generated_at", "")).strip()
+        current_generated_at = str(st.session_state.get("snapshot_generated_at", "")).strip()
+        if saved_generated_at and not current_generated_at:
+            st.session_state["snapshot_generated_at"] = saved_generated_at
+
+        saved_refresh_id = int(payload.get("snapshot_refresh_id", 0) or 0)
+        current_refresh_id = int(st.session_state.get("snapshot_refresh_id", 0) or 0)
+        if saved_refresh_id > current_refresh_id:
+            st.session_state["snapshot_refresh_id"] = saved_refresh_id
 
     except Exception:
         pass
@@ -717,6 +729,31 @@ def load_saved_tab_snapshots():
 if "tab_snapshots_loaded" not in st.session_state:
     load_saved_tab_snapshots()
     st.session_state["tab_snapshots_loaded"] = True
+
+def save_tab_snapshots_to_disk():
+    try:
+        def _df_to_records(key_name):
+            value = st.session_state.get(key_name, pd.DataFrame())
+            if isinstance(value, pd.DataFrame) and not value.empty:
+                return value.to_dict("records")
+            return []
+
+        payload = {
+            "snapshot_top_plays_df": _df_to_records("snapshot_top_plays_df"),
+            "snapshot_active_df": _df_to_records("snapshot_active_df"),
+            "snapshot_watchlist_df": _df_to_records("snapshot_watchlist_df"),
+            "snapshot_ai_slip_df": _df_to_records("snapshot_ai_slip_df"),
+            "snapshot_parlay_df": _df_to_records("snapshot_parlay_df"),
+            "snapshot_best_row": st.session_state.get("snapshot_best_row", {}),
+            "snapshot_generated_at": st.session_state.get("snapshot_generated_at", ""),
+            "snapshot_refresh_id": int(st.session_state.get("snapshot_refresh_id", 0)),
+        }
+
+        with open(SNAPSHOT_STORE_FILE, "w") as f:
+            json.dump(payload, f)
+
+    except Exception:
+        pass
 # =========================================================
 # SPORTS DATA FEED CONTROL
 # =========================================================
@@ -4952,7 +4989,7 @@ try:
     if df is not None and len(df) > 0:
         df = enrich_plays_with_sportsdata(
             df,
-            sport=selected_sportsdata_sport,
+            sport=get_current_sportsdata_slug(),  # ✅ FIXED (was hardcoded NBA)
             game_date=sportsdata_game_date
         )
         df = recalculate_play_metrics(df)
@@ -5356,41 +5393,10 @@ st.markdown("</div>", unsafe_allow_html=True)
 # =========================================================
 # AUTO-LOG TOP PLAYS
 # =========================================================
-try:
-    active_auto_log_df = pd.DataFrame()
-    added_top_play_logs = 0
+# Duplicate auto-log block intentionally disabled.
+# Active plays are already auto-logged earlier with:
+# auto_logged_count = auto_log_active_plays(active_df)
 
-    if "top_plays_df" in locals() and isinstance(top_plays_df, pd.DataFrame):
-        active_auto_log_df = top_plays_df.copy()
-
-    elif "active_df" in locals() and isinstance(active_df, pd.DataFrame):
-        active_auto_log_df = active_df.copy()
-
-    elif "plays_df" in locals() and isinstance(plays_df, pd.DataFrame) and not plays_df.empty:
-        if "status" in plays_df.columns:
-            active_auto_log_df = plays_df[
-                plays_df["status"].astype(str).str.strip() == "Active"
-            ].copy()
-
-    if not active_auto_log_df.empty:
-        active_auto_log_df = attach_selected_sport_to_dataframe(
-            active_auto_log_df,
-            get_selected_sport(),
-        )
-        active_auto_log_df = normalize_dataframe_for_selected_sport(
-            active_auto_log_df,
-            get_selected_sport(),
-        )
-
-        added_top_play_logs = auto_log_active_plays(active_auto_log_df)
-
-    if added_top_play_logs > 0:
-        st.caption(
-            f"Auto-logged {added_top_play_logs} Top Play(s) for {get_selected_sport()}."
-        )
-
-except Exception:
-    pass
 # =========================================================
 # SNAPSHOT SAVE (LOCK TAB DATA UNTIL NEXT REFRESH)
 # =========================================================
@@ -5409,19 +5415,30 @@ try:
     # -----------------------------------------------------
     if "top_plays_df" in locals() and isinstance(top_plays_df, pd.DataFrame) and not top_plays_df.empty:
         snapshot_top_df = top_plays_df.copy()
+    elif "active_df" in locals() and isinstance(active_df, pd.DataFrame) and not active_df.empty:
+        snapshot_top_df = (
+            active_df.copy()
+            .sort_values(
+                by=[c for c in ["rank_score", "true_confidence"] if c in active_df.columns],
+                ascending=False if all(c in active_df.columns for c in ["rank_score", "true_confidence"]) else True,
+            )
+            .head(TOP_PLAYS_LIMIT)
+            .reset_index(drop=True)
+            if not active_df.empty else pd.DataFrame()
+        )
 
     if "active_df" in locals() and isinstance(active_df, pd.DataFrame) and not active_df.empty:
         snapshot_active_df = active_df.copy()
 
-    if "watchlist_df" in locals() and isinstance(watchlist_df, pd.DataFrame) and not watchlist_df.empty:
-        snapshot_watch_df = watchlist_df.copy()
-    elif "watch_df" in locals() and isinstance(watch_df, pd.DataFrame) and not watch_df.empty:
+    if "watch_df" in locals() and isinstance(watch_df, pd.DataFrame) and not watch_df.empty:
         snapshot_watch_df = watch_df.copy()
+    elif "watchlist_df" in locals() and isinstance(watchlist_df, pd.DataFrame) and not watchlist_df.empty:
+        snapshot_watch_df = watchlist_df.copy()
 
     if "ai_slip_df" in locals() and isinstance(ai_slip_df, pd.DataFrame) and not ai_slip_df.empty:
         snapshot_ai_df = ai_slip_df.copy()
     elif "active_df" in locals() and isinstance(active_df, pd.DataFrame) and not active_df.empty:
-        snapshot_ai_df = active_df.copy()
+        snapshot_ai_df = active_df.head(5).copy()
 
     if "parlay_df" in locals() and isinstance(parlay_df, pd.DataFrame) and not parlay_df.empty:
         snapshot_parlay_df = parlay_df.copy()
@@ -5430,54 +5447,46 @@ try:
         if isinstance(best_row, pd.Series):
             snapshot_best_row = best_row.to_dict()
         elif isinstance(best_row, dict):
-            snapshot_best_row = best_row
+            snapshot_best_row = best_row.copy()
 
     # -----------------------------------------------------
     # SAVE ONLY IF WE HAVE REAL DATA
     # -----------------------------------------------------
     has_any_snapshot_data = any([
-        not snapshot_top_df.empty,
-        not snapshot_active_df.empty,
-        not snapshot_watch_df.empty,
-        not snapshot_ai_df.empty,
-        not snapshot_parlay_df.empty,
-        snapshot_best_row is not None,
+        isinstance(snapshot_top_df, pd.DataFrame) and not snapshot_top_df.empty,
+        isinstance(snapshot_active_df, pd.DataFrame) and not snapshot_active_df.empty,
+        isinstance(snapshot_watch_df, pd.DataFrame) and not snapshot_watch_df.empty,
+        isinstance(snapshot_ai_df, pd.DataFrame) and not snapshot_ai_df.empty,
+        isinstance(snapshot_parlay_df, pd.DataFrame) and not snapshot_parlay_df.empty,
+        isinstance(snapshot_best_row, dict) and len(snapshot_best_row) > 0,
     ])
 
     if has_any_snapshot_data:
-        if not snapshot_top_df.empty:
-            st.session_state["snapshot_top_plays_df"] = snapshot_top_df
+        if isinstance(snapshot_top_df, pd.DataFrame) and not snapshot_top_df.empty:
+            st.session_state["snapshot_top_plays_df"] = snapshot_top_df.copy()
 
-        if not snapshot_active_df.empty:
-            st.session_state["snapshot_active_df"] = snapshot_active_df
+        if isinstance(snapshot_active_df, pd.DataFrame) and not snapshot_active_df.empty:
+            st.session_state["snapshot_active_df"] = snapshot_active_df.copy()
             st.session_state["snapshot_plays_df"] = snapshot_active_df.copy()
 
-        if not snapshot_watch_df.empty:
-            st.session_state["snapshot_watchlist_df"] = snapshot_watch_df
+        if isinstance(snapshot_watch_df, pd.DataFrame) and not snapshot_watch_df.empty:
+            st.session_state["snapshot_watchlist_df"] = snapshot_watch_df.copy()
 
-        if not snapshot_ai_df.empty:
-            st.session_state["snapshot_ai_slip_df"] = snapshot_ai_df
+        if isinstance(snapshot_ai_df, pd.DataFrame) and not snapshot_ai_df.empty:
+            st.session_state["snapshot_ai_slip_df"] = snapshot_ai_df.copy()
 
-        if not snapshot_parlay_df.empty:
-            st.session_state["snapshot_parlay_df"] = snapshot_parlay_df
+        if isinstance(snapshot_parlay_df, pd.DataFrame) and not snapshot_parlay_df.empty:
+            st.session_state["snapshot_parlay_df"] = snapshot_parlay_df.copy()
 
-        if snapshot_best_row is not None:
-            st.session_state["snapshot_best_row"] = snapshot_best_row
+        if isinstance(snapshot_best_row, dict) and snapshot_best_row:
+            st.session_state["snapshot_best_row"] = snapshot_best_row.copy()
 
         st.session_state["snapshot_generated_at"] = pd.Timestamp.now().strftime(
             "%Y-%m-%d %I:%M:%S %p"
         )
+        st.session_state["snapshot_refresh_id"] = int(st.session_state.get("snapshot_refresh_id", 0)) + 1
 
-        if "snapshot_refresh_id" not in st.session_state:
-            st.session_state["snapshot_refresh_id"] = 0
-
-        st.session_state["snapshot_refresh_id"] += 1
-
-        # -------------------------------------------------
-        # SAVE SNAPSHOT TO DISK SO IT SURVIVES APP RELOADS
-        # -------------------------------------------------
         save_tab_snapshots_to_disk()
-
         snapshot_saved = True
 
 except Exception as e:
@@ -5555,39 +5564,37 @@ if nav == "Watchlist":
 
     current_api_mode = st.session_state.get("api_mode", "idle")
 
+    live_watch_df = pd.DataFrame()
     snapshot_watchlist_df = st.session_state.get("snapshot_watchlist_df", pd.DataFrame())
-    snapshot_active_df = st.session_state.get("snapshot_active_df", pd.DataFrame())
-
-    watch_df = pd.DataFrame()
 
     # -----------------------------------------------------
-    # PRIMARY SOURCE
+    # PRIMARY SOURCE (LIVE DATA FIRST)
     # -----------------------------------------------------
-    if not snapshot_watchlist_df.empty:
-        watch_df = snapshot_watchlist_df.copy()
+    if "watch_df" in locals() and isinstance(watch_df, pd.DataFrame) and not watch_df.empty:
+        live_watch_df = watch_df.copy()
 
     # -----------------------------------------------------
-    # FALLBACK → BUILD FROM ACTIVE
+    # FALLBACK ORDER
     # -----------------------------------------------------
-    elif not snapshot_active_df.empty:
-        watch_df = snapshot_active_df.copy()
+    if not live_watch_df.empty:
+        watch_display_df = live_watch_df
 
-        if "true_confidence" in watch_df.columns:
-            watch_df = watch_df[
-                (watch_df["true_confidence"] >= MIN_WATCHLIST_CONF)
-                & (watch_df["true_confidence"] < MIN_ACTIVE_TRUE_CONF)
-            ]
+    elif not snapshot_watchlist_df.empty:
+        watch_display_df = snapshot_watchlist_df.copy()
+
+    else:
+        watch_display_df = pd.DataFrame()
 
     # -----------------------------------------------------
     # FINAL CHECK
     # -----------------------------------------------------
-    if watch_df.empty:
+    if watch_display_df.empty:
         if current_api_mode == "waiting_reset":
             st.info("Watchlist unavailable while API is waiting for reset.")
         else:
             st.warning("No near-qualified plays available.")
     else:
-        render_mobile_or_table(watch_df, best_first=True)
+        render_mobile_or_table(watch_display_df, best_first=True)
 
 # =========================================================
 # AI SLIP (STABLE + FALLBACK SAFE)
@@ -5598,33 +5605,40 @@ if nav == "AI Slip":
 
     current_api_mode = st.session_state.get("api_mode", "idle")
 
+    live_ai_df = pd.DataFrame()
     snapshot_ai_slip_df = st.session_state.get("snapshot_ai_slip_df", pd.DataFrame())
-    snapshot_active_df = st.session_state.get("snapshot_active_df", pd.DataFrame())
-
-    ai_df = pd.DataFrame()
 
     # -----------------------------------------------------
-    # PRIMARY
+    # PRIMARY SOURCE (LIVE FIRST)
     # -----------------------------------------------------
-    if not snapshot_ai_slip_df.empty:
-        ai_df = snapshot_ai_slip_df.copy()
+    if "ai_slip_df" in locals() and isinstance(ai_slip_df, pd.DataFrame) and not ai_slip_df.empty:
+        live_ai_df = ai_slip_df.copy()
+
+    elif "active_df" in locals() and isinstance(active_df, pd.DataFrame) and not active_df.empty:
+        live_ai_df = active_df.head(5).copy()
 
     # -----------------------------------------------------
-    # FALLBACK → USE ACTIVE PLAYS
+    # FALLBACK ORDER
     # -----------------------------------------------------
-    elif not snapshot_active_df.empty:
-        ai_df = snapshot_active_df.copy().head(5)
+    if not live_ai_df.empty:
+        ai_display_df = live_ai_df
+
+    elif not snapshot_ai_slip_df.empty:
+        ai_display_df = snapshot_ai_slip_df.copy()
+
+    else:
+        ai_display_df = pd.DataFrame()
 
     # -----------------------------------------------------
     # FINAL CHECK
     # -----------------------------------------------------
-    if ai_df.empty:
+    if ai_display_df.empty:
         if current_api_mode == "waiting_reset":
             st.info("AI Slip unavailable while API waits for reset.")
         else:
             st.warning("No valid plays available for AI Slip.")
     else:
-        render_mobile_or_table(ai_df, best_first=True)
+        render_mobile_or_table(ai_display_df, best_first=True)
 # =========================================================
 # BET LOG
 # =========================================================

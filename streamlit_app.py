@@ -5423,16 +5423,18 @@ try:
     if "top_plays_df" in locals() and isinstance(top_plays_df, pd.DataFrame) and not top_plays_df.empty:
         snapshot_top_df = top_plays_df.copy()
     elif "active_df" in locals() and isinstance(active_df, pd.DataFrame) and not active_df.empty:
-        snapshot_top_df = (
-            active_df.copy()
-            .sort_values(
-                by=[c for c in ["rank_score", "true_confidence"] if c in active_df.columns],
-                ascending=False if all(c in active_df.columns for c in ["rank_score", "true_confidence"]) else True,
+        snapshot_top_df = active_df.copy()
+        sort_cols = [c for c in ["rank_score", "true_confidence"] if c in snapshot_top_df.columns]
+        if sort_cols:
+            snapshot_top_df = (
+                snapshot_top_df
+                .sort_values(by=sort_cols, ascending=[False] * len(sort_cols))
+                .head(TOP_PLAYS_LIMIT)
+                .reset_index(drop=True)
+                .copy()
             )
-            .head(TOP_PLAYS_LIMIT)
-            .reset_index(drop=True)
-            if not active_df.empty else pd.DataFrame()
-        )
+        else:
+            snapshot_top_df = snapshot_top_df.head(TOP_PLAYS_LIMIT).reset_index(drop=True).copy()
 
     if "active_df" in locals() and isinstance(active_df, pd.DataFrame) and not active_df.empty:
         snapshot_active_df = active_df.copy()
@@ -5498,6 +5500,7 @@ try:
 
 except Exception as e:
     st.warning(f"Snapshot save error: {e}")
+
 # =========================================================
 # TOP PLAYS
 # =========================================================
@@ -5562,6 +5565,7 @@ if nav == "Top Plays":
             st.info("No plays met the active criteria for the current live slate.")
     else:
         render_mobile_or_table(top_df, best_first=True)
+
 # =========================================================
 # WATCHLIST (STABLE + FALLBACK SAFE)
 # =========================================================
@@ -5585,10 +5589,8 @@ if nav == "Watchlist":
     # -----------------------------------------------------
     if not live_watch_df.empty:
         watch_display_df = live_watch_df
-
     elif not snapshot_watchlist_df.empty:
         watch_display_df = snapshot_watchlist_df.copy()
-
     else:
         watch_display_df = pd.DataFrame()
 
@@ -5620,7 +5622,6 @@ if nav == "AI Slip":
     # -----------------------------------------------------
     if "ai_slip_df" in locals() and isinstance(ai_slip_df, pd.DataFrame) and not ai_slip_df.empty:
         live_ai_df = ai_slip_df.copy()
-
     elif "active_df" in locals() and isinstance(active_df, pd.DataFrame) and not active_df.empty:
         live_ai_df = active_df.head(5).copy()
 
@@ -5629,10 +5630,8 @@ if nav == "AI Slip":
     # -----------------------------------------------------
     if not live_ai_df.empty:
         ai_display_df = live_ai_df
-
     elif not snapshot_ai_slip_df.empty:
         ai_display_df = snapshot_ai_slip_df.copy()
-
     else:
         ai_display_df = pd.DataFrame()
 

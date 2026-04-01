@@ -5436,7 +5436,8 @@ try:
         st.session_state["snapshot_refresh_id"] += 1
 
 except Exception as e:
-    st.warning(f"Snapshot save error: {e}")# =========================================================
+    st.warning(f"Snapshot save error: {e}")
+# =========================================================
 # TOP PLAYS
 # =========================================================
 if nav == "Top Plays":
@@ -5461,14 +5462,20 @@ if nav == "Top Plays":
         if not snapshot_top_df.empty:
             top_df = snapshot_top_df.copy()
         elif not snapshot_active_df.empty:
-            top_df = (
-                snapshot_active_df.sort_values(
-                    ["rank_score", "true_confidence"],
-                    ascending=False,
+            sort_cols = [c for c in ["rank_score", "true_confidence"] if c in snapshot_active_df.columns]
+
+            if sort_cols:
+                top_df = (
+                    snapshot_active_df.sort_values(
+                        by=sort_cols,
+                        ascending=[False] * len(sort_cols),
+                    )
+                    .head(TOP_PLAYS_LIMIT)
+                    .reset_index(drop=True)
+                    .copy()
                 )
-                .head(TOP_PLAYS_LIMIT)
-                .reset_index(drop=True)
-            )
+            else:
+                top_df = snapshot_active_df.head(TOP_PLAYS_LIMIT).reset_index(drop=True).copy()
         else:
             top_df = pd.DataFrame()
 
@@ -5478,7 +5485,7 @@ if nav == "Top Plays":
             else:
                 st.info("No plays met the active criteria for the current live slate.")
         else:
-            render_mobile_or_table(top_df, best_first=
+            render_mobile_or_table(top_df, best_first=True)
 # =========================================================
 # WATCHLIST
 # =========================================================

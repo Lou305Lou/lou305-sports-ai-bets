@@ -4315,6 +4315,53 @@ def build_ai_portfolio(best_single, chosen_parlay, parlay_candidates):
 # =========================================================
 loaded_bet_log = load_bet_log()
 
+SAFE_BET_LOG_COLUMNS = [
+    "play_id",
+    "game",
+    "market",
+    "selection",
+    "player",
+    "team",
+    "opponent",
+    "line",
+    "odds",
+    "implied_prob",
+    "true_prob",
+    "edge",
+    "books",
+    "books_seen",
+    "consensus",
+    "consensus_pct",
+    "sharp_score",
+    "market_signal",
+    "matchup_score",
+    "historical_score",
+    "true_confidence",
+    "units",
+    "status",
+    "log_category",
+    "result",
+    "profit",
+    "timestamp",
+    "sport",
+    "confidence",
+    "category",
+    "primary_category",
+    "play_type",
+    "stake",
+    "mode",
+    "sportsdata_note",
+    "injury_flag",
+    "lineup_flag",
+    "model_score",
+    "open_odds",
+    "open_line",
+    "closing_odds",
+    "closing_line",
+    "clv_diff",
+    "clv_result",
+]
+
 if "bet_log" not in st.session_state or not st.session_state["bet_log"]:
     st.session_state["bet_log"] = loaded_bet_log
 else:
@@ -4323,7 +4370,7 @@ else:
     if existing_df is None or existing_df.empty:
         st.session_state["bet_log"] = loaded_bet_log
     else:
-        for col in REQUIRED_BET_LOG_COLUMNS:
+        for col in SAFE_BET_LOG_COLUMNS:
             if col not in existing_df.columns:
                 existing_df[col] = None
 
@@ -4332,11 +4379,12 @@ else:
 
 bet_log_df = pd.DataFrame(st.session_state.get("bet_log", []))
 if bet_log_df is None or bet_log_df.empty:
-    bet_log_df = pd.DataFrame(columns=REQUIRED_BET_LOG_COLUMNS)
+    bet_log_df = pd.DataFrame(columns=SAFE_BET_LOG_COLUMNS)
 else:
-    for col in REQUIRED_BET_LOG_COLUMNS:
+    for col in SAFE_BET_LOG_COLUMNS:
         if col not in bet_log_df.columns:
             bet_log_df[col] = None
+
     bet_log_df = _merge_duplicate_play_id_rows(bet_log_df)
 
 st.session_state["bet_log"] = bet_log_df.to_dict("records")

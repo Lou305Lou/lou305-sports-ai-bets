@@ -6870,7 +6870,7 @@ if nav == "Bet Log":
             display_df = log_df[display_cols].copy()
             st.dataframe(display_df, use_container_width=True, hide_index=True)
 
-            # =========================================================
+                        # =========================================================
             # UPDATE RESULTS
             # =========================================================
             st.subheader("✍️ Update Results")
@@ -6878,16 +6878,22 @@ if nav == "Bet Log":
             selectable_labels = []
             selectable_map = {}
 
+            latest_bet_log = st.session_state.get("bet_log", [])
+            if not isinstance(latest_bet_log, list):
+                latest_bet_log = []
+
             for _, r in log_df.iterrows():
                 pid = str(r.get("play_id", "")).strip()
-                selection = str(r.get("selection", ""))
-                game = str(r.get("game", ""))
+                selection = str(r.get("selection", "")).strip()
+                game = str(r.get("game", "")).strip()
+                market = str(r.get("market", "")).strip().lower()
 
                 if not pid:
                     continue
 
                 short_pid = pid[:8]
-                label = f"{selection} • {game} • ID {short_pid}"
+                market_label = f" [{market}]" if market else ""
+                label = f"{selection}{market_label} • {game} • ID {short_pid}"
 
                 suffix = 2
                 base_label = label
@@ -6899,37 +6905,113 @@ if nav == "Bet Log":
                 selectable_map[label] = pid
 
             if selectable_labels:
-                selected_label = st.selectbox("Select Bet", selectable_labels)
+                selected_label = st.selectbox(
+                    "Select Bet",
+                    selectable_labels,
+                    key=f"update_result_select_{selected_sport}",
+                )
                 selected_id = selectable_map[selected_label]
-
-                existing_result = "Pending"
                 selected_base_id = get_base_play_id(selected_id)
 
-                for bet in st.session_state.get("bet_log", []):
+                existing_result = "Pending"
+
+                for bet in latest_bet_log:
                     pid = str(bet.get("play_id", "")).strip()
+                    if not pid:
+                        continue
+
                     bet_sport = str(bet.get("sport", "")).strip().upper()
                     if bet_sport and bet_sport != selected_sport:
                         continue
+
                     if pid == selected_id or get_base_play_id(pid) == selected_base_id:
                         existing_result = normalize_result_value(bet.get("result", "Pending"))
                         break
 
+                result_options = ["Pending", "Win", "Loss", "Push"]
+                if existing_result not in result_options:
+                    existing_result = "Pending"
+
                 result_choice = st.selectbox(
                     "Result",
-                    ["Pending", "Win", "Loss", "Push"],
-                    index=["Pending", "Win", "Loss", "Push"].index(existing_result),
-                    key="bet_result_choice",
+                    result_options,
+                    index=result_options.index(existing_result),
+                    key=f"bet_result_choice_{selected_sport}",
                 )
 
-                if st.button("Save Result"):
-                    st.session_state["manual_results"][selected_id] = result_choice
-                    updated = update_logged_bet_result(selected_id, result_choice)
+                if st.button("Save Result", key=f"save_result_button_{selected_sport}"):
+                    normalized_choice = normalize_result_value(result_choice)
+                    updated_any = False
 
-                    if updated:
-                        st.success("Updated.")
+                    refreshed_bet_log = st.session_state.get("bet_log", [])
+                    if not isinstance(refreshed_bet_log, list):
+                        refreshed_bet_log = []
+
+                    for idx, bet in enumerate(refreshed_bet_log):
+                        pid = str(bet.get("play_id", "")).strip()
+                        if not pid:
+                            continue
+
+                        bet_sport = str(bet.get("sport", "")).strip().upper()
+                        if bet_sport and bet_sport != selected_sport:
+                            continue
+
+                        if pid == selected_id or get_base_play_id(pid) == selected_base_id:
+                            refreshed_bet_log[idx]["result"] = normalized_choice
+                            updated_any = True
+
+                            if normalized_choice == "Pending":
+                                refreshed_bet_log[idx]["profit"] = 0.0
+                            else:
+                                try:
+                                    odds_val = american_to_int(str(refreshed_bet_log[idx].get("odds", "")).strip())
+                                except Exception:
+                                    odds_val = None
+
+                                try:
+                                    stake_units = float(refreshed_bet_log[idx].get("stake", refreshed_bet_log[idx].get("units", 1.0)))
+                                except Exception:
+                                    stake_units = 1.0
+
+                                if stake_units <= 0:
+                                    stake_units = 1.0
+
+                                profit_val = 0.0
+                                if normalized_choice == "Win":
+                                    if odds_val is not None:
+                                        if odds_val > 0:
+                                            profit_val = round(stake_units * (odds_val / 100.0), 4)
+                                        elif odds_val < 0:
+                                            profit_val = round(stake_units * (100.0 / abs(odds_val)), 4)
+                                        else:
+                                            profit_val = round(stake_units, 4)
+                                    else:
+                                        profit_val = round(stake_units, 4)
+                                elif normalized_choice == "Loss":
+                                    profit_val = round(-stake_units, 4)
+                                elif normalized_choice == "Push":
+                                    profit_val = 0.0
+
+                                refreshed_bet_log[idx]["profit"] = profit_val
+
+                    st.session_state["bet_log"] = refreshed_bet_log
+                    st.session_state.setdefault("manual_results", {})
+                    st.session_state["manual_results"][selected_id] = normalized_choice
+
+                    save_bet_log()
+
+                    try:
+                        reloaded = load_bet_log()
+                        if isinstance(reloaded, list):
+                            st.session_state["bet_log"] = reloaded
+                    except Exception:
+                        pass
+
+                    if updated_any:
+                        st.success("Bet result saved successfully.")
                         st.rerun()
                     else:
-                        st.warning("Could not update that bet.")
+                        st.warning("Could not find that bet to update.")
             else:
                 st.info("No selectable bets found.")
 
@@ -6976,15 +7058,17 @@ if nav == "Bet Log":
 
         if st.button("Add Bet", key="manual_add_bet_button"):
             game_clean = str(game_input).strip()
-            market_clean = str(market_input).strip()
+            market_clean = str(market_input).strip().lower()
             selection_clean = str(selection_input).strip()
             odds_clean = str(odds_input).strip()
             units = float(units_input)
-            confidence = str(confidence_input)
+            confidence = str(confidence_input).strip()
+
+            odds_int = american_to_int(odds_clean)
 
             if not game_clean or not selection_clean or not odds_clean:
                 st.warning("Please fill in Game, Selection, and Odds.")
-            elif american_to_int(odds_clean) is None:
+            elif odds_int is None:
                 st.warning("Odds must be valid American odds like -110 or +150.")
             else:
                 new_play_id = hashlib.md5(
@@ -6993,16 +7077,25 @@ if nav == "Bet Log":
 
                 open_line_val = extract_line_from_selection(selection_clean)
 
+                implied_prob_val = None
+                try:
+                    if odds_int > 0:
+                        implied_prob_val = round(100.0 / (odds_int + 100.0) * 100.0, 2)
+                    elif odds_int < 0:
+                        implied_prob_val = round(abs(odds_int) / (abs(odds_int) + 100.0) * 100.0, 2)
+                except Exception:
+                    implied_prob_val = None
+
                 new = {
                     "play_id": new_play_id,
                     "sport": selected_sport,
                     "game": game_clean,
                     "market": market_clean,
                     "selection": selection_clean,
-                    "odds": odds_clean,
-                    "implied_prob": None,
+                    "odds": odds_int,
+                    "implied_prob": implied_prob_val,
                     "true_prob": None,
-                    "implied_probability": None,
+                    "implied_probability": implied_prob_val,
                     "true_probability": None,
                     "edge": None,
                     "play_type": classify_play_type(
@@ -7029,7 +7122,7 @@ if nav == "Bet Log":
                     # -----------------------------
                     # CLV / MARKET TRACKING FIELDS
                     # -----------------------------
-                    "open_odds": odds_clean,
+                    "open_odds": odds_int,
                     "open_line": open_line_val,
                     "closing_odds": None,
                     "closing_line": None,
@@ -7037,11 +7130,20 @@ if nav == "Bet Log":
                     "clv_result": None,
                 }
 
+                st.session_state.setdefault("bet_log", [])
                 st.session_state["bet_log"].append(new)
                 save_bet_log()
 
+                try:
+                    reloaded = load_bet_log()
+                    if isinstance(reloaded, list):
+                        st.session_state["bet_log"] = reloaded
+                except Exception:
+                    pass
+
                 st.success(f"Manual {selected_sport} bet added successfully.")
                 st.rerun()
+
 # =========================================================
 # ADAPTIVE SETTINGS + V33 SELF-LEARNING ENGINE
 # =========================================================
@@ -7071,7 +7173,19 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
                 if required_col not in _df.columns:
                     _df[required_col] = ""
 
-            _df["result_clean"] = _df["result"].astype(str).str.strip().str.lower()
+            _df["result_clean"] = (
+                _df["result"]
+                .astype(str)
+                .str.strip()
+                .str.lower()
+                .replace(
+                    {
+                        "won": "win",
+                        "lost": "loss",
+                        "pushes": "push",
+                    }
+                )
+            )
             _df["profit_num"] = pd.to_numeric(_df["profit"], errors="coerce").fillna(0.0)
             _df["true_conf_num"] = pd.to_numeric(_df["true_confidence"], errors="coerce").fillna(0.0)
             _df["edge_num"] = pd.to_numeric(_df["edge"], errors="coerce").fillna(0.0)
@@ -7079,7 +7193,7 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
             _df["category_clean"] = _df["log_category"].astype(str).str.strip()
             _df["play_type_clean"] = _df["play_type"].astype(str).str.strip().str.lower()
 
-            settled_df = _df[_df["result_clean"].isin(["win", "loss"])].copy()
+            settled_df = _df[_df["result_clean"].isin(["win", "loss", "push"])].copy()
     except Exception:
         settled_df = pd.DataFrame()
 
@@ -7209,12 +7323,14 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
     total_settled_bets = int(len(settled_df))
     total_wins = int((settled_df["result_clean"] == "win").sum()) if not settled_df.empty else 0
     total_losses = int((settled_df["result_clean"] == "loss").sum()) if not settled_df.empty else 0
+    total_pushes = int((settled_df["result_clean"] == "push").sum()) if not settled_df.empty else 0
     total_profit = float(settled_df["profit_num"].sum()) if not settled_df.empty else 0.0
-    overall_win_rate = (total_wins / total_settled_bets * 100.0) if total_settled_bets > 0 else 0.0
+    decision_bets = total_wins + total_losses
+    overall_win_rate = (total_wins / decision_bets * 100.0) if decision_bets > 0 else 0.0
 
     summary_col1, summary_col2, summary_col3, summary_col4 = st.columns(4)
     summary_col1.metric("Settled Bets", total_settled_bets)
-    summary_col2.metric("Wins", total_wins)
+    summary_col2.metric("Wins / Losses / Pushes", f"{total_wins} / {total_losses} / {total_pushes}")
     summary_col3.metric("Win Rate", f"{overall_win_rate:.1f}%")
     summary_col4.metric("Profit", f"{total_profit:.2f}u")
 
@@ -7233,6 +7349,7 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
                 bets=("result_clean", "count"),
                 wins=("result_clean", lambda s: (s == "win").sum()),
                 losses=("result_clean", lambda s: (s == "loss").sum()),
+                pushes=("result_clean", lambda s: (s == "push").sum()),
                 profit=("profit_num", "sum"),
                 avg_true_conf=("true_conf_num", "mean"),
                 avg_edge=("edge_num", "mean"),
@@ -7248,10 +7365,12 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
             bets = int(row["bets"])
             wins = int(row["wins"])
             losses = int(row["losses"])
+            pushes = int(row["pushes"])
             profit = float(row["profit"])
             avg_true_conf = float(row["avg_true_conf"]) if pd.notna(row["avg_true_conf"]) else 0.0
             avg_edge = float(row["avg_edge"]) if pd.notna(row["avg_edge"]) else 0.0
-            win_rate = (wins / bets * 100.0) if bets > 0 else 0.0
+            decision_count = wins + losses
+            win_rate = (wins / decision_count * 100.0) if decision_count > 0 else 0.0
             roi_per_bet = (profit / bets) if bets > 0 else 0.0
             stage = _learning_stage(bets)
 
@@ -7259,6 +7378,7 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
                 "sample_size": bets,
                 "wins": wins,
                 "losses": losses,
+                "pushes": pushes,
                 "profit": round(profit, 4),
                 "win_rate": round(win_rate, 2),
                 "roi_per_bet": round(roi_per_bet, 4),
@@ -7272,12 +7392,12 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
                     if profit <= -2 and win_rate < 45:
                         bad_play_type_flags[play_type_name] = {
                             "is_filtered": True,
-                            "reason": f"Trusted filter: poor results ({wins}-{losses}, profit {round(profit, 2)})"
+                            "reason": f"Trusted filter: poor results ({wins}-{losses}-{pushes}, profit {round(profit, 2)})"
                         }
                     elif profit >= 2 and win_rate >= 55:
                         bad_play_type_flags[play_type_name] = {
                             "is_filtered": False,
-                            "reason": f"Trusted positive results ({wins}-{losses}, profit {round(profit, 2)})"
+                            "reason": f"Trusted positive results ({wins}-{losses}-{pushes}, profit {round(profit, 2)})"
                         }
                     else:
                         bad_play_type_flags[play_type_name] = {
@@ -7289,12 +7409,12 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
                     if profit <= -1.5 and win_rate < 45:
                         bad_play_type_flags[play_type_name] = {
                             "is_filtered": True,
-                            "reason": f"Active filter: weak results ({wins}-{losses}, profit {round(profit, 2)})"
+                            "reason": f"Active filter: weak results ({wins}-{losses}-{pushes}, profit {round(profit, 2)})"
                         }
                     elif profit >= 1.5 and win_rate >= 55:
                         bad_play_type_flags[play_type_name] = {
                             "is_filtered": False,
-                            "reason": f"Active positive results ({wins}-{losses}, profit {round(profit, 2)})"
+                            "reason": f"Active positive results ({wins}-{losses}-{pushes}, profit {round(profit, 2)})"
                         }
                     else:
                         bad_play_type_flags[play_type_name] = {
@@ -7306,12 +7426,12 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
                     if profit <= -1 and win_rate < 40:
                         bad_play_type_flags[play_type_name] = {
                             "is_filtered": True,
-                            "reason": f"Probation filter: very weak start ({wins}-{losses}, profit {round(profit, 2)})"
+                            "reason": f"Probation filter: very weak start ({wins}-{losses}-{pushes}, profit {round(profit, 2)})"
                         }
                     elif profit >= 1 and win_rate >= 60:
                         bad_play_type_flags[play_type_name] = {
                             "is_filtered": False,
-                            "reason": f"Probation positive start ({wins}-{losses}, profit {round(profit, 2)})"
+                            "reason": f"Probation positive start ({wins}-{losses}-{pushes}, profit {round(profit, 2)})"
                         }
                     else:
                         bad_play_type_flags[play_type_name] = {
@@ -7330,6 +7450,7 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
                 bets=("result_clean", "count"),
                 wins=("result_clean", lambda s: (s == "win").sum()),
                 losses=("result_clean", lambda s: (s == "loss").sum()),
+                pushes=("result_clean", lambda s: (s == "push").sum()),
                 profit=("profit_num", "sum"),
                 avg_true_conf=("true_conf_num", "mean"),
                 avg_edge=("edge_num", "mean"),
@@ -7345,10 +7466,12 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
             bets = int(row["bets"])
             wins = int(row["wins"])
             losses = int(row["losses"])
+            pushes = int(row["pushes"])
             profit = float(row["profit"])
             avg_true_conf = float(row["avg_true_conf"]) if pd.notna(row["avg_true_conf"]) else 0.0
             avg_edge = float(row["avg_edge"]) if pd.notna(row["avg_edge"]) else 0.0
-            win_rate = (wins / bets * 100.0) if bets > 0 else 0.0
+            decision_count = wins + losses
+            win_rate = (wins / decision_count * 100.0) if decision_count > 0 else 0.0
             roi_per_bet = (profit / bets) if bets > 0 else 0.0
             stage = _learning_stage(bets)
 
@@ -7356,6 +7479,7 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
                 "sample_size": bets,
                 "wins": wins,
                 "losses": losses,
+                "pushes": pushes,
                 "profit": round(profit, 4),
                 "win_rate": round(win_rate, 2),
                 "roi_per_bet": round(roi_per_bet, 4),
@@ -7485,6 +7609,7 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
                     "Bets": stats["sample_size"],
                     "Wins": stats["wins"],
                     "Losses": stats["losses"],
+                    "Pushes": stats.get("pushes", 0),
                     "Win Rate %": stats["win_rate"],
                     "Profit": stats["profit"],
                     "ROI/Bet": stats["roi_per_bet"],
@@ -7513,6 +7638,7 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
                     "Bets": stats["sample_size"],
                     "Wins": stats["wins"],
                     "Losses": stats["losses"],
+                    "Pushes": stats.get("pushes", 0),
                     "Win Rate %": stats["win_rate"],
                     "Profit": stats["profit"],
                     "ROI/Bet": stats["roi_per_bet"],
@@ -7579,6 +7705,7 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
                 "Bets": stats.get("sample_size", 0),
                 "Wins": stats.get("wins", 0),
                 "Losses": stats.get("losses", 0),
+                "Pushes": stats.get("pushes", 0),
                 "Profit": stats.get("profit", 0.0),
                 "Win Rate %": stats.get("win_rate", 0.0),
                 "Avg True Conf": stats.get("avg_true_conf", 0.0),
@@ -7609,6 +7736,7 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
                 "Bets": stats.get("sample_size", 0),
                 "Wins": stats.get("wins", 0),
                 "Losses": stats.get("losses", 0),
+                "Pushes": stats.get("pushes", 0),
                 "Profit": stats.get("profit", 0.0),
                 "Win Rate %": stats.get("win_rate", 0.0),
                 "Avg True Conf": stats.get("avg_true_conf", 0.0),
@@ -7645,4 +7773,3 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
         st.info(f"{selected_sport} Accelerated Learning Mode is active.")
     else:
         st.success(f"{selected_sport} Accelerated Learning Mode is fully active.")
-

@@ -4755,19 +4755,12 @@ def sync_manual_results_into_bet_log():
 # =========================================================
 # NAVIGATION
 # =========================================================
-st.markdown('<div class="nav-wrap">', unsafe_allow_html=True)
-st.markdown('<div class="section-title">🚀 Navigation</div>', unsafe_allow_html=True)
+nav = st.session_state.get("nav_choice_native", st.session_state.get("nav_choice", "Top Plays"))
 
-nav = st.radio(
-    "Navigation",
-    ["Top Plays", "Watchlist", "AI Slip", "Bet Log"],
-    horizontal=True,
-    label_visibility="collapsed",
-    key="nav_choice_native",
-)
+if nav not in ["Top Plays", "Watchlist", "AI Slip", "Bet Log"]:
+    nav = "Top Plays"
 
 st.session_state["nav_choice"] = nav
-st.markdown("</div>", unsafe_allow_html=True)
 # =========================================================
 # PAGE STYLES
 # =========================================================

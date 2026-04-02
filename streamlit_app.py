@@ -4466,39 +4466,52 @@ portfolio = build_ai_portfolio(best_row, best_parlay, all_portfolio_candidates)
 # ================================
 # SNAPSHOT BUILD + SAVE
 # ================================
-snapshot_source_df = pd.concat(
-    [active_df.copy(), watch_df.copy()],
-    ignore_index=True
-) if (
-    (isinstance(active_df, pd.DataFrame) and not active_df.empty)
-    or (isinstance(watch_df, pd.DataFrame) and not watch_df.empty)
-) else pd.DataFrame()
+ai_slip_df = pd.DataFrame()
 
-if snapshot_source_df is not None and not snapshot_source_df.empty:
-    snapshot_source_df = normalize_dataframe_for_selected_sport(snapshot_source_df, get_selected_sport())
+try:
+    active_exists = "active_df" in locals() and isinstance(active_df, pd.DataFrame) and not active_df.empty
+    watch_exists = "watch_df" in locals() and isinstance(watch_df, pd.DataFrame) and not watch_df.empty
 
-    snapshot_top_df, snapshot_watch_df, ai_slip_df = save_generated_play_snapshots(snapshot_source_df)
+    if active_exists and watch_exists:
+        snapshot_source_df = pd.concat(
+            [active_df.copy(), watch_df.copy()],
+            ignore_index=True
+        )
+    elif active_exists:
+        snapshot_source_df = active_df.copy()
+    elif watch_exists:
+        snapshot_source_df = watch_df.copy()
+    else:
+        snapshot_source_df = pd.DataFrame()
 
-    # keep old variable names alive for later UI blocks
-    top_plays_df = snapshot_top_df.copy()
-    watchlist_df = snapshot_watch_df.copy()
+    if isinstance(snapshot_source_df, pd.DataFrame) and not snapshot_source_df.empty:
+        snapshot_source_df = normalize_dataframe_for_selected_sport(
+            snapshot_source_df,
+            get_selected_sport(),
+        )
 
-    if not snapshot_top_df.empty:
-        active_df = snapshot_top_df.copy()
+        snapshot_top_df, snapshot_watch_df, ai_slip_df = save_generated_play_snapshots(snapshot_source_df)
 
-    if not snapshot_watch_df.empty:
-        watch_df = snapshot_watch_df.copy()
+        top_plays_df = snapshot_top_df.copy() if isinstance(snapshot_top_df, pd.DataFrame) else pd.DataFrame()
+        watchlist_df = snapshot_watch_df.copy() if isinstance(snapshot_watch_df, pd.DataFrame) else pd.DataFrame()
 
-    if best_row is None and not snapshot_top_df.empty:
-        best_row = snapshot_top_df.iloc[0]
+        if isinstance(snapshot_top_df, pd.DataFrame) and not snapshot_top_df.empty:
+            active_df = snapshot_top_df.copy()
 
-else:
+        if isinstance(snapshot_watch_df, pd.DataFrame) and not snapshot_watch_df.empty:
+            watch_df = snapshot_watch_df.copy()
+
+        if ("best_row" not in locals() or best_row is None) and isinstance(snapshot_top_df, pd.DataFrame) and not snapshot_top_df.empty:
+            best_row = snapshot_top_df.iloc[0]
+
+    else:
+        existing_snapshot_df = st.session_state.get("snapshot_plays_df", pd.DataFrame())
+        if not isinstance(existing_snapshot_df, pd.DataFrame) or existing_snapshot_df.empty:
+            clear_generated_play_snapshots()
+
+except Exception as e:
+    st.warning(f"Snapshot build/save skipped: {e}")
     ai_slip_df = pd.DataFrame()
-
-    # only clear if truly nothing exists anywhere
-    existing_snapshot_df = st.session_state.get("snapshot_plays_df", pd.DataFrame())
-    if not isinstance(existing_snapshot_df, pd.DataFrame) or existing_snapshot_df.empty:
-        clear_generated_play_snapshots()
 
 # ================================
 # SNAPSHOT METRICS

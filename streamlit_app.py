@@ -3800,7 +3800,10 @@ st.session_state["bet_log"] = bet_log_df.to_dict("records")
 save_bet_log(st.session_state["bet_log"])
 st.session_state["auto_logged_ids"] = build_logged_id_set(st.session_state.get("bet_log", []))
 
-update_learning_from_results()
+try:
+    update_learning_from_results()
+except Exception as e:
+    st.warning(f"Learning engine skipped: {e}")
 
 plays_df = generate_ai_plays()
 

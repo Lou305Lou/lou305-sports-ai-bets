@@ -2617,1623 +2617,436 @@ else:
     st.sidebar.warning("Missing SportsDataIO API key in Streamlit secrets")
 
 # =========================================================
-# LIVE ODDS FETCH (MANUAL REFRESH ONLY)
+# LIVE ODDS FETCH + EFFECTIVE DATA HELPERS
 # =========================================================
-def reset_daily_api_counter_if_needed():
-    current_day = today_str()
-    saved_day = str(st.session_state.get("daily_api_call_date", "")).strip()
+def fetch_odds_for_sport(sport_name: str):
+    sport_cfg = get_sport_config(sport_name)
+    api_key = get_odds_api_key()
 
-    if saved_day != current_day:
-        st.session_state["daily_api_call_date"] = current_day
-        st.session_state["daily_api_call_count"] = 0
-
-
-def get_daily_api_calls_used():
-    reset_daily_api_counter_if_needed()
-    return int(st.session_state.get("daily_api_call_count", 0))
-
-
-def get_daily_api_calls_remaining():
-    reset_daily_api_counter_if_needed()
-    limit_val = int(st.session_state.get("daily_api_call_limit", 10))
-    used_val = int(st.session_state.get("daily_api_call_count", 0))
-    return max(0, limit_val - used_val)
-
-
-def increment_daily_api_call_count():
-    reset_daily_api_counter_if_needed()
-    st.session_state["daily_api_call_count"] = int(st.session_state.get("daily_api_call_count", 0)) + 1
-
-
-def api_status_label():
-    mode = st.session_state.get("api_mode", "idle")
-    err = str(st.session_state.get("last_refresh_error", "")).lower()
-
-    if mode == "live":
-        return "LIVE", "#10b981", "#ecfdf5", "#065f46"
-
-    if mode == "cached":
-        return "CACHED", "#0ea5e9", "#eff6ff", "#075985"
-
-    if mode == "daily_limit":
-        return "DAILY LIMIT", "#7c3aed", "#f5f3ff", "#5b21b6"
-
-    if mode == "waiting_reset":
-        return "WAITING RESET", "#f97316", "#fff7ed", "#9a3412"
-
-    if not ODDS_API_KEY:
-        return "NO KEY", "#f59e0b", "#fffbeb", "#92400e"
-
-    if "401" in err or "unauthorized" in err:
-        return "KEY ERROR", "#ef4444", "#fef2f2", "#991b1b"
-
-    if "429" in err or "quota" in err or "usage" in err or "credits" in err or "out_of_usage_credits" in err:
-        return "WAITING RESET", "#f97316", "#fff7ed", "#9a3412"
-
-    if err:
-        return "OFFLINE", "#64748b", "#f8fafc", "#334155"
-
-    return "IDLE", "#64748b", "#f8fafc", "#334155"
-
-
-def get_effective_odds_games():
-    live_games = st.session_state.get("odds_api_games", [])
-    if live_games:
-        return live_games
-
-    cached_games = st.session_state.get("last_successful_odds_games", [])
-    if cached_games:
-        return cached_games
-
-    return []
-
-
-def fetch_live_nba_odds(force=False):
-    cached_games = st.session_state.get("last_successful_odds_games", [])
-
-    if not ODDS_API_KEY:
-        st.session_state["odds_api_games"] = []
-        st.session_state["last_odds_refresh_ok"] = False
-        st.session_state["last_refresh_error"] = "Missing ODDS_API_KEY in Streamlit secrets."
-        st.session_state["last_refresh_count"] = 0
-        st.session_state["api_mode"] = "fallback"
-        st.session_state["api_status_note"] = "No API key found."
-        return cached_games if cached_games else []
-
-    reset_daily_api_counter_if_needed()
-
-    calls_remaining = get_daily_api_calls_remaining()
-    calls_used = get_daily_api_calls_used()
-    daily_limit = int(st.session_state.get("daily_api_call_limit", 10))
-
-    if calls_remaining <= 0:
-        st.session_state["last_odds_refresh_ok"] = bool(cached_games)
-        st.session_state["last_refresh_count"] = len(cached_games) if cached_games else 0
-        st.session_state["api_mode"] = "daily_limit"
-        st.session_state["api_status_note"] = (
-            f"Odds API unavailable / waiting for reset. Daily live-odds limit reached "
-            f"({calls_used}/{daily_limit})."
-        )
-
-        if cached_games:
-            st.session_state["odds_api_games"] = cached_games
-            st.session_state["last_refresh_error"] = ""
-            return cached_games
-
-        st.session_state["odds_api_games"] = []
-        st.session_state["last_refresh_error"] = "Odds API unavailable / waiting for reset."
+    if not api_key:
+        set_api_status("no_key", "No Odds API key found in secrets.")
         return []
 
+    if get_daily_api_calls_remaining() <= 0:
+        st.session_state["odds_api_reset_expected"] = (
+            (pd.Timestamp.now() + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+        )
+        set_api_status("waiting_reset", "Daily Odds API call cap reached.")
+        return st.session_state.get("last_successful_odds_games_by_sport", {}).get(sport_name, [])
+
+    url = f"{ODDS_API_BASE}/{sport_cfg['sport_key']}/odds"
+
     params = {
-        "apiKey": ODDS_API_KEY,
-        "regions": "us",
-        "markets": "h2h,spreads,totals",
-        "oddsFormat": "american",
+        "apiKey": api_key,
+        "regions": ODDS_REGIONS,
+        "markets": ODDS_MARKETS,
+        "oddsFormat": ODDS_ODDS_FORMAT,
         "bookmakers": ODDS_BOOKMAKERS,
     }
 
     try:
-        response = requests.get(ODDS_API_URL, params=params, timeout=20)
+        response = requests.get(url, params=params, timeout=20)
         response.raise_for_status()
-        data = response.json()
 
+        data = response.json()
         if not isinstance(data, list):
             data = []
 
         increment_daily_api_call_count()
-        calls_used = get_daily_api_calls_used()
-        calls_remaining = get_daily_api_calls_remaining()
 
-        st.session_state["odds_api_games"] = data
-        st.session_state["last_successful_odds_games"] = data
+        games_by_sport = dict(st.session_state.get("odds_api_games_by_sport", {}))
+        last_success = dict(st.session_state.get("last_successful_odds_games_by_sport", {}))
+
+        games_by_sport[sport_name] = data
+        last_success[sport_name] = data
+
+        st.session_state["odds_api_games_by_sport"] = games_by_sport
+        st.session_state["last_successful_odds_games_by_sport"] = last_success
         st.session_state["last_odds_refresh_ok"] = True
         st.session_state["last_refresh_error"] = ""
         st.session_state["last_refresh_count"] = len(data)
         st.session_state["last_refresh_time"] = pd.Timestamp.now().strftime("%Y-%m-%d %I:%M:%S %p")
         st.session_state["last_api_pull_epoch"] = time.time()
-        st.session_state["api_mode"] = "live"
-        st.session_state["api_status_note"] = (
-            f"Live odds loaded successfully. Calls used today: "
-            f"{calls_used}/{daily_limit} ({calls_remaining} remaining)."
+
+        set_api_status(
+            "live",
+            f"{sport_name} live odds loaded. Calls used today: {get_daily_api_calls_used()} / {DAILY_API_CALL_LIMIT}",
         )
+
         return data
 
-    except requests.exceptions.HTTPError as e:
-        status_code = getattr(e.response, "status_code", None)
-
-        if status_code == 401:
-            friendly_error = "401 Unauthorized — API key invalid, expired, or wrong."
-            new_mode = "fallback"
-            new_note = "Your Odds API key is not being accepted right now."
-        elif status_code == 429:
-            friendly_error = "Odds API unavailable / waiting for reset."
-            new_mode = "waiting_reset"
-            reset_date = str(st.session_state.get("odds_api_reset_expected", "")).strip()
-            if reset_date:
-                new_note = f"Odds API unavailable / waiting for reset. Expected reset around {reset_date}."
-            else:
-                new_note = "Odds API unavailable / waiting for reset."
-        else:
-            friendly_error = f"HTTP error: {e}"
-            new_mode = "fallback"
-            new_note = "Live refresh failed."
-
-        st.session_state["last_odds_refresh_ok"] = False
-        st.session_state["last_refresh_error"] = friendly_error
-        st.session_state["last_refresh_count"] = 0
-
-        if cached_games:
-            st.session_state["odds_api_games"] = cached_games
-            st.session_state["api_mode"] = "cached" if new_mode != "waiting_reset" else "waiting_reset"
-            st.session_state["api_status_note"] = f"{new_note} Using cached odds."
-            return cached_games
-
-        st.session_state["odds_api_games"] = []
-        st.session_state["api_mode"] = new_mode
-        st.session_state["api_status_note"] = new_note
-        return []
-
     except Exception as e:
-        raw_error = str(e)
-        lowered = raw_error.lower()
-
-        waiting_reset_error = (
-            "429" in lowered
-            or "quota" in lowered
-            or "usage" in lowered
-            or "credits" in lowered
-            or "out_of_usage_credits" in lowered
-        )
-
-        if waiting_reset_error:
-            friendly_error = "Odds API unavailable / waiting for reset."
-            new_mode = "waiting_reset"
-            reset_date = str(st.session_state.get("odds_api_reset_expected", "")).strip()
-            if reset_date:
-                new_note = f"Odds API unavailable / waiting for reset. Expected reset around {reset_date}."
-            else:
-                new_note = "Odds API unavailable / waiting for reset."
-        else:
-            friendly_error = raw_error
-            new_mode = "fallback"
-            new_note = "Refresh failed."
-
+        err = str(e)
+        st.session_state["last_refresh_error"] = err
         st.session_state["last_odds_refresh_ok"] = False
-        st.session_state["last_refresh_error"] = friendly_error
-        st.session_state["last_refresh_count"] = 0
 
-        if cached_games:
-            st.session_state["odds_api_games"] = cached_games
-            st.session_state["api_mode"] = "cached" if new_mode != "waiting_reset" else "waiting_reset"
-            st.session_state["api_status_note"] = f"{new_note} Using cached odds."
-            return cached_games
+        fallback = st.session_state.get("last_successful_odds_games_by_sport", {}).get(sport_name, [])
+        if fallback:
+            set_api_status("cached", f"{sport_name} live pull failed. Using cached odds.")
+            return fallback
 
-        st.session_state["odds_api_games"] = []
-        st.session_state["api_mode"] = new_mode
-        st.session_state["api_status_note"] = new_note
+        set_api_status("error", f"{sport_name} live pull failed.")
         return []
 
 
-st.sidebar.markdown("### 📡 Live Odds Control")
-
-calls_used_today = get_daily_api_calls_used()
-daily_limit = int(st.session_state.get("daily_api_call_limit", 10))
-calls_remaining_today = get_daily_api_calls_remaining()
-
-st.sidebar.caption(f"Daily calls used: {calls_used_today}/{daily_limit}")
-st.sidebar.caption(f"Daily calls remaining: {calls_remaining_today}")
-
-if st.sidebar.button("🔄 Refresh Live Odds"):
-    with st.sidebar:
-        with st.spinner("Refreshing live odds..."):
-            data = fetch_live_nba_odds(force=True)
-            current_mode = st.session_state.get("api_mode")
-
-            if current_mode == "live" and len(data) > 0:
-                st.success(f"Loaded {len(data)} live game(s).")
-            elif current_mode == "daily_limit" and len(data) > 0:
-                st.info(f"Daily limit reached. Using {len(data)} cached game(s).")
-            elif current_mode == "cached" and len(data) > 0:
-                st.warning(f"Using {len(data)} cached game(s).")
-            elif current_mode == "waiting_reset" and len(data) > 0:
-                st.warning(f"Odds API waiting for reset. Using {len(data)} cached game(s).")
-            elif current_mode == "waiting_reset":
-                st.warning("Odds API unavailable / waiting for reset.")
-            else:
-                st.error("Refresh failed.")
-
-status_text, status_dot, status_bg, status_fg = api_status_label()
-
-st.sidebar.markdown(
-    f"""
-    <div style="
-        background:{status_bg};
-        border:1px solid #e5e7eb;
-        border-radius:14px;
-        padding:10px 12px;
-        margin-top:8px;
-        margin-bottom:8px;">
-        <div style="display:flex;align-items:center;gap:8px;font-weight:800;color:{status_fg};">
-            <span style="
-                width:10px;
-                height:10px;
-                border-radius:999px;
-                background:{status_dot};
-                display:inline-block;"></span>
-            API Status: {status_text}
-        </div>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-
-status_note = st.session_state.get("api_status_note", "")
-if status_note:
-    st.sidebar.caption(status_note)
-
-if st.session_state.get("last_refresh_time"):
-    st.sidebar.caption(f"Last refresh: {st.session_state['last_refresh_time']}")
-
-st.sidebar.caption(f"Games in memory: {len(get_effective_odds_games())}")
-
-err = st.session_state.get("last_refresh_error", "")
-if err:
-    if "401" in err.lower() or "unauthorized" in err.lower():
-        st.sidebar.warning("Your Odds API key is not being accepted right now.")
-    elif "429" in err.lower() or "quota" in err.lower() or "usage" in err.lower() or "credits" in err.lower() or "waiting for reset" in err.lower():
-        st.sidebar.warning("Odds API unavailable / waiting for reset.")
-    else:
-        st.sidebar.caption(f"Error: {err}")
-# =========================================================
-# SMART DECISION LAYER
-# =========================================================
-def american_odds_to_implied_prob_pct(odds):
-    odds_val = american_to_int(odds)
-    if odds_val is None:
-        return 50.0
-
-    if odds_val > 0:
-        return round((100 / (odds_val + 100)) * 100, 2)
-
-    return round((abs(odds_val) / (abs(odds_val) + 100)) * 100, 2)
-
-
-def books_score(books_seen):
-    try:
-        books_seen = int(books_seen)
-    except Exception:
-        books_seen = 1
-
-    if books_seen >= 4:
-        return 1.00
-    if books_seen == 3:
-        return 0.82
-    if books_seen == 2:
-        return 0.56
-    return 0.22
-
-
-def consensus_score(consensus):
-    consensus = str(consensus).strip().lower()
-    if consensus == "strong":
-        return 1.00
-    if consensus == "fair":
-        return 0.66
-    return 0.30
-
-
-def edge_score(edge):
-    try:
-        edge = float(edge)
-    except Exception:
-        edge = 0.0
-    return clamp(edge / 10.0, 0.0, 1.0)
-
-
-def price_edge_score(price_edge):
-    try:
-        price_edge = float(price_edge)
-    except Exception:
-        price_edge = 0.0
-    return clamp(price_edge / 3.0, 0.0, 1.0)
-
-
-def model_score(score):
-    try:
-        score = float(score)
-    except Exception:
-        score = 50.0
-    return clamp((score - 78.0) / 22.0, 0.0, 1.0)
-
-
-def confidence_numeric(confidence_value):
-    raw = str(confidence_value).strip().lower()
-
-    if raw == "elite":
-        return 78.0
-    if raw == "high":
-        return 72.0
-    if raw == "medium":
-        return 66.0
-    if raw == "low":
-        return 58.0
-
-    try:
-        return float(confidence_value)
-    except Exception:
-        return 60.0
-
-
-def estimate_true_probability_pct(row):
-    score = float(row.get("score", 0))
-    books_seen = int(row.get("books_seen", 1))
-    consensus = str(row.get("consensus", "Thin"))
-    price_edge = float(row.get("price_edge", 0))
-    context_score = float(row.get("context_score", 0))
-    market = str(row.get("market", "")).lower()
-    odds = row.get("odds")
-
-    ms = model_score(score)
-    bs = books_score(books_seen)
-    cs = consensus_score(consensus)
-    ps = price_edge_score(price_edge)
-
-    true_prob = (
-        38.0
-        + (ms * 20.0)
-        + (bs * 8.0)
-        + (cs * 10.0)
-        + (ps * 12.0)
-        + clamp(context_score, -20, 20) * 0.35
-    )
-
-    if market == "moneyline":
-        true_prob += 1.0
-    elif market == "spread":
-        true_prob += 0.5
-    elif market == "total":
-        true_prob += 0.0
-    elif market.startswith("prop_"):
-        true_prob -= 2.5
-
-    implied_prob = american_odds_to_implied_prob_pct(odds)
-    true_prob = clamp(true_prob, 30.0, 82.0)
-    edge = round(true_prob - implied_prob, 2)
-
-    return round(true_prob, 1), round(implied_prob, 2), edge
-
-
-def apply_true_probability_columns(df: pd.DataFrame):
-    if df is None or df.empty:
-        return df
-
-    out = df.copy()
-
-    true_probs = []
-    implied_probs = []
-    edges = []
-
-    for _, row in out.iterrows():
-        tp, ip, ed = estimate_true_probability_pct(row)
-        true_probs.append(tp)
-        implied_probs.append(ip)
-        edges.append(ed)
-
-    out["true_prob"] = true_probs
-    out["implied_prob"] = implied_probs
-    out["edge"] = edges
-
-    return out
-
-
-def detect_traps(row):
-    penalties = 0.0
-    trap_flags = []
-
-    edge = float(row["edge"])
-    books_seen = int(row["books_seen"])
-    consensus = str(row["consensus"])
-    price_edge = float(row["price_edge"])
-    implied_prob = float(row.get("implied_prob", 50))
-    true_prob = float(row.get("true_prob", 50))
-
-    if edge < 2.0:
-        penalties += 0.16
-        trap_flags.append("weak value edge")
-    elif edge < 4.0:
-        penalties += 0.08
-        trap_flags.append("thin value edge")
-
-    if books_seen <= 1:
-        penalties += 0.18
-        trap_flags.append("single-book risk")
-    elif books_seen == 2:
-        penalties += 0.08
-        trap_flags.append("limited book support")
-
-    if consensus == "Thin":
-        penalties += 0.14
-        trap_flags.append("thin consensus")
-
-    if price_edge < 1.0:
-        penalties += 0.08
-        trap_flags.append("weak price support")
-
-    if implied_prob >= 65 and true_prob < implied_prob + 2.0:
-        penalties += 0.08
-        trap_flags.append("expensive favorite risk")
-
-    return clamp(penalties, 0.0, 0.45), trap_flags
-
-
-def compute_true_confidence(row):
-    ms = model_score(row["score"])
-    es = edge_score(row["edge"])
-    ps = price_edge_score(row["price_edge"])
-    bs = books_score(row["books_seen"])
-    cs = consensus_score(row["consensus"])
-
-    penalty, trap_flags = detect_traps(row)
-
-    raw_quality = (
-        ms * 0.28
-        + es * 0.32
-        + ps * 0.12
-        + bs * 0.14
-        + cs * 0.14
-    )
-
-    adjusted_quality = clamp(raw_quality - penalty, 0.0, 1.0)
-    true_confidence = round(adjusted_quality * 100.0, 1)
-
-    reasons = []
-    if int(row["books_seen"]) >= 3:
-        reasons.append("multi-book support")
-    if str(row["consensus"]).lower() == "strong":
-        reasons.append("strong consensus")
-    elif str(row["consensus"]).lower() == "fair":
-        reasons.append("usable consensus")
-    if float(row["price_edge"]) >= 1.25:
-        reasons.append("price support")
-    if float(row["score"]) >= 88:
-        reasons.append("strong model score")
-    if float(row["edge"]) >= 4.0:
-        reasons.append("true probability edge")
-    if float(row.get("true_prob", 0)) >= 60:
-        reasons.append("high true probability")
-    reasons.extend(trap_flags)
-
-    return true_confidence, adjusted_quality, reasons
-
-
-def tier_from_true_conf(tc):
-    if tc >= 78:
-        return "A"
-    if tc >= 65:
-        return "B"
-    return "C"
-
-# =========================================================
-# RECALCULATE AFTER SPORTSDATA (CRITICAL FIX)
-# =========================================================
-def recalculate_play_metrics(df: pd.DataFrame):
-    if df is None or df.empty:
-        return df
-
-    out = df.copy()
-
-    # Rebuild true probability + edge AFTER context/score adjustments
-    out = apply_true_probability_columns(out)
-
-    true_conf_list = []
-    quality_score_list = []
-    reasons_list = []
-
-    for _, row in out.iterrows():
-        tc, qs, reasons = compute_true_confidence(row)
-        true_conf_list.append(tc)
-        quality_score_list.append(qs)
-        reasons_list.append(reasons)
-
-    out["true_confidence"] = true_conf_list
-    out["quality_score"] = quality_score_list
-    out["decision_reasons"] = reasons_list
-    out["confidence"] = out["true_confidence"].apply(confidence_bucket_from_true_conf)
-
-    def refresh_tags(row):
-        existing = list(row.get("ai_tags", [])) if isinstance(row.get("ai_tags", []), list) else []
-        reasons = list(row.get("decision_reasons", [])) if isinstance(row.get("decision_reasons", []), list) else []
-        merged = []
-        for item in existing + reasons:
-            if item and item not in merged:
-                merged.append(item)
-        return merged[:6]
-
-    out["ai_tags"] = out.apply(refresh_tags, axis=1)
-
-    active_edge_threshold = get_effective_min_active_edge()
-    watch_edge_threshold = get_effective_min_watch_edge()
-    active_true_conf_threshold = get_effective_min_active_true_conf()
-    watch_true_conf_threshold = get_effective_min_watch_true_conf()
-
-    def decide_status(row):
-        if (
-            float(row["edge"]) >= active_edge_threshold
-            and float(row["true_confidence"]) >= active_true_conf_threshold
-            and int(row["books_seen"]) >= MIN_ACTIVE_BOOKS
-            and str(row["consensus"]) in ["Strong", "Fair"]
-        ):
-            return "Active"
-
-        if (
-            float(row["edge"]) >= watch_edge_threshold
-            and float(row["true_confidence"]) >= watch_true_conf_threshold
-            and int(row["books_seen"]) >= MIN_WATCH_BOOKS
-        ):
-            return "Watch"
-
-        return "Discard"
-
-    out["status"] = out.apply(decide_status, axis=1)
-    out = out[out["status"] != "Discard"].copy()
-
-    if out.empty:
-        return out.reset_index(drop=True)
-
-    out["watch_tier"] = out.apply(
-        lambda r: classify_watch_tier(r) if str(r["status"]) == "Watch" else "",
-        axis=1,
-    )
-
-    out["tier"] = out["true_confidence"].apply(tier_from_true_conf)
-    out["quality_label"] = out["tier"].apply(quality_label_from_tier)
-
-    out["units"] = out.apply(
-        lambda r: scale_single_units(r) if str(r["status"]) == "Active" else scale_watch_units(r),
-        axis=1,
-    )
-
-    out["rank_score"] = (
-        out["true_confidence"] * 0.55
-        + out["edge"] * 7.0
-        + out["price_edge"] * 3.5
-        + out["books_seen"] * 2.0
-        + out["score"] * 0.08
-    )
-
-    out["play_id"] = out.apply(
-        lambda r: build_play_id(
-            {
-                "game": r["game"],
-                "market": r["market"],
-                "selection": r["selection"],
-                "odds": r["odds"],
-            }
-        ),
-        axis=1,
-    )
-
-    active_local = (
-        out[out["status"] == "Active"]
-        .sort_values(["rank_score", "true_confidence"], ascending=False)
-        .head(TOP_PLAYS_LIMIT)
-        .copy()
-    )
-
-    watch_local = (
-        out[out["status"] == "Watch"]
-        .sort_values(["rank_score", "true_confidence"], ascending=False)
-        .head(WATCHLIST_LIMIT)
-        .copy()
-    )
-
-    active_rows = []
-    running_units = 0.0
-
-    for _, row in active_local.iterrows():
-        proposed_units = float(row["units"])
-
-        if len(active_rows) >= MAX_ACTIVE_PLAYS:
-            row2 = row.copy()
-            row2["status"] = "Watch"
-            row2["watch_tier"] = classify_watch_tier(row2)
-            row2["units"] = scale_watch_units(row2)
-            watch_local = pd.concat([watch_local, pd.DataFrame([row2])], ignore_index=True)
+def refresh_live_odds():
+    if not api_cooldown_ready():
+        set_api_status("cooldown", f"Cooldown active. Wait about {API_COOLDOWN_SECONDS} seconds between pulls.")
+        return
+
+    total_loaded = 0
+    combined_note_parts = []
+
+    for sport_name in ACTIVE_REFRESH_SPORTS:
+        games = fetch_odds_for_sport(sport_name)
+        total_loaded += len(games)
+        combined_note_parts.append(f"{sport_name}: {len(games)}")
+
+    st.session_state["last_refresh_count"] = total_loaded
+    st.session_state["last_refresh_time"] = pd.Timestamp.now().strftime("%Y-%m-%d %I:%M:%S %p")
+    st.session_state["api_status_note"] = " | ".join(combined_note_parts)
+
+
+def get_effective_odds_games_for_sport(sport_name: str):
+    live_map = st.session_state.get("odds_api_games_by_sport", {})
+    cached_map = st.session_state.get("last_successful_odds_games_by_sport", {})
+
+    live_games = live_map.get(sport_name, [])
+    cached_games = cached_map.get(sport_name, [])
+
+    if isinstance(live_games, list) and len(live_games) > 0:
+        return live_games
+
+    if isinstance(cached_games, list) and len(cached_games) > 0:
+        return cached_games
+
+    return []
+
+
+def get_effective_odds_games():
+    return get_effective_odds_games_for_sport(get_selected_sport())
+
+
+def get_today_games_filter():
+    raw = str(st.session_state.get("today_games_text", "")).strip()
+    if not raw:
+        return []
+
+    cleaned = []
+    for line in raw.splitlines():
+        text = str(line).strip()
+        if text:
+            cleaned.append(text.lower())
+
+    return cleaned
+
+
+def game_matches_filter(home_team: str, away_team: str, filters: list):
+    if not filters:
+        return True
+
+    combined_1 = f"{away_team} vs {home_team}".lower()
+    combined_2 = f"{home_team} vs {away_team}".lower()
+    combined_3 = f"{away_team} @ {home_team}".lower()
+    combined_4 = f"{home_team} @ {away_team}".lower()
+
+    for item in filters:
+        check = item.strip().lower()
+        if not check:
             continue
+        if check in combined_1 or check in combined_2 or check in combined_3 or check in combined_4:
+            return True
 
-        if running_units + proposed_units > MAX_TOTAL_UNITS:
-            row2 = row.copy()
-            row2["status"] = "Watch"
-            row2["watch_tier"] = classify_watch_tier(row2)
-            row2["units"] = scale_watch_units(row2)
-            watch_local = pd.concat([watch_local, pd.DataFrame([row2])], ignore_index=True)
-            continue
+    return False
 
-        active_rows.append(row)
-        running_units += proposed_units
 
-    active_final = pd.DataFrame(active_rows) if active_rows else pd.DataFrame(columns=out.columns)
+# =========================================================
+# CONSENSUS + SCORING HELPERS
+# =========================================================
+def calculate_consensus_pct(price_list):
+    if not price_list:
+        return 0.0
 
-    if not watch_local.empty:
-        watch_priority = {"Near Active": 3, "Monitor": 2, "Weak Watch": 1}
-        watch_local["watch_priority"] = watch_local["watch_tier"].map(watch_priority).fillna(0)
-        watch_local = watch_local.sort_values(
-            ["watch_priority", "rank_score", "true_confidence"],
-            ascending=[False, False, False]
-        ).drop(columns=["watch_priority"], errors="ignore")
+    favorites = 0
+    for price in price_list:
+        if safe_float(price, 0) < 0:
+            favorites += 1
 
-    combined = pd.concat([active_final, watch_local], ignore_index=True)
+    return round((favorites / max(len(price_list), 1)) * 100.0, 1)
 
-    if combined.empty:
-        return combined.reset_index(drop=True)
 
-    status_order = {"Active": 0, "Watch": 1}
-    combined["status_sort"] = combined["status"].map(status_order).fillna(9)
+def estimate_true_probability(implied_prob, books, consensus_pct, market_name):
+    implied_prob = safe_float(implied_prob, 0)
+    books = safe_float(books, 0)
+    consensus_pct = safe_float(consensus_pct, 0)
 
-    return (
-        combined.sort_values(["status_sort", "rank_score"], ascending=[True, False])
-        .drop(columns=["status_sort"], errors="ignore")
-        .reset_index(drop=True)
+    market_bonus = 0.0
+    if market_name == "spreads":
+        market_bonus = 0.010
+    elif market_name == "totals":
+        market_bonus = 0.008
+    elif market_name == "h2h":
+        market_bonus = 0.006
+
+    books_bonus = min(0.025, books * 0.0035)
+    consensus_bonus = (consensus_pct / 100.0) * 0.020
+
+    true_prob = implied_prob + books_bonus + consensus_bonus + market_bonus
+    return clamp(true_prob, 0.02, 0.95)
+
+
+def calculate_market_signal(books, edge):
+    books = safe_float(books, 0)
+    edge = safe_float(edge, 0)
+
+    signal = (books * 4.5) + (edge * 2.0)
+    return clamp(signal, 0.0, 100.0)
+
+
+def calculate_matchup_score(market_name):
+    if market_name == "spreads":
+        return 67.0
+    if market_name == "totals":
+        return 63.0
+    if market_name == "h2h":
+        return 61.0
+    return 55.0
+
+
+def calculate_historical_score():
+    return 58.0
+
+
+def calculate_model_score(true_prob, edge, books):
+    true_prob = safe_float(true_prob, 0)
+    edge = safe_float(edge, 0)
+    books = safe_float(books, 0)
+
+    score = (true_prob * 100.0 * 0.55) + (edge * 4.0) + (books * 2.0)
+    return clamp(score, 0.0, 100.0)
+
+
+def calculate_true_confidence(true_prob, edge, books, market_signal, matchup_score, historical_score):
+    true_prob_pct = safe_float(true_prob, 0) * 100.0
+    edge_score = clamp(safe_float(edge, 0) * 8.0, 0.0, 100.0)
+    books_score = clamp(safe_float(books, 0) * 12.0, 0.0, 100.0)
+
+    weighted = (
+        (true_prob_pct * TRUE_PROB_WEIGHT) +
+        (edge_score * PRICE_EDGE_WEIGHT) +
+        (safe_float(market_signal, 0) * MARKET_SIGNAL_WEIGHT) +
+        (safe_float(matchup_score, 0) * MATCHUP_WEIGHT) +
+        (safe_float(historical_score, 0) * HISTORICAL_WEIGHT)
     )
+
+    if books < 2:
+        weighted -= 8.0
+    if edge < 2:
+        weighted -= 6.0
+    if true_prob_pct < 54:
+        weighted -= 5.0
+
+    return round(clamp(weighted, 0.0, 99.0), 1)
+
+
+def calculate_units(true_confidence, status):
+    tc = safe_float(true_confidence, 0)
+    if status == "Active":
+        base = SINGLE_UNIT_MIN + ((tc - MIN_ACTIVE_TRUE_CONF) / 25.0) * (SINGLE_UNIT_MAX - SINGLE_UNIT_MIN)
+        return round(clamp(base, SINGLE_UNIT_MIN, SINGLE_UNIT_MAX), 2)
+
+    base = WATCH_UNIT_MIN + ((tc - MIN_WATCH_TRUE_CONF) / 25.0) * (WATCH_UNIT_MAX - WATCH_UNIT_MIN)
+    return round(clamp(base, WATCH_UNIT_MIN, WATCH_UNIT_MAX), 2)
+
 
 # =========================================================
 # DATA BUILD
 # =========================================================
 def generate_ai_plays():
+    selected_sport = get_selected_sport()
+    odds_games = get_effective_odds_games_for_sport(selected_sport)
+    slate_filters = get_today_games_filter()
+
     empty_cols = [
+        "sport",
         "game",
         "market",
         "selection",
         "player",
         "team",
         "opponent",
+        "line",
         "odds",
         "implied_prob",
         "true_prob",
         "edge",
-        "score",
-        "units",
-        "tier",
-        "quality_label",
-        "status",
-        "watch_tier",
-        "confidence",
-        "books_seen",
-        "best_price",
-        "best_book",
-        "consensus",
-        "price_edge",
-        "ai_tags",
+        "books",
+        "consensus_pct",
+        "sharp_score",
+        "market_signal",
+        "matchup_score",
+        "historical_score",
         "true_confidence",
-        "quality_score",
-        "decision_reasons",
-        "rank_score",
+        "status",
+        "units",
         "play_id",
-        "learning_status",
-        "learning_reason",
-        "category",
-        "primary_category",
-        "play_type",
-        "sport",
+        "log_category",
+        "sportsdata_note",
+        "injury_flag",
+        "lineup_flag",
+        "model_score",
     ]
 
-    live_games = get_effective_odds_games()
-    if not live_games:
+    if not odds_games:
         return pd.DataFrame(columns=empty_cols)
 
-    selected_sport_name = get_selected_sport()
-    learning_state = get_learning_state_for_sport(selected_sport_name)
-    bad_play_type_flags = learning_state.get("bad_play_type_flags", {})
-    adjusted_thresholds = learning_state.get("category_thresholds", {})
-
-    allowed_games = set(today_games) if today_games else None
     rows = []
 
-    def normalize_outcome_name(name):
-        return normalize_team_name(str(name).strip())
+    for game in odds_games:
+        home_team = str(game.get("home_team", "")).strip()
+        away_team = str(game.get("away_team", "")).strip()
 
-    def _book_name(book_obj):
-        return str(book_obj.get("title") or book_obj.get("key") or "").strip()
+        if not home_team or not away_team:
+            continue
 
-    def add_scored_row(row, base_tags):
-        row["sport"] = selected_sport_name
+        if not game_matches_filter(home_team, away_team, slate_filters):
+            continue
 
-        tp, ip, ed = estimate_true_probability_pct(row)
-        row["true_prob"] = tp
-        row["implied_prob"] = ip
-        row["edge"] = ed
+        game_label = f"{away_team} @ {home_team}"
+        bookmakers = game.get("bookmakers", [])
 
-        tc, qs, reasons = compute_true_confidence(row)
-        row["true_confidence"] = tc
-        row["quality_score"] = qs
-        row["decision_reasons"] = reasons
-        row["confidence"] = confidence_bucket_from_true_conf(tc)
-
-        tags = list(base_tags)
-        for reason in reasons:
-            if reason not in tags:
-                tags.append(reason)
-        row["ai_tags"] = tags[:6]
-
-        rows.append(row)
-
-    def get_best_market_outcome(bookmakers, market_key, target_name=None):
-        best_price = None
-        best_book = ""
-        books_found = 0
+        market_price_map = {}
 
         for book in bookmakers:
+            book_title = str(book.get("title", "")).strip()
             markets = book.get("markets", [])
+
             for market in markets:
-                if market.get("key") != market_key:
+                market_key = str(market.get("key", "")).strip()
+                outcomes = market.get("outcomes", [])
+
+                if market_key not in ["h2h", "spreads", "totals"]:
                     continue
 
-                matched_this_book = False
+                for outcome in outcomes:
+                    name = str(outcome.get("name", "")).strip()
+                    price = safe_float(outcome.get("price", 0), 0)
+                    point = safe_float(outcome.get("point", 0), 0)
 
-                for outcome in market.get("outcomes", []):
-                    outcome_name = str(outcome.get("name", "")).strip()
-                    normalized_outcome_name = normalize_outcome_name(outcome_name)
-
-                    if target_name is not None and normalized_outcome_name != target_name:
-                        continue
-
-                    price = outcome.get("price")
-                    if price is None:
-                        continue
-
-                    try:
-                        price = int(price)
-                    except Exception:
-                        continue
-
-                    if not matched_this_book:
-                        books_found += 1
-                        matched_this_book = True
-
-                    if best_price is None or price > best_price:
-                        best_price = price
-                        best_book = _book_name(book)
-
-        return best_price, books_found, best_book
-
-    def get_best_spread_outcome(bookmakers, target_name):
-        best_price = None
-        best_point = None
-        best_book = ""
-        books_found = 0
-
-        for book in bookmakers:
-            markets = book.get("markets", [])
-            for market in markets:
-                if market.get("key") != "spreads":
-                    continue
-
-                matched_this_book = False
-
-                for outcome in market.get("outcomes", []):
-                    outcome_name = str(outcome.get("name", "")).strip()
-                    normalized_outcome_name = normalize_outcome_name(outcome_name)
-
-                    if normalized_outcome_name != target_name:
-                        continue
-
-                    price = outcome.get("price")
-                    point = outcome.get("point")
-
-                    if price is None or point is None:
-                        continue
-
-                    try:
-                        price = int(price)
-                        point = float(point)
-                    except Exception:
-                        continue
-
-                    if not matched_this_book:
-                        books_found += 1
-                        matched_this_book = True
-
-                    if best_point is None:
-                        best_point = point
-                        best_price = price
-                        best_book = _book_name(book)
+                    if market_key == "totals":
+                        selection = f"{name} {point}".strip()
+                        team_name = ""
+                        opponent = ""
+                        line_value = point
                     else:
-                        if point > best_point:
-                            best_point = point
-                            best_price = price
-                            best_book = _book_name(book)
-                        elif point == best_point and price > best_price:
-                            best_price = price
-                            best_book = _book_name(book)
-
-        return best_point, best_price, books_found, best_book
-
-    def get_best_total_outcome(bookmakers, over_under_name):
-        best_price = None
-        best_point = None
-        best_book = ""
-        books_found = 0
-
-        for book in bookmakers:
-            markets = book.get("markets", [])
-            for market in markets:
-                if market.get("key") != "totals":
-                    continue
-
-                matched_this_book = False
-
-                for outcome in market.get("outcomes", []):
-                    outcome_name = str(outcome.get("name", "")).strip()
-                    if outcome_name != over_under_name:
-                        continue
-
-                    price = outcome.get("price")
-                    point = outcome.get("point")
-
-                    if price is None or point is None:
-                        continue
-
-                    try:
-                        price = int(price)
-                        point = float(point)
-                    except Exception:
-                        continue
-
-                    if not matched_this_book:
-                        books_found += 1
-                        matched_this_book = True
-
-                    if best_point is None:
-                        best_point = point
-                        best_price = price
-                        best_book = _book_name(book)
-                    else:
-                        if over_under_name == "Over":
-                            if point < best_point:
-                                best_point = point
-                                best_price = price
-                                best_book = _book_name(book)
-                            elif point == best_point and price > best_price:
-                                best_price = price
-                                best_book = _book_name(book)
-                        else:
-                            if point > best_point:
-                                best_point = point
-                                best_price = price
-                                best_book = _book_name(book)
-                            elif point == best_point and price > best_price:
-                                best_price = price
-                                best_book = _book_name(book)
-
-        return best_point, best_price, books_found, best_book
-
-    def game_context_from_market(away_team, home_team, bookmakers):
-        away_spread, away_spread_price, away_books, away_spread_book = get_best_spread_outcome(bookmakers, away_team)
-        home_spread, home_spread_price, home_books, home_spread_book = get_best_spread_outcome(bookmakers, home_team)
-
-        over_total, over_price, total_books, over_book = get_best_total_outcome(bookmakers, "Over")
-        under_total, under_price, under_books, under_book = get_best_total_outcome(bookmakers, "Under")
-
-        total_line = None
-        if over_total is not None and under_total is not None:
-            total_line = over_total if total_books >= under_books else under_total
-        elif over_total is not None:
-            total_line = over_total
-        elif under_total is not None:
-            total_line = under_total
-
-        favorite_team = None
-        favorite_spread_abs = 0.0
-
-        spread_candidates = []
-        if away_spread is not None:
-            spread_candidates.append((away_team, away_spread))
-        if home_spread is not None:
-            spread_candidates.append((home_team, home_spread))
-
-        negative_spreads = [(team, spread) for team, spread in spread_candidates if spread < 0]
-        if negative_spreads:
-            favorite_team, fav_spread = sorted(negative_spreads, key=lambda x: x[1])[0]
-            favorite_spread_abs = abs(float(fav_spread))
-
-        total_tier = "neutral"
-        if total_line is not None:
-            if total_line >= 234:
-                total_tier = "very_high"
-            elif total_line >= 227:
-                total_tier = "high"
-            elif total_line <= 218:
-                total_tier = "low"
-
-        blowout_risk = "low"
-        if favorite_spread_abs >= 10:
-            blowout_risk = "high"
-        elif favorite_spread_abs >= 7:
-            blowout_risk = "moderate"
-
-        tight_game = favorite_spread_abs <= 4 if favorite_team is not None else False
-
-        return {
-            "favorite_team": favorite_team,
-            "favorite_spread_abs": round(favorite_spread_abs, 1),
-            "total_line": total_line,
-            "total_tier": total_tier,
-            "blowout_risk": blowout_risk,
-            "tight_game": tight_game,
-            "spread_books": max(away_books, home_books),
-            "total_books": max(total_books, under_books),
-        }
-
-    def context_adjust_prop(team_name, player_name, prop_type, context):
-        score_boost = 0.0
-        price_boost = 0.0
-        tags = []
-
-        total_tier = context.get("total_tier", "neutral")
-        favorite_team = context.get("favorite_team")
-        blowout_risk = context.get("blowout_risk", "low")
-        tight_game = context.get("tight_game", False)
-
-        is_favorite = favorite_team == team_name
-        is_star = player_name in {
-            "Stephen Curry", "LeBron James", "Anthony Davis", "Jayson Tatum",
-            "Jaylen Brown", "Donovan Mitchell", "Nikola Jokic", "Kevin Durant",
-            "Devin Booker", "Victor Wembanyama", "Paolo Banchero", "Jalen Brunson",
-            "Zion Williamson", "Brandon Ingram", "LaMelo Ball", "Jimmy Butler",
-            "Tyler Herro", "Bam Adebayo"
-        }
-
-        if total_tier == "very_high":
-            if prop_type in ["points", "pra", "assists"]:
-                score_boost += 4.0
-                price_boost += 0.30
-                tags.append("very high total boost")
-            elif prop_type == "rebounds":
-                score_boost += 1.0
-                tags.append("high pace support")
-        elif total_tier == "high":
-            if prop_type in ["points", "pra"]:
-                score_boost += 2.5
-                price_boost += 0.18
-                tags.append("high total boost")
-            elif prop_type == "assists":
-                score_boost += 1.8
-                tags.append("offense environment boost")
-        elif total_tier == "low":
-            if prop_type in ["points", "pra"]:
-                score_boost -= 2.2
-                tags.append("low total drag")
-            elif prop_type == "rebounds":
-                score_boost += 0.8
-                tags.append("rebound environment")
-
-        if tight_game and prop_type in ["points", "pra", "assists"]:
-            score_boost += 1.8
-            tags.append("tight game boost")
-
-        if blowout_risk == "high":
-            if is_favorite and is_star and prop_type in ["points", "pra", "assists"]:
-                score_boost -= 2.8
-                tags.append("blowout risk")
-            elif (not is_favorite) and prop_type in ["assists", "pra"]:
-                score_boost -= 1.0
-                tags.append("game script risk")
-        elif blowout_risk == "moderate":
-            if is_favorite and is_star and prop_type in ["points", "pra"]:
-                score_boost -= 1.0
-                tags.append("moderate blowout risk")
-
-        if is_star and (tight_game or total_tier in ["high", "very_high"]) and prop_type in ["points", "pra"]:
-            score_boost += 1.5
-            tags.append("star usage boost")
-
-        return score_boost, price_boost, tags
-
-    def build_prop_rows_for_game(game, away_team, home_team, bookmakers):
-        if not ENABLE_PLAYER_PROPS:
-            return
-
-        context = game_context_from_market(away_team, home_team, bookmakers)
-
-        prop_books_seen = max(2, min(4, len(bookmakers)))
-        prop_books_seen = max(prop_books_seen, int(context.get("total_books", 2) or 2))
-        prop_consensus = "Strong" if prop_books_seen >= 4 else ("Fair" if prop_books_seen >= 2 else "Thin")
-
-        game_prop_count = 0
-        players_seen = set()
-
-        for team_name in [away_team, home_team]:
-            if game_prop_count >= MAX_PROP_PLAYS_PER_GAME:
-                break
-
-            player_pool = starter_pool_for_team(team_name)
-
-            for player_name in player_pool:
-                if game_prop_count >= MAX_PROP_PLAYS_PER_GAME:
-                    break
-
-                player_key = f"{game}::{player_name}"
-                if player_key in players_seen:
-                    continue
-
-                prop_type = random.choice(PROP_TYPES)
-                market_name = f"prop_{prop_type}"
-                selection = build_prop_selection(player_name, prop_type)
-
-                odds_val = random.choice([-135, -125, -120, -115, -110, -105, 100, 105, 110, 115, 120, 125])
-                if not in_allowed_odds_range(format_american(odds_val), PROP_ODDS_RANGE[0], PROP_ODDS_RANGE[1]):
-                    continue
-
-                base_score = random.uniform(80.0, 96.8)
-                base_price_edge = random.uniform(0.9, 2.4)
-
-                score_boost, price_boost, context_tags = context_adjust_prop(
-                    team_name, player_name, prop_type, context
-                )
-
-                score = round(clamp(base_score + score_boost, 76.0, 99.2), 1)
-                price_edge = round(clamp(base_price_edge + price_boost, 0.5, 3.0), 2)
-
-                row = {
-                    "game": game,
-                    "market": market_name,
-                    "selection": selection,
-                    "player": player_name,
-                    "team": team_name,
-                    "opponent": home_team if team_name == away_team else away_team,
-                    "odds": format_american(odds_val),
-                    "implied_prob": 0.0,
-                    "true_prob": 0.0,
-                    "edge": 0.0,
-                    "score": score,
-                    "units": 0.0,
-                    "tier": "C",
-                    "quality_label": "Watch",
-                    "status": "Watch",
-                    "watch_tier": "",
-                    "confidence": "Low",
-                    "books_seen": prop_books_seen,
-                    "best_price": format_american(odds_val),
-                    "best_book": "Simulated",
-                    "consensus": prop_consensus,
-                    "price_edge": price_edge,
-                    "ai_tags": [],
-                    "sport": selected_sport_name,
-                }
-
-                prop_tags = [
-                    "player prop",
-                    "starters only" if PROPS_ONLY_STARTERS else "player pool",
-                    prop_type,
-                    "context aware",
-                ]
-                for tag in context_tags:
-                    if tag not in prop_tags:
-                        prop_tags.append(tag)
-
-                add_scored_row(row, prop_tags[:6])
-
-                players_seen.add(player_key)
-                game_prop_count += 1
-
-    def _selection_direction_key(selection_text):
-        text = str(selection_text).strip().lower()
-
-        if text.startswith("over "):
-            return "over"
-        if text.startswith("under "):
-            return "under"
-
-        spread_match = re.search(r'([+-]?\d+(?:\.\d+)?)', text)
-        if spread_match:
-            try:
-                spread_val = float(spread_match.group(1))
-                if spread_val < 0:
-                    return "favorite_side"
-                if spread_val > 0:
-                    return "dog_side"
-            except Exception:
-                pass
-
-        return text
-
-    def _market_conflict_group(row_dict):
-        game = str(row_dict.get("game", "")).strip()
-        market = str(row_dict.get("market", "")).strip().lower()
-        selection = str(row_dict.get("selection", "")).strip()
-
-        if market == "moneyline":
-            return f"{game}||moneyline"
-
-        if market == "spread":
-            return f"{game}||spread"
-
-        if market == "total":
-            return f"{game}||total"
-
-        if market.startswith("prop_"):
-            player = str(row_dict.get("player", "")).strip().lower()
-            return f"{game}||{market}||{player}"
-
-        return f"{game}||{market}||{selection}"
-
-    def _selection_uniqueness_key(row_dict):
-        game = str(row_dict.get("game", "")).strip()
-        market = str(row_dict.get("market", "")).strip().lower()
-        selection = str(row_dict.get("selection", "")).strip().lower()
-        odds = str(row_dict.get("odds", "")).strip()
-        return f"{game}||{market}||{selection}||{odds}"
-
-    def _row_strength(row_dict):
-        return (
-            safe_float(row_dict.get("rank_score", 0.0), 0.0),
-            safe_float(row_dict.get("true_confidence", 0.0), 0.0),
-            safe_float(row_dict.get("edge", 0.0), 0.0),
-            safe_float(row_dict.get("score", 0.0), 0.0),
-            safe_int(row_dict.get("books_seen", 0), 0),
-        )
-
-    def _dedupe_exact_rows(input_df):
-        if input_df is None or input_df.empty:
-            return pd.DataFrame()
-
-        kept = {}
-        for _, row in input_df.iterrows():
-            row_dict = row.to_dict()
-            key = _selection_uniqueness_key(row_dict)
-
-            if key not in kept:
-                kept[key] = row_dict
-            else:
-                if _row_strength(row_dict) > _row_strength(kept[key]):
-                    kept[key] = row_dict
-
-        return pd.DataFrame(list(kept.values()))
-
-    def _keep_best_per_conflict_group(input_df):
-        if input_df is None or input_df.empty:
-            return pd.DataFrame()
-
-        kept = {}
-        for _, row in input_df.iterrows():
-            row_dict = row.to_dict()
-            key = _market_conflict_group(row_dict)
-
-            if key not in kept:
-                kept[key] = row_dict
-            else:
-                if _row_strength(row_dict) > _row_strength(kept[key]):
-                    kept[key] = row_dict
-
-        return pd.DataFrame(list(kept.values()))
-
-    def _limit_same_game_exposure(input_df, max_per_game=2):
-        if input_df is None or input_df.empty:
-            return pd.DataFrame()
-
-        working = input_df.copy()
-
-        sort_cols = [c for c in ["rank_score", "true_confidence", "edge"] if c in working.columns]
-        if sort_cols:
-            working = working.sort_values(
-                by=sort_cols,
-                ascending=[False] * len(sort_cols),
-            ).reset_index(drop=True)
-
-        kept_rows = []
-        game_counts = {}
-
-        for _, row in working.iterrows():
-            game = str(row.get("game", "")).strip()
-            if not game:
-                kept_rows.append(row.to_dict())
+                        selection = name
+                        team_name = name
+                        opponent = away_team if name == home_team else home_team
+                        line_value = point
+
+                    key = (market_key, selection, line_value)
+
+                    if key not in market_price_map:
+                        market_price_map[key] = {
+                            "sport": selected_sport,
+                            "game": game_label,
+                            "market": market_key,
+                            "selection": selection,
+                            "player": "",
+                            "team": team_name,
+                            "opponent": opponent,
+                            "line": line_value,
+                            "prices": [],
+                            "book_names": [],
+                        }
+
+                    market_price_map[key]["prices"].append(price)
+                    market_price_map[key]["book_names"].append(book_title)
+
+        for (_, _, _), data in market_price_map.items():
+            prices = data.get("prices", [])
+            books = len(prices)
+
+            if books == 0:
                 continue
 
-            current_count = int(game_counts.get(game, 0))
-            if current_count >= max_per_game:
-                continue
+            best_odds = max(prices)
+            implied_prob = american_to_implied_prob(best_odds)
+            consensus_pct = calculate_consensus_pct(prices)
+            true_prob = estimate_true_probability(implied_prob, books, consensus_pct, data["market"])
+            edge = round((true_prob - implied_prob) * 100.0, 2)
 
-            kept_rows.append(row.to_dict())
-            game_counts[game] = current_count + 1
-
-        return pd.DataFrame(kept_rows)
-
-    def _cleanup_play_pool(input_df):
-        if input_df is None or input_df.empty:
-            return pd.DataFrame(columns=empty_cols)
-
-        cleaned = input_df.copy()
-
-        cleaned = _dedupe_exact_rows(cleaned)
-        if cleaned.empty:
-            return pd.DataFrame(columns=empty_cols)
-
-        cleaned = _keep_best_per_conflict_group(cleaned)
-        if cleaned.empty:
-            return pd.DataFrame(columns=empty_cols)
-
-        cleaned = _limit_same_game_exposure(cleaned, max_per_game=2)
-        if cleaned.empty:
-            return pd.DataFrame(columns=empty_cols)
-
-        cleaned = cleaned.reset_index(drop=True)
-
-        if "play_id" not in cleaned.columns:
-            cleaned["play_id"] = cleaned.apply(
-                lambda r: build_play_id(
-                    {
-                        "game": r.get("game", ""),
-                        "market": r.get("market", ""),
-                        "selection": r.get("selection", ""),
-                        "odds": r.get("odds", ""),
-                    }
-                ),
-                axis=1,
+            market_signal = calculate_market_signal(books, edge)
+            matchup_score = calculate_matchup_score(data["market"])
+            historical_score = calculate_historical_score()
+            true_confidence = calculate_true_confidence(
+                true_prob,
+                edge,
+                books,
+                market_signal,
+                matchup_score,
+                historical_score,
             )
 
-        return cleaned
+            status = "Watch"
+            log_category = "Watchlist"
 
-    for event in live_games:
-        home_team = normalize_team_name(event.get("home_team", "Home"))
-        away_team = normalize_team_name(event.get("away_team", "Away"))
-        game = f"{away_team} vs {home_team}"
-
-        if allowed_games and game not in allowed_games:
-            continue
-
-        bookmakers = event.get("bookmakers", [])
-        if not bookmakers:
-            continue
-
-        for team_name in [away_team, home_team]:
-            best_price, books_found, best_book = get_best_market_outcome(bookmakers, "h2h", team_name)
-            if best_price is None or books_found == 0:
-                continue
-            if not in_allowed_odds_range(format_american(best_price), DEFAULT_ODDS_RANGE[0], DEFAULT_ODDS_RANGE[1]):
+            if books >= MIN_ACTIVE_BOOKS and edge >= MIN_ACTIVE_EDGE and true_confidence >= MIN_ACTIVE_TRUE_CONF:
+                status = "Active"
+                log_category = "Top Plays"
+            elif books >= MIN_WATCH_BOOKS and edge >= MIN_WATCH_EDGE and true_confidence >= MIN_WATCH_TRUE_CONF:
+                status = "Watch"
+                log_category = "Watchlist"
+            else:
                 continue
 
-            score = round(min(99.0, 74.0 + (books_found * 3.8) + ((abs(best_price) < 140) * 3.5)), 1)
-            price_edge = round(min(3.0, max(0.75, 0.65 + (books_found * 0.40))), 2)
-            consensus = "Strong" if books_found >= 4 else ("Fair" if books_found >= 2 else "Thin")
+            sharp_score = round(clamp((books * 10.0) + (edge * 5.0), 0.0, 100.0), 1)
+            units = calculate_units(true_confidence, status)
+            model_score = calculate_model_score(true_prob, edge, books)
+            play_id = build_play_id(selected_sport, data["game"], data["market"], data["selection"], data["line"])
 
-            row = {
-                "game": game,
-                "market": "moneyline",
-                "selection": team_name,
+            rows.append({
+                "sport": selected_sport,
+                "game": data["game"],
+                "market": data["market"],
+                "selection": data["selection"],
                 "player": "",
-                "team": team_name,
-                "opponent": home_team if team_name == away_team else away_team,
-                "odds": format_american(best_price),
-                "implied_prob": 0.0,
-                "true_prob": 0.0,
-                "edge": 0.0,
-                "score": score,
-                "units": 0.0,
-                "tier": "C",
-                "quality_label": "Watch",
-                "status": "Watch",
-                "watch_tier": "",
-                "confidence": "Low",
-                "books_seen": books_found,
-                "best_price": format_american(best_price),
-                "best_book": best_book,
-                "consensus": consensus,
-                "price_edge": price_edge,
-                "ai_tags": [],
-                "sport": selected_sport_name,
-            }
-            add_scored_row(row, ["API live odds", "moneyline", "best price"])
+                "team": data["team"],
+                "opponent": data["opponent"],
+                "line": data["line"],
+                "odds": best_odds,
+                "implied_prob": round(implied_prob, 4),
+                "true_prob": round(true_prob, 4),
+                "edge": edge,
+                "books": books,
+                "consensus_pct": consensus_pct,
+                "sharp_score": sharp_score,
+                "market_signal": round(market_signal, 1),
+                "matchup_score": round(matchup_score, 1),
+                "historical_score": round(historical_score, 1),
+                "true_confidence": true_confidence,
+                "status": status,
+                "units": units,
+                "play_id": play_id,
+                "log_category": log_category,
+                "sportsdata_note": "",
+                "injury_flag": "",
+                "lineup_flag": "",
+                "model_score": round(model_score, 1),
+            })
 
-        for team_name in [away_team, home_team]:
-            best_point, best_price, books_found, best_book = get_best_spread_outcome(bookmakers, team_name)
-            if best_point is None or best_price is None or books_found == 0:
-                continue
-            if not in_allowed_odds_range(format_american(best_price), DEFAULT_ODDS_RANGE[0], DEFAULT_ODDS_RANGE[1]):
-                continue
+    plays_df = pd.DataFrame(rows)
+    plays_df = normalize_dataframe_for_selected_sport(plays_df, selected_sport)
 
-            score = round(min(99.0, 74.0 + (books_found * 3.8) + ((abs(best_price) < 140) * 3.5)), 1)
-            price_edge = round(min(3.0, max(0.75, 0.65 + (books_found * 0.40))), 2)
-            consensus = "Strong" if books_found >= 4 else ("Fair" if books_found >= 2 else "Thin")
-
-            point_str = f"+{best_point:g}" if best_point > 0 else f"{best_point:g}"
-
-            row = {
-                "game": game,
-                "market": "spread",
-                "selection": f"{team_name} {point_str}",
-                "player": "",
-                "team": team_name,
-                "opponent": home_team if team_name == away_team else away_team,
-                "odds": format_american(best_price),
-                "implied_prob": 0.0,
-                "true_prob": 0.0,
-                "edge": 0.0,
-                "score": score,
-                "units": 0.0,
-                "tier": "C",
-                "quality_label": "Watch",
-                "status": "Watch",
-                "watch_tier": "",
-                "confidence": "Low",
-                "books_seen": books_found,
-                "best_price": format_american(best_price),
-                "best_book": best_book,
-                "consensus": consensus,
-                "price_edge": price_edge,
-                "ai_tags": [],
-                "sport": selected_sport_name,
-            }
-            add_scored_row(row, ["API live odds", "spread", "best line"])
-
-        for side in ["Over", "Under"]:
-            best_point, best_price, books_found, best_book = get_best_total_outcome(bookmakers, side)
-            if best_point is None or best_price is None or books_found == 0:
-                continue
-            if not in_allowed_odds_range(format_american(best_price), DEFAULT_ODDS_RANGE[0], DEFAULT_ODDS_RANGE[1]):
-                continue
-
-            score = round(min(99.0, 74.0 + (books_found * 3.8) + ((abs(best_price) < 140) * 3.5)), 1)
-            price_edge = round(min(3.0, max(0.75, 0.65 + (books_found * 0.40))), 2)
-            consensus = "Strong" if books_found >= 4 else ("Fair" if books_found >= 2 else "Thin")
-
-            row = {
-                "game": game,
-                "market": "total",
-                "selection": f"{side} {best_point:g}",
-                "player": "",
-                "team": "",
-                "opponent": "",
-                "odds": format_american(best_price),
-                "implied_prob": 0.0,
-                "true_prob": 0.0,
-                "edge": 0.0,
-                "score": score,
-                "units": 0.0,
-                "tier": "C",
-                "quality_label": "Watch",
-                "status": "Watch",
-                "watch_tier": "",
-                "confidence": "Low",
-                "books_seen": books_found,
-                "best_price": format_american(best_price),
-                "best_book": best_book,
-                "consensus": consensus,
-                "price_edge": price_edge,
-                "ai_tags": [],
-                "sport": selected_sport_name,
-            }
-            add_scored_row(row, ["API live odds", "total", "best line"])
-
-        build_prop_rows_for_game(game, away_team, home_team, bookmakers)
-
-    df = pd.DataFrame(rows)
-    if df.empty:
+    if plays_df.empty:
         return pd.DataFrame(columns=empty_cols)
 
-    df = normalize_dataframe_for_selected_sport(df, selected_sport_name)
-    df = _cleanup_play_pool(df)
+    plays_df = plays_df.sort_values(
+        by=["status", "true_confidence", "edge", "books"],
+        ascending=[True, False, False, False],
+    ).reset_index(drop=True)
 
-    if df.empty:
-        return pd.DataFrame(columns=empty_cols)
-
-    df["rank_score"] = (
-        df["true_confidence"] * 0.55
-        + df["edge"] * 7.0
-        + df["price_edge"] * 3.5
-        + df["books_seen"] * 2.0
-        + df["score"] * 0.08
-    )
-
-    active_edge_threshold = get_effective_min_active_edge()
-    watch_edge_threshold = get_effective_min_watch_edge()
-    active_true_conf_threshold = get_effective_min_active_true_conf()
-    watch_true_conf_threshold = get_effective_min_watch_true_conf()
-
-    def decide_status(row):
-        if (
-            float(row["edge"]) >= active_edge_threshold
-            and float(row["true_confidence"]) >= active_true_conf_threshold
-            and int(row["books_seen"]) >= MIN_ACTIVE_BOOKS
-            and str(row["consensus"]) in ["Strong", "Fair"]
-        ):
-            return "Active"
-
-        if (
-            float(row["edge"]) >= watch_edge_threshold
-            and float(row["true_confidence"]) >= watch_true_conf_threshold
-            and int(row["books_seen"]) >= MIN_WATCH_BOOKS
-        ):
-            return "Watch"
-
-        return "Discard"
-
-    df["status"] = df.apply(decide_status, axis=1)
-    df = df[df["status"] != "Discard"].copy()
-
-    if df.empty:
-        return pd.DataFrame(columns=empty_cols)
-
-    df["watch_tier"] = df.apply(
-        lambda r: classify_watch_tier(r) if str(r["status"]) == "Watch" else "",
-        axis=1,
-    )
-
-    df["tier"] = df["true_confidence"].apply(tier_from_true_conf)
-    df["quality_label"] = df["tier"].apply(quality_label_from_tier)
-
-    df["units"] = df.apply(
-        lambda r: scale_single_units(r) if str(r["status"]) == "Active" else scale_watch_units(r),
-        axis=1,
-    )
-
-    df["play_id"] = df.apply(
-        lambda r: build_play_id(
-            {
-                "game": r["game"],
-                "market": r["market"],
-                "selection": r["selection"],
-                "odds": r["odds"],
-            }
-        ),
-        axis=1,
-    )
-
-    active_local = (
-        df[df["status"] == "Active"]
-        .sort_values(["rank_score", "true_confidence"], ascending=False)
-        .head(TOP_PLAYS_LIMIT)
-        .copy()
-    )
-    active_local["category"] = "Top Plays"
-
-    watch_local = (
-        df[df["status"] == "Watch"]
-        .sort_values(["rank_score", "true_confidence"], ascending=False)
-        .head(WATCHLIST_LIMIT)
-        .copy()
-    )
-    watch_local["category"] = "Watchlist"
-
-    active_local = apply_learning_engine_to_df(active_local, "Top Plays", sport=selected_sport_name)
-    watch_local = apply_learning_engine_to_df(watch_local, "Watchlist", sport=selected_sport_name)
-
-    active_local = _cleanup_play_pool(active_local)
-    watch_local = _cleanup_play_pool(watch_local)
-
-    if active_local.empty and watch_local.empty:
-        return pd.DataFrame(columns=empty_cols)
-
-    active_rows = []
-    running_units = 0.0
-    active_games_used = set()
-
-    for _, row in active_local.iterrows():
-        proposed_units = float(row["units"])
-        row_game = str(row.get("game", "")).strip()
-
-        row_play_type = str(row.get("play_type", "")).strip().lower()
-        play_type_blocked = False
-        flag_info = bad_play_type_flags.get(row_play_type, {})
-
-        if isinstance(flag_info, dict):
-            play_type_blocked = bool(flag_info.get("is_filtered", False))
-        else:
-            play_type_blocked = bool(flag_info)
-
-        if play_type_blocked:
-            row2 = row.copy()
-            row2["status"] = "Watch"
-            row2["category"] = "Watchlist"
-            row2["watch_tier"] = classify_watch_tier(row2)
-            row2["units"] = scale_watch_units(row2)
-            row2["learning_status"] = "Filtered"
-            row2["learning_reason"] = f"Play type filtered: {row_play_type}"
-            watch_local = pd.concat([watch_local, pd.DataFrame([row2])], ignore_index=True)
-            continue
-
-        top_play_threshold = safe_float(adjusted_thresholds.get("Top Plays", 0.03), 0.03)
-        row_edge_decimal = safe_float(row.get("edge", 0.0), 0.0) / 100.0
-        if row_edge_decimal < top_play_threshold:
-            row2 = row.copy()
-            row2["status"] = "Watch"
-            row2["category"] = "Watchlist"
-            row2["watch_tier"] = classify_watch_tier(row2)
-            row2["units"] = scale_watch_units(row2)
-            row2["learning_status"] = "Filtered"
-            row2["learning_reason"] = (
-                f"Moved to Watchlist by learning threshold "
-                f"({round(row_edge_decimal, 4)} < {round(top_play_threshold, 4)})"
-            )
-            watch_local = pd.concat([watch_local, pd.DataFrame([row2])], ignore_index=True)
-            continue
-
-        if row_game and row_game in active_games_used:
-            row2 = row.copy()
-            row2["status"] = "Watch"
-            row2["category"] = "Watchlist"
-            row2["watch_tier"] = classify_watch_tier(row2)
-            row2["units"] = scale_watch_units(row2)
-            row2["learning_status"] = "Filtered"
-            row2["learning_reason"] = "Reduced duplicate same-game exposure"
-            watch_local = pd.concat([watch_local, pd.DataFrame([row2])], ignore_index=True)
-            continue
-
-        if len(active_rows) >= MAX_ACTIVE_PLAYS:
-            row2 = row.copy()
-            row2["status"] = "Watch"
-            row2["category"] = "Watchlist"
-            row2["watch_tier"] = classify_watch_tier(row2)
-            row2["units"] = scale_watch_units(row2)
-            watch_local = pd.concat([watch_local, pd.DataFrame([row2])], ignore_index=True)
-            continue
-
-        if running_units + proposed_units > MAX_TOTAL_UNITS:
-            row2 = row.copy()
-            row2["status"] = "Watch"
-            row2["category"] = "Watchlist"
-            row2["watch_tier"] = classify_watch_tier(row2)
-            row2["units"] = scale_watch_units(row2)
-            watch_local = pd.concat([watch_local, pd.DataFrame([row2])], ignore_index=True)
-            continue
-
-        active_rows.append(row)
-        running_units += proposed_units
-        if row_game:
-            active_games_used.add(row_game)
-
-    active_final = pd.DataFrame(active_rows) if active_rows else pd.DataFrame(columns=df.columns)
-
-    if not watch_local.empty:
-        watch_local = apply_learning_engine_to_df(watch_local, "Watchlist", sport=selected_sport_name)
-        watch_local = _cleanup_play_pool(watch_local)
-
-    if not watch_local.empty:
-        watch_priority = {"Near Active": 3, "Monitor": 2, "Weak Watch": 1}
-        watch_local["watch_priority"] = watch_local["watch_tier"].map(watch_priority).fillna(0)
-        watch_local = watch_local.sort_values(
-            ["watch_priority", "rank_score", "true_confidence"],
-            ascending=[False, False, False]
-        ).drop(columns=["watch_priority"], errors="ignore")
-
-    combined = pd.concat([active_final, watch_local], ignore_index=True)
-
-    if combined.empty:
-        return pd.DataFrame(columns=empty_cols)
-
-    combined = normalize_dataframe_for_selected_sport(combined, selected_sport_name)
-    combined = _cleanup_play_pool(combined)
-
-    if combined.empty:
-        return pd.DataFrame(columns=empty_cols)
-
-    status_order = {"Active": 0, "Watch": 1}
-    combined["status_sort"] = combined["status"].map(status_order).fillna(9)
-
-    return (
-        combined.sort_values(["status_sort", "rank_score"], ascending=[True, False])
-        .drop(columns=["status_sort"], errors="ignore")
-        .reset_index(drop=True)
-    )
+    return plays_df
 
 # =========================================================
 # FORCE SESSION STATE PERSISTENCE (CRITICAL FIX)

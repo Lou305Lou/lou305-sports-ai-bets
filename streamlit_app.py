@@ -6296,6 +6296,8 @@ elif nav == "AI Slip":
             "edge": 0.0,
             "units": 0.0,
             "status": "Active",
+            "best_book": "",
+            "best_price": "",
         }.items():
             if col not in top_df.columns:
                 top_df[col] = default_val
@@ -6310,7 +6312,7 @@ elif nav == "AI Slip":
                     value = row.get(col, "")
                     if pd.notna(value):
                         text = str(value).strip()
-                        if text:
+                        if text and text.lower() not in ["nan", "none", "n/a"]:
                             return text
             return ""
 
@@ -6336,15 +6338,22 @@ elif nav == "AI Slip":
             return _first_nonblank(row, ["market", "market_type", "bet_type"]) or "N/A"
 
         def _sportsbook_from_row(row):
-            return _first_nonblank(row, ["sportsbook", "book", "bookmaker", "best_book"]) or "N/A"
-
-        def _odds_from_row(row):
-            for col in ["odds", "best_price", "price", "american_odds"]:
+            for col in ["best_book", "sportsbook", "book", "bookmaker"]:
                 if col in top_df.columns:
                     value = row.get(col, "")
                     if pd.notna(value):
                         text = str(value).strip()
-                        if text:
+                        if text and text.lower() not in ["nan", "none", "n/a", "sim"]:
+                            return text
+            return "Best available"
+
+        def _odds_from_row(row):
+            for col in ["best_price", "odds", "price", "american_odds"]:
+                if col in top_df.columns:
+                    value = row.get(col, "")
+                    if pd.notna(value):
+                        text = str(value).strip()
+                        if text and text.lower() not in ["nan", "none"]:
                             return text
             return "N/A"
 
@@ -6430,26 +6439,27 @@ elif nav == "AI Slip":
             st.markdown(
                 f"""
                 <div style="
-                    border:1px solid rgba(255,255,255,0.12);
+                    border:1px solid rgba(17,24,39,0.10);
                     border-radius:12px;
                     padding:12px;
                     margin-bottom:10px;
-                    background: rgba(255,255,255,0.02);
-                    color:#f3f4f6;
+                    background:#ffffff;
+                    color:#111827;
+                    box-shadow:0 2px 8px rgba(15,23,42,0.06);
                 ">
-                    <div style="font-weight:700; margin-bottom:6px; color:#ffffff;">
+                    <div style="font-weight:800; margin-bottom:6px; color:#111827;">
                         {option_matchup}
                     </div>
-                    <div style="margin-bottom:4px;">
+                    <div style="margin-bottom:4px; color:#111827;">
                         <b>Pick:</b> {option_pick}
                     </div>
-                    <div style="margin-bottom:4px;">
+                    <div style="margin-bottom:4px; color:#111827;">
                         <b>Market:</b> {option_market}
                     </div>
-                    <div style="margin-bottom:4px;">
+                    <div style="margin-bottom:4px; color:#111827;">
                         <b>Book:</b> {option_book} &nbsp;&nbsp; <b>Odds:</b> {option_odds}
                     </div>
-                    <div>
+                    <div style="color:#111827;">
                         <b>Edge:</b> {option_edge:.2f}% &nbsp;&nbsp;
                         <b>True Confidence:</b> {option_true_conf:.1f}% &nbsp;&nbsp;
                         <b>Units:</b> {option_units:.2f}

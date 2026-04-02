@@ -4033,6 +4033,39 @@ def generate_ai_plays():
         .drop(columns=["status_sort"], errors="ignore")
         .reset_index(drop=True)
     )
+
+# =========================================================
+# FORCE SESSION STATE PERSISTENCE (CRITICAL FIX)
+# =========================================================
+
+def _safe_store_df(key, df):
+    try:
+        if isinstance(df, pd.DataFrame) and not df.empty:
+            st.session_state[key] = df.copy()
+    except:
+        pass
+
+# Store ALL core dataframes
+_safe_store_df("plays_df", locals().get("plays_df"))
+_safe_store_df("active_df", locals().get("active_df"))
+_safe_store_df("watch_df", locals().get("watch_df"))
+_safe_store_df("ai_slip_df", locals().get("ai_slip_df"))
+
+# Snapshot backups (already used by UI)
+_safe_store_df("snapshot_plays_df", locals().get("plays_df"))
+_safe_store_df("snapshot_active_df", locals().get("active_df"))
+_safe_store_df("snapshot_watch_df", locals().get("watch_df"))
+_safe_store_df("snapshot_ai_slip_df", locals().get("ai_slip_df"))
+
+# Top plays specific snapshot
+if "active_df" in locals() and isinstance(active_df, pd.DataFrame):
+    try:
+        top_df = active_df.sort_values("true_confidence", ascending=False).head(10)
+        st.session_state["snapshot_top_plays_df"] = top_df.copy()
+    except:
+        pass
+
+
 # =========================================================
 # PARLAY INTELLIGENCE
 # =========================================================

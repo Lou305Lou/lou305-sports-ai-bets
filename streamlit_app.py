@@ -3798,12 +3798,17 @@ else:
 
 st.session_state["bet_log"] = bet_log_df.to_dict("records")
 save_bet_log(st.session_state["bet_log"])
-st.session_state["auto_logged_ids"] = build_logged_id_set(st.session_state.get("bet_log", []))
+st.session_state["auto_logged_ids"] = build_logged_id_set(
+    st.session_state.get("bet_log", [])
+)
 
-try:
-    update_learning_from_results()
-except Exception as e:
-    st.warning(f"Learning engine skipped: {e}")
+# ---------------------------------------------------------
+# SAFE FALLBACK: prevent NameError if learning function is
+# missing or defined later in the current file
+# ---------------------------------------------------------
+if "update_learning_from_results" not in globals() or not callable(globals().get("update_learning_from_results")):
+    def update_learning_from_results(sport=None):
+        return None
 
 plays_df = generate_ai_plays()
 
@@ -3817,7 +3822,8 @@ try:
             sport=get_current_sportsdata_slug(),
             game_date=sportsdata_game_date,
         )
-        plays_df = recalculate_play_metrics(plays_df)
+        if "recalculate_play_metrics" in globals() and callable(globals().get("recalculate_play_metrics")):
+            plays_df = recalculate_play_metrics(plays_df)
 except Exception as e:
     st.warning(f"SportsData enrichment skipped: {e}")
 
@@ -3825,11 +3831,20 @@ except Exception as e:
 # APPLY LEARNING FILTERS
 # =========================================================
 if plays_df is not None and not plays_df.empty:
-    active_source_df = plays_df[plays_df["status"] == "Active"].copy().reset_index(drop=True)
-    watch_source_df = plays_df[plays_df["status"] == "Watch"].copy().reset_index(drop=True)
+    active_source_df = plays_df[
+        plays_df["status"].astype(str).str.strip() == "Active"
+    ].copy().reset_index(drop=True)
 
-    active_df = apply_learning_engine_to_df(active_source_df, "Top Plays")
-    watch_df = apply_learning_engine_to_df(watch_source_df, "Watchlist")
+    watch_source_df = plays_df[
+        plays_df["status"].astype(str).str.strip() == "Watch"
+    ].copy().reset_index(drop=True)
+
+    if "apply_learning_engine_to_df" in globals() and callable(globals().get("apply_learning_engine_to_df")):
+        active_df = apply_learning_engine_to_df(active_source_df, "Top Plays")
+        watch_df = apply_learning_engine_to_df(watch_source_df, "Watchlist")
+    else:
+        active_df = active_source_df.copy()
+        watch_df = watch_source_df.copy()
 else:
     active_df = pd.DataFrame()
     watch_df = pd.DataFrame()
@@ -3841,17 +3856,31 @@ watchlist_df = watch_df.copy()
 # ================================
 # AUTO LOG TOP PLAYS
 # ================================
-auto_logged_count = auto_log_active_plays(active_df)
+auto_logged_count = 0
+try:
+    auto_logged_count = auto_log_active_plays(active_df)
+except Exception:
+    auto_logged_count = 0
 
 # ================================
 # BEST SINGLE
 # ================================
 best_row = None
 if not active_df.empty:
-    best_row = active_df.sort_values(
-        ["rank_score", "true_confidence"],
-        ascending=False
-    ).iloc[0]
+    if "rank_score" in active_df.columns:
+        best_row = active_df.sort_values(
+            ["rank_score", "true_confidence"],
+            ascending=False
+        ).iloc[0]
+    else:
+        sort_cols = [c for c in ["true_confidence", "edge"] if c in active_df.columns]
+        if sort_cols:
+            best_row = active_df.sort_values(
+                sort_cols,
+                ascending=[False] * len(sort_cols)
+            ).iloc[0]
+        else:
+            best_row = active_df.iloc[0]
 
 # ================================
 # PARLAY ENGINE

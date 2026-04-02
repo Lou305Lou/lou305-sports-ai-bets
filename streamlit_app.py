@@ -6090,80 +6090,74 @@ elif nav == "AI Slip":
     else:
         top_df = snapshot_top_df.copy().reset_index(drop=True)
 
-        if "true_confidence" not in top_df.columns:
-            top_df["true_confidence"] = 0.0
-        if "edge" not in top_df.columns:
-            top_df["edge"] = 0.0
-        if "units" not in top_df.columns:
-            top_df["units"] = 0.0
-        if "status" not in top_df.columns:
-            top_df["status"] = "Active"
+        for col, default_val in {
+            "true_confidence": 0.0,
+            "edge": 0.0,
+            "units": 0.0,
+            "status": "Active",
+        }.items():
+            if col not in top_df.columns:
+                top_df[col] = default_val
 
-        top_df["true_confidence"] = pd.to_numeric(
-            top_df["true_confidence"], errors="coerce"
-        ).fillna(0.0)
-        top_df["edge"] = pd.to_numeric(
-            top_df["edge"], errors="coerce"
-        ).fillna(0.0)
-        top_df["units"] = pd.to_numeric(
-            top_df["units"], errors="coerce"
-        ).fillna(0.0)
+        top_df["true_confidence"] = pd.to_numeric(top_df["true_confidence"], errors="coerce").fillna(0.0)
+        top_df["edge"] = pd.to_numeric(top_df["edge"], errors="coerce").fillna(0.0)
+        top_df["units"] = pd.to_numeric(top_df["units"], errors="coerce").fillna(0.0)
+
+        def _first_nonblank(row, cols):
+            for col in cols:
+                if col in top_df.columns:
+                    value = row.get(col, "")
+                    if pd.notna(value):
+                        text = str(value).strip()
+                        if text:
+                            return text
+            return ""
+
+        def _matchup_from_row(row):
+            matchup_val = _first_nonblank(
+                row,
+                ["matchup", "game", "event_name", "display_name", "teams"],
+            )
+            if matchup_val:
+                return matchup_val
+
+            home_team = str(row.get("home_team", "")).strip() if "home_team" in top_df.columns else ""
+            away_team = str(row.get("away_team", "")).strip() if "away_team" in top_df.columns else ""
+            if away_team and home_team:
+                return f"{away_team} @ {home_team}"
+
+            return "Matchup not available"
+
+        def _pick_from_row(row):
+            return _first_nonblank(row, ["selection", "pick", "bet_name", "play_name", "side"]) or "N/A"
+
+        def _market_from_row(row):
+            return _first_nonblank(row, ["market", "market_type", "bet_type"]) or "N/A"
+
+        def _sportsbook_from_row(row):
+            return _first_nonblank(row, ["sportsbook", "book", "bookmaker", "best_book"]) or "N/A"
+
+        def _odds_from_row(row):
+            for col in ["odds", "best_price", "price", "american_odds"]:
+                if col in top_df.columns:
+                    value = row.get(col, "")
+                    if pd.notna(value):
+                        text = str(value).strip()
+                        if text:
+                            return text
+            return "N/A"
+
+        def _note_from_row(row):
+            return _first_nonblank(row, ["reason", "sportsdata_note", "context_note", "ai_note", "note"]) or "No additional note available."
 
         best_row = top_df.iloc[0].copy()
 
-        matchup = ""
-        for col in ["matchup", "game", "event_name", "display_name", "teams"]:
-            if col in top_df.columns:
-                value = str(best_row.get(col, "")).strip()
-                if value:
-                    matchup = value
-                    break
-
-        if not matchup:
-            home_team = str(best_row.get("home_team", "")).strip() if "home_team" in top_df.columns else ""
-            away_team = str(best_row.get("away_team", "")).strip() if "away_team" in top_df.columns else ""
-            if away_team and home_team:
-                matchup = f"{away_team} @ {home_team}"
-
-        pick_text = ""
-        for col in ["selection", "pick", "bet_name", "play_name", "side"]:
-            if col in top_df.columns:
-                value = str(best_row.get(col, "")).strip()
-                if value:
-                    pick_text = value
-                    break
-
-        market_text = ""
-        for col in ["market", "market_type", "bet_type"]:
-            if col in top_df.columns:
-                value = str(best_row.get(col, "")).strip()
-                if value:
-                    market_text = value
-                    break
-
-        sportsbook_text = ""
-        for col in ["sportsbook", "book", "bookmaker", "best_book"]:
-            if col in top_df.columns:
-                value = str(best_row.get(col, "")).strip()
-                if value:
-                    sportsbook_text = value
-                    break
-
-        odds_text = ""
-        for col in ["odds", "best_price", "price", "american_odds"]:
-            if col in top_df.columns:
-                value = best_row.get(col, "")
-                if pd.notna(value) and str(value).strip() != "":
-                    odds_text = str(value).strip()
-                    break
-
-        note_text = ""
-        for col in ["reason", "sportsdata_note", "context_note", "ai_note", "note"]:
-            if col in top_df.columns:
-                value = str(best_row.get(col, "")).strip()
-                if value:
-                    note_text = value
-                    break
+        matchup = _matchup_from_row(best_row)
+        pick_text = _pick_from_row(best_row)
+        market_text = _market_from_row(best_row)
+        sportsbook_text = _sportsbook_from_row(best_row)
+        odds_text = _odds_from_row(best_row)
+        note_text = _note_from_row(best_row)
 
         true_conf = float(best_row.get("true_confidence", 0.0))
         edge_val = float(best_row.get("edge", 0.0))
@@ -6175,30 +6169,44 @@ elif nav == "AI Slip":
 
         st.markdown(
             f"""
-            <div class="slip-card">
-                <div style="font-size:1.10rem; font-weight:700; margin-bottom:8px;">
+            <div style="
+                background: linear-gradient(135deg, #111827 0%, #0f172a 100%);
+                border: 1px solid rgba(255,255,255,0.16);
+                border-radius: 16px;
+                padding: 16px;
+                margin-bottom: 14px;
+                box-shadow: 0 6px 18px rgba(0,0,0,0.22);
+                color: #f9fafb;
+            ">
+                <div style="font-size:1.10rem; font-weight:800; margin-bottom:10px; color:#ffffff;">
                     Best Current AI Play
                 </div>
-                <div style="font-size:1rem; margin-bottom:6px;">
-                    <b>Matchup:</b> {matchup if matchup else "Matchup not available"}
+                <div style="font-size:1rem; margin-bottom:7px; color:#f3f4f6;">
+                    <span style="color:#93c5fd; font-weight:700;">Matchup:</span> {matchup}
                 </div>
-                <div style="font-size:1rem; margin-bottom:6px;">
-                    <b>Pick:</b> {pick_text if pick_text else "N/A"}
+                <div style="font-size:1rem; margin-bottom:7px; color:#f3f4f6;">
+                    <span style="color:#93c5fd; font-weight:700;">Pick:</span> {pick_text}
                 </div>
-                <div style="font-size:0.95rem; margin-bottom:6px;">
-                    <b>Market:</b> {market_text if market_text else "N/A"}
+                <div style="font-size:0.96rem; margin-bottom:7px; color:#e5e7eb;">
+                    <span style="color:#93c5fd; font-weight:700;">Market:</span> {market_text}
                 </div>
-                <div style="font-size:0.95rem; margin-bottom:6px;">
-                    <b>Book:</b> {sportsbook_text if sportsbook_text else "N/A"} &nbsp;&nbsp; <b>Odds:</b> {odds_text if odds_text else "N/A"}
+                <div style="font-size:0.96rem; margin-bottom:7px; color:#e5e7eb;">
+                    <span style="color:#93c5fd; font-weight:700;">Book:</span> {sportsbook_text}
+                    &nbsp;&nbsp;
+                    <span style="color:#93c5fd; font-weight:700;">Odds:</span> {odds_text}
                 </div>
-                <div style="font-size:0.95rem; margin-bottom:6px;">
-                    <b>Edge:</b> {edge_val:.2f}% &nbsp;&nbsp; <b>True Confidence:</b> {true_conf:.1f}% &nbsp;&nbsp; <b>Units:</b> {units_val:.2f}
+                <div style="font-size:0.96rem; margin-bottom:7px; color:#e5e7eb;">
+                    <span style="color:#93c5fd; font-weight:700;">Edge:</span> {edge_val:.2f}%
+                    &nbsp;&nbsp;
+                    <span style="color:#93c5fd; font-weight:700;">True Confidence:</span> {true_conf:.1f}%
+                    &nbsp;&nbsp;
+                    <span style="color:#93c5fd; font-weight:700;">Units:</span> {units_val:.2f}
                 </div>
-                <div style="font-size:0.95rem; margin-bottom:6px;">
-                    <b>Risk Level:</b> {risk_level}
+                <div style="font-size:0.96rem; margin-bottom:7px; color:#e5e7eb;">
+                    <span style="color:#93c5fd; font-weight:700;">Risk Level:</span> {risk_level}
                 </div>
-                <div style="font-size:0.90rem; opacity:0.9;">
-                    <b>Note:</b> {note_text if note_text else "No additional note available."}
+                <div style="font-size:0.93rem; line-height:1.5; color:#f3f4f6;">
+                    <span style="color:#93c5fd; font-weight:700;">Note:</span> {note_text}
                 </div>
             </div>
             """,
@@ -6209,36 +6217,11 @@ elif nav == "AI Slip":
         st.subheader("Top AI Options")
 
         for _, row in top_df.head(5).iterrows():
-            option_matchup = ""
-            for col in ["matchup", "game", "event_name", "display_name", "teams"]:
-                if col in top_df.columns:
-                    value = str(row.get(col, "")).strip()
-                    if value:
-                        option_matchup = value
-                        break
-
-            if not option_matchup:
-                home_team = str(row.get("home_team", "")).strip() if "home_team" in top_df.columns else ""
-                away_team = str(row.get("away_team", "")).strip() if "away_team" in top_df.columns else ""
-                if away_team and home_team:
-                    option_matchup = f"{away_team} @ {home_team}"
-
-            option_pick = ""
-            for col in ["selection", "pick", "bet_name", "play_name", "side"]:
-                if col in top_df.columns:
-                    value = str(row.get(col, "")).strip()
-                    if value:
-                        option_pick = value
-                        break
-
-            option_market = ""
-            for col in ["market", "market_type", "bet_type"]:
-                if col in top_df.columns:
-                    value = str(row.get(col, "")).strip()
-                    if value:
-                        option_market = value
-                        break
-
+            option_matchup = _matchup_from_row(row)
+            option_pick = _pick_from_row(row)
+            option_market = _market_from_row(row)
+            option_book = _sportsbook_from_row(row)
+            option_odds = _odds_from_row(row)
             option_true_conf = float(row.get("true_confidence", 0.0))
             option_edge = float(row.get("edge", 0.0))
             option_units = float(row.get("units", 0.0))
@@ -6250,15 +6233,20 @@ elif nav == "AI Slip":
                     border-radius:12px;
                     padding:12px;
                     margin-bottom:10px;
+                    background: rgba(255,255,255,0.02);
+                    color:#f3f4f6;
                 ">
-                    <div style="font-weight:700; margin-bottom:5px;">
-                        {option_matchup if option_matchup else "Matchup not available"}
+                    <div style="font-weight:700; margin-bottom:6px; color:#ffffff;">
+                        {option_matchup}
                     </div>
                     <div style="margin-bottom:4px;">
-                        <b>Pick:</b> {option_pick if option_pick else "N/A"}
+                        <b>Pick:</b> {option_pick}
                     </div>
                     <div style="margin-bottom:4px;">
-                        <b>Market:</b> {option_market if option_market else "N/A"}
+                        <b>Market:</b> {option_market}
+                    </div>
+                    <div style="margin-bottom:4px;">
+                        <b>Book:</b> {option_book} &nbsp;&nbsp; <b>Odds:</b> {option_odds}
                     </div>
                     <div>
                         <b>Edge:</b> {option_edge:.2f}% &nbsp;&nbsp;
@@ -6293,6 +6281,10 @@ if nav == "Bet Log":
         raw = str(value).strip().title()
         if raw in ["Win", "Loss", "Push", "Pending"]:
             return raw
+        if raw in ["Won"]:
+            return "Win"
+        if raw in ["Lost"]:
+            return "Loss"
         return "Pending"
 
     def _normalize_bet_type(value):
@@ -6396,7 +6388,8 @@ if nav == "Bet Log":
             total_sim_profit = round(_safe_num(grp["sim_profit"], 0.0).sum(), 2)
             total_sim_staked = round(_safe_num(grp["sim_stake"], 0.0).sum(), 2)
 
-            win_rate = round((wins / (wins + losses) * 100.0), 1) if (wins + losses) > 0 else 0.0
+            decision_count = wins + losses
+            win_rate = round((wins / decision_count * 100.0), 1) if decision_count > 0 else 0.0
             roi = round((total_sim_profit / total_sim_staked * 100.0), 2) if total_sim_staked > 0 else 0.0
 
             grouped_rows.append(
@@ -6423,7 +6416,12 @@ if nav == "Bet Log":
     # LOAD + CLEAN LOG DATA
     # =========================================================
     selected_sport = get_selected_sport()
-    full_log_df = pd.DataFrame(st.session_state.get("bet_log", []))
+
+    latest_bet_log = st.session_state.get("bet_log", [])
+    if not isinstance(latest_bet_log, list):
+        latest_bet_log = []
+
+    full_log_df = pd.DataFrame(latest_bet_log)
 
     if full_log_df.empty:
         st.info("No bets logged yet.")
@@ -6440,22 +6438,55 @@ if nav == "Bet Log":
         log_df["sport"] = log_df["sport"].fillna("").astype(str).str.strip().str.upper()
         log_df["sport"] = log_df["sport"].replace("", selected_sport)
 
-        # Default page view = selected sport only
         log_df = log_df[log_df["sport"] == selected_sport].copy()
 
         if log_df.empty:
             st.info(f"No bets logged yet for {selected_sport}.")
         else:
-            for col in ["units", "profit", "implied_prob", "true_prob", "true_confidence", "edge", "clv_diff", "stake"]:
+            numeric_cols = [
+                "units",
+                "profit",
+                "implied_prob",
+                "true_prob",
+                "implied_probability",
+                "true_probability",
+                "true_confidence",
+                "edge",
+                "clv_diff",
+                "stake",
+                "sim_stake",
+                "sim_profit",
+            ]
+            for col in numeric_cols:
                 if col in log_df.columns:
                     log_df[col] = pd.to_numeric(log_df[col], errors="coerce")
 
-            for col in ["market", "log_category", "timestamp", "result", "odds", "selection", "game", "play_id", "consensus"]:
+            text_cols = [
+                "market",
+                "log_category",
+                "timestamp",
+                "result",
+                "odds",
+                "selection",
+                "game",
+                "play_id",
+                "consensus",
+                "clv_result",
+            ]
+            for col in text_cols:
                 if col in log_df.columns:
-                    log_df[col] = log_df[col].fillna("").astype(str).replace({"nan": "", "None": "", "none": ""}).str.strip()
+                    log_df[col] = (
+                        log_df[col]
+                        .fillna("")
+                        .astype(str)
+                        .replace({"nan": "", "None": "", "none": ""})
+                        .str.strip()
+                    )
 
             if "units" not in log_df.columns:
                 log_df["units"] = 1.0
+            if "stake" not in log_df.columns:
+                log_df["stake"] = log_df["units"] if "units" in log_df.columns else 1.0
             if "profit" not in log_df.columns:
                 log_df["profit"] = 0.0
             if "market" not in log_df.columns:
@@ -6466,18 +6497,20 @@ if nav == "Bet Log":
                 log_df["timestamp"] = ""
 
             log_df["units"] = pd.to_numeric(log_df["units"], errors="coerce").fillna(0.0).round(2)
+            log_df["stake"] = pd.to_numeric(log_df["stake"], errors="coerce").fillna(log_df["units"]).round(2)
             log_df["profit"] = pd.to_numeric(log_df["profit"], errors="coerce").fillna(0.0).round(2)
 
-            if "implied_prob" in log_df.columns:
-                log_df["implied_prob"] = pd.to_numeric(log_df["implied_prob"], errors="coerce").round(2)
-            if "true_prob" in log_df.columns:
-                log_df["true_prob"] = pd.to_numeric(log_df["true_prob"], errors="coerce").round(2)
-            if "true_confidence" in log_df.columns:
-                log_df["true_confidence"] = pd.to_numeric(log_df["true_confidence"], errors="coerce").round(1)
-            if "edge" in log_df.columns:
-                log_df["edge"] = pd.to_numeric(log_df["edge"], errors="coerce").round(2)
-            if "clv_diff" in log_df.columns:
-                log_df["clv_diff"] = pd.to_numeric(log_df["clv_diff"], errors="coerce").round(2)
+            for pct_col, rounding in [
+                ("implied_prob", 2),
+                ("true_prob", 2),
+                ("implied_probability", 2),
+                ("true_probability", 2),
+                ("true_confidence", 1),
+                ("edge", 2),
+                ("clv_diff", 2),
+            ]:
+                if pct_col in log_df.columns:
+                    log_df[pct_col] = pd.to_numeric(log_df[pct_col], errors="coerce").round(rounding)
 
             log_df["result_clean"] = log_df["result"].apply(_normalize_result_text)
             log_df["bet_type"] = log_df["market"].apply(_normalize_bet_type)
@@ -6507,7 +6540,7 @@ if nav == "Bet Log":
                     "Simulation Mode",
                     ["Flat Bet", "Per Unit"],
                     horizontal=True,
-                    key="stake_mode_toggle",
+                    key=f"stake_mode_toggle_{selected_sport}",
                 )
 
             with sim_col2:
@@ -6515,7 +6548,7 @@ if nav == "Bet Log":
                     "Stake Size",
                     ["$5", "$10", "$25", "$50", "Custom"],
                     horizontal=True,
-                    key="stake_size_toggle",
+                    key=f"stake_size_toggle_{selected_sport}",
                 )
 
             if preset_choice == "Custom":
@@ -6525,7 +6558,7 @@ if nav == "Bet Log":
                     max_value=10000.0,
                     value=10.0,
                     step=1.0,
-                    key="custom_stake_amount",
+                    key=f"custom_stake_amount_{selected_sport}",
                 )
                 selected_stake_amount = float(custom_stake)
             else:
@@ -6555,7 +6588,8 @@ if nav == "Bet Log":
             total_sim_profit = round(_safe_num(settled_df["sim_profit"], 0.0).sum(), 2)
             total_sim_staked = round(_safe_num(settled_df["sim_stake"], 0.0).sum(), 2)
 
-            overall_win_rate = round((wins / (wins + losses) * 100.0), 1) if (wins + losses) > 0 else 0.0
+            decision_count = wins + losses
+            overall_win_rate = round((wins / decision_count * 100.0), 1) if decision_count > 0 else 0.0
             overall_roi = round((total_sim_profit / total_sim_staked * 100.0), 2) if total_sim_staked > 0 else 0.0
 
             sum_col1, sum_col2, sum_col3, sum_col4 = st.columns(4)
@@ -6578,16 +6612,23 @@ if nav == "Bet Log":
             # =========================================================
             filter_col1, filter_col2, filter_col3 = st.columns(3)
 
-            all_bet_types = ["All"] + sorted([str(x).strip() for x in log_df["bet_type"].dropna().unique() if str(x).strip()])
-            all_categories = ["All"] + sorted([str(x).strip() for x in log_df["category_clean"].dropna().unique() if str(x).strip()])
-            all_dates = sorted([str(x).strip() for x in log_df["date_only"].dropna().unique() if str(x).strip()], reverse=True)
+            all_bet_types = ["All"] + sorted(
+                [str(x).strip() for x in log_df["bet_type"].dropna().unique() if str(x).strip()]
+            )
+            all_categories = ["All"] + sorted(
+                [str(x).strip() for x in log_df["category_clean"].dropna().unique() if str(x).strip()]
+            )
+            all_dates = sorted(
+                [str(x).strip() for x in log_df["date_only"].dropna().unique() if str(x).strip()],
+                reverse=True,
+            )
 
             with filter_col1:
                 dashboard_type_filter = st.selectbox(
                     "Bet Type Filter",
                     all_bet_types,
                     index=0,
-                    key="dashboard_type_filter",
+                    key=f"dashboard_type_filter_{selected_sport}",
                 )
 
             with filter_col2:
@@ -6595,7 +6636,7 @@ if nav == "Bet Log":
                     "Category Filter",
                     all_categories,
                     index=0,
-                    key="dashboard_category_filter",
+                    key=f"dashboard_category_filter_{selected_sport}",
                 )
 
             with filter_col3:
@@ -6603,7 +6644,7 @@ if nav == "Bet Log":
                     "Date Range",
                     ["All", "Last 7", "Last 14", "Last 30", "Single Date"],
                     index=0,
-                    key="dashboard_date_mode",
+                    key=f"dashboard_date_mode_{selected_sport}",
                 )
 
             filtered_dashboard_df = settled_df.copy()
@@ -6623,7 +6664,7 @@ if nav == "Bet Log":
                     "Choose Date",
                     ["All"] + all_dates,
                     index=0,
-                    key="dashboard_single_date_choice",
+                    key=f"dashboard_single_date_choice_{selected_sport}",
                 )
                 if single_date_choice != "All":
                     filtered_dashboard_df = filtered_dashboard_df[
@@ -6652,7 +6693,9 @@ if nav == "Bet Log":
             f_units_profit = round(_safe_num(filtered_dashboard_df["profit"], 0.0).sum(), 2) if not filtered_dashboard_df.empty else 0.0
             f_sim_profit = round(_safe_num(filtered_dashboard_df["sim_profit"], 0.0).sum(), 2) if not filtered_dashboard_df.empty else 0.0
             f_sim_staked = round(_safe_num(filtered_dashboard_df["sim_stake"], 0.0).sum(), 2) if not filtered_dashboard_df.empty else 0.0
-            f_win_rate = round((f_wins / (f_wins + f_losses) * 100.0), 1) if (f_wins + f_losses) > 0 else 0.0
+
+            f_decision_count = f_wins + f_losses
+            f_win_rate = round((f_wins / f_decision_count * 100.0), 1) if f_decision_count > 0 else 0.0
             f_roi = round((f_sim_profit / f_sim_staked * 100.0), 2) if f_sim_staked > 0 else 0.0
 
             card_col1, card_col2, card_col3, card_col4 = st.columns(4)
@@ -6692,9 +6735,7 @@ if nav == "Bet Log":
                         """
                     )
 
-            visual_tab1, visual_tab2 = st.tabs(
-                ["By Bet Type Cards", "Filtered Tables"]
-            )
+            visual_tab1, visual_tab2 = st.tabs(["By Bet Type Cards", "Filtered Tables"])
 
             with visual_tab1:
                 if type_card_rows:
@@ -6738,36 +6779,36 @@ if nav == "Bet Log":
                 sim_col1, sim_col2 = st.columns([2, 1])
 
                 with sim_col1:
-                    stake_mode = st.selectbox(
+                    bankroll_stake_mode = st.selectbox(
                         "Stake Mode",
                         ["Flat Bet ($5)", "Flat Bet ($10)", "Flat Bet ($25)", "Flat Bet ($50)", "Custom"],
                         index=1,
-                        key="bankroll_stake_mode",
+                        key=f"bankroll_stake_mode_{selected_sport}",
                     )
 
                 with sim_col2:
-                    if stake_mode == "Custom":
-                        custom_stake = st.number_input(
+                    if bankroll_stake_mode == "Custom":
+                        custom_bankroll_stake = st.number_input(
                             "Custom Stake ($)",
                             min_value=1.0,
                             max_value=1000.0,
                             value=10.0,
                             step=1.0,
-                            key="bankroll_custom_stake",
+                            key=f"bankroll_custom_stake_{selected_sport}",
                         )
                     else:
-                        custom_stake = None
+                        custom_bankroll_stake = None
 
-                if stake_mode == "Flat Bet ($5)":
+                if bankroll_stake_mode == "Flat Bet ($5)":
                     stake_size = 5.0
-                elif stake_mode == "Flat Bet ($10)":
+                elif bankroll_stake_mode == "Flat Bet ($10)":
                     stake_size = 10.0
-                elif stake_mode == "Flat Bet ($25)":
+                elif bankroll_stake_mode == "Flat Bet ($25)":
                     stake_size = 25.0
-                elif stake_mode == "Flat Bet ($50)":
+                elif bankroll_stake_mode == "Flat Bet ($50)":
                     stake_size = 50.0
                 else:
-                    stake_size = float(custom_stake or 10.0)
+                    stake_size = float(custom_bankroll_stake or 10.0)
 
                 sim_df = filtered_dashboard_df.copy()
                 sim_df["odds_num"] = sim_df["odds"].apply(american_to_int)
@@ -6779,7 +6820,6 @@ if nav == "Bet Log":
                 for _, row in sim_df.iterrows():
                     odds = row.get("odds_num")
                     result = str(row.get("result_clean", "")).lower()
-
                     profit = 0.0
 
                     if odds is not None:
@@ -6802,7 +6842,8 @@ if nav == "Bet Log":
 
                 total_profit_sim = round(sum(sim_profit_list), 2)
                 total_bets_sim = len(sim_profit_list)
-                roi_sim = round((total_profit_sim / (stake_size * total_bets_sim) * 100.0), 2) if total_bets_sim > 0 else 0.0
+                total_staked_sim = round(stake_size * total_bets_sim, 2)
+                roi_sim = round((total_profit_sim / total_staked_sim * 100.0), 2) if total_staked_sim > 0 else 0.0
 
                 sim_stat1, sim_stat2, sim_stat3 = st.columns(3)
                 sim_stat1.metric("Stake Size", f"${stake_size:.2f}")
@@ -6826,14 +6867,16 @@ if nav == "Bet Log":
 
                 with st.expander("View Simulation Data"):
                     st.dataframe(
-                        sim_df[[
-                            "selection",
-                            "game",
-                            "odds",
-                            "result_clean",
-                            "sim_profit_recalc",
-                            "bankroll_curve",
-                        ]],
+                        sim_df[
+                            [
+                                "selection",
+                                "game",
+                                "odds",
+                                "result_clean",
+                                "sim_profit_recalc",
+                                "bankroll_curve",
+                            ]
+                        ],
                         use_container_width=True,
                         hide_index=True,
                     )
@@ -6843,34 +6886,37 @@ if nav == "Bet Log":
             # =========================================================
             st.subheader(f"📋 Full Bet Log ({selected_sport})")
 
-            display_cols = [c for c in [
-                "sport",
-                "timestamp",
-                "game",
-                "market",
-                "selection",
-                "odds",
-                "units",
-                "profit",
-                "sim_stake",
-                "sim_profit",
-                "implied_prob",
-                "true_prob",
-                "true_confidence",
-                "edge",
-                "books_seen",
-                "consensus",
-                "result",
-                "category_clean",
-                "clv_diff",
-                "clv_result",
-                "play_id",
-            ] if c in log_df.columns]
+            display_cols = [
+                c for c in [
+                    "sport",
+                    "timestamp",
+                    "game",
+                    "market",
+                    "selection",
+                    "odds",
+                    "units",
+                    "stake",
+                    "profit",
+                    "sim_stake",
+                    "sim_profit",
+                    "implied_prob",
+                    "true_prob",
+                    "true_confidence",
+                    "edge",
+                    "books_seen",
+                    "consensus",
+                    "result",
+                    "category_clean",
+                    "clv_diff",
+                    "clv_result",
+                    "play_id",
+                ] if c in log_df.columns
+            ]
 
             display_df = log_df[display_cols].copy()
             st.dataframe(display_df, use_container_width=True, hide_index=True)
-
-                        # =========================================================
+            
+            # =========================================================
             # UPDATE RESULTS
             # =========================================================
             st.subheader("✍️ Update Results")

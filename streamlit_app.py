@@ -3320,6 +3320,7 @@ def generate_ai_plays():
         "confidence",
         "books_seen",
         "best_price",
+        "best_book",
         "consensus",
         "price_edge",
         "ai_tags",
@@ -3351,6 +3352,9 @@ def generate_ai_plays():
     def normalize_outcome_name(name):
         return normalize_team_name(str(name).strip())
 
+    def _book_name(book_obj):
+        return str(book_obj.get("title") or book_obj.get("key") or "").strip()
+
     def add_scored_row(row, base_tags):
         row["sport"] = selected_sport_name
 
@@ -3375,6 +3379,7 @@ def generate_ai_plays():
 
     def get_best_market_outcome(bookmakers, market_key, target_name=None):
         best_price = None
+        best_book = ""
         books_found = 0
 
         for book in bookmakers:
@@ -3407,12 +3412,14 @@ def generate_ai_plays():
 
                     if best_price is None or price > best_price:
                         best_price = price
+                        best_book = _book_name(book)
 
-        return best_price, books_found
+        return best_price, books_found, best_book
 
     def get_best_spread_outcome(bookmakers, target_name):
         best_price = None
         best_point = None
+        best_book = ""
         books_found = 0
 
         for book in bookmakers:
@@ -3449,18 +3456,22 @@ def generate_ai_plays():
                     if best_point is None:
                         best_point = point
                         best_price = price
+                        best_book = _book_name(book)
                     else:
                         if point > best_point:
                             best_point = point
                             best_price = price
+                            best_book = _book_name(book)
                         elif point == best_point and price > best_price:
                             best_price = price
+                            best_book = _book_name(book)
 
-        return best_point, best_price, books_found
+        return best_point, best_price, books_found, best_book
 
     def get_best_total_outcome(bookmakers, over_under_name):
         best_price = None
         best_point = None
+        best_book = ""
         books_found = 0
 
         for book in bookmakers:
@@ -3495,28 +3506,33 @@ def generate_ai_plays():
                     if best_point is None:
                         best_point = point
                         best_price = price
+                        best_book = _book_name(book)
                     else:
                         if over_under_name == "Over":
                             if point < best_point:
                                 best_point = point
                                 best_price = price
+                                best_book = _book_name(book)
                             elif point == best_point and price > best_price:
                                 best_price = price
+                                best_book = _book_name(book)
                         else:
                             if point > best_point:
                                 best_point = point
                                 best_price = price
+                                best_book = _book_name(book)
                             elif point == best_point and price > best_price:
                                 best_price = price
+                                best_book = _book_name(book)
 
-        return best_point, best_price, books_found
+        return best_point, best_price, books_found, best_book
 
     def game_context_from_market(away_team, home_team, bookmakers):
-        away_spread, away_spread_price, away_books = get_best_spread_outcome(bookmakers, away_team)
-        home_spread, home_spread_price, home_books = get_best_spread_outcome(bookmakers, home_team)
+        away_spread, away_spread_price, away_books, away_spread_book = get_best_spread_outcome(bookmakers, away_team)
+        home_spread, home_spread_price, home_books, home_spread_book = get_best_spread_outcome(bookmakers, home_team)
 
-        over_total, over_price, total_books = get_best_total_outcome(bookmakers, "Over")
-        under_total, under_price, under_books = get_best_total_outcome(bookmakers, "Under")
+        over_total, over_price, total_books, over_book = get_best_total_outcome(bookmakers, "Over")
+        under_total, under_price, under_books, under_book = get_best_total_outcome(bookmakers, "Under")
 
         total_line = None
         if over_total is not None and under_total is not None:
@@ -3697,7 +3713,8 @@ def generate_ai_plays():
                     "watch_tier": "",
                     "confidence": "Low",
                     "books_seen": prop_books_seen,
-                    "best_price": "Sim",
+                    "best_price": format_american(odds_val),
+                    "best_book": "Simulated",
                     "consensus": prop_consensus,
                     "price_edge": price_edge,
                     "ai_tags": [],
@@ -3719,6 +3736,163 @@ def generate_ai_plays():
                 players_seen.add(player_key)
                 game_prop_count += 1
 
+    def _selection_direction_key(selection_text):
+        text = str(selection_text).strip().lower()
+
+        if text.startswith("over "):
+            return "over"
+        if text.startswith("under "):
+            return "under"
+
+        spread_match = re.search(r'([+-]?\d+(?:\.\d+)?)', text)
+        if spread_match:
+            try:
+                spread_val = float(spread_match.group(1))
+                if spread_val < 0:
+                    return "favorite_side"
+                if spread_val > 0:
+                    return "dog_side"
+            except Exception:
+                pass
+
+        return text
+
+    def _market_conflict_group(row_dict):
+        game = str(row_dict.get("game", "")).strip()
+        market = str(row_dict.get("market", "")).strip().lower()
+        selection = str(row_dict.get("selection", "")).strip()
+
+        if market == "moneyline":
+            return f"{game}||moneyline"
+
+        if market == "spread":
+            return f"{game}||spread"
+
+        if market == "total":
+            return f"{game}||total"
+
+        if market.startswith("prop_"):
+            player = str(row_dict.get("player", "")).strip().lower()
+            return f"{game}||{market}||{player}"
+
+        return f"{game}||{market}||{selection}"
+
+    def _selection_uniqueness_key(row_dict):
+        game = str(row_dict.get("game", "")).strip()
+        market = str(row_dict.get("market", "")).strip().lower()
+        selection = str(row_dict.get("selection", "")).strip().lower()
+        odds = str(row_dict.get("odds", "")).strip()
+        return f"{game}||{market}||{selection}||{odds}"
+
+    def _row_strength(row_dict):
+        return (
+            safe_float(row_dict.get("rank_score", 0.0), 0.0),
+            safe_float(row_dict.get("true_confidence", 0.0), 0.0),
+            safe_float(row_dict.get("edge", 0.0), 0.0),
+            safe_float(row_dict.get("score", 0.0), 0.0),
+            safe_int(row_dict.get("books_seen", 0), 0),
+        )
+
+    def _dedupe_exact_rows(input_df):
+        if input_df is None or input_df.empty:
+            return pd.DataFrame()
+
+        kept = {}
+        for _, row in input_df.iterrows():
+            row_dict = row.to_dict()
+            key = _selection_uniqueness_key(row_dict)
+
+            if key not in kept:
+                kept[key] = row_dict
+            else:
+                if _row_strength(row_dict) > _row_strength(kept[key]):
+                    kept[key] = row_dict
+
+        return pd.DataFrame(list(kept.values()))
+
+    def _keep_best_per_conflict_group(input_df):
+        if input_df is None or input_df.empty:
+            return pd.DataFrame()
+
+        kept = {}
+        for _, row in input_df.iterrows():
+            row_dict = row.to_dict()
+            key = _market_conflict_group(row_dict)
+
+            if key not in kept:
+                kept[key] = row_dict
+            else:
+                if _row_strength(row_dict) > _row_strength(kept[key]):
+                    kept[key] = row_dict
+
+        return pd.DataFrame(list(kept.values()))
+
+    def _limit_same_game_exposure(input_df, max_per_game=2):
+        if input_df is None or input_df.empty:
+            return pd.DataFrame()
+
+        working = input_df.copy()
+
+        sort_cols = [c for c in ["rank_score", "true_confidence", "edge"] if c in working.columns]
+        if sort_cols:
+            working = working.sort_values(
+                by=sort_cols,
+                ascending=[False] * len(sort_cols),
+            ).reset_index(drop=True)
+
+        kept_rows = []
+        game_counts = {}
+
+        for _, row in working.iterrows():
+            game = str(row.get("game", "")).strip()
+            if not game:
+                kept_rows.append(row.to_dict())
+                continue
+
+            current_count = int(game_counts.get(game, 0))
+            if current_count >= max_per_game:
+                continue
+
+            kept_rows.append(row.to_dict())
+            game_counts[game] = current_count + 1
+
+        return pd.DataFrame(kept_rows)
+
+    def _cleanup_play_pool(input_df):
+        if input_df is None or input_df.empty:
+            return pd.DataFrame(columns=empty_cols)
+
+        cleaned = input_df.copy()
+
+        cleaned = _dedupe_exact_rows(cleaned)
+        if cleaned.empty:
+            return pd.DataFrame(columns=empty_cols)
+
+        cleaned = _keep_best_per_conflict_group(cleaned)
+        if cleaned.empty:
+            return pd.DataFrame(columns=empty_cols)
+
+        cleaned = _limit_same_game_exposure(cleaned, max_per_game=2)
+        if cleaned.empty:
+            return pd.DataFrame(columns=empty_cols)
+
+        cleaned = cleaned.reset_index(drop=True)
+
+        if "play_id" not in cleaned.columns:
+            cleaned["play_id"] = cleaned.apply(
+                lambda r: build_play_id(
+                    {
+                        "game": r.get("game", ""),
+                        "market": r.get("market", ""),
+                        "selection": r.get("selection", ""),
+                        "odds": r.get("odds", ""),
+                    }
+                ),
+                axis=1,
+            )
+
+        return cleaned
+
     for event in live_games:
         home_team = normalize_team_name(event.get("home_team", "Home"))
         away_team = normalize_team_name(event.get("away_team", "Away"))
@@ -3732,7 +3906,7 @@ def generate_ai_plays():
             continue
 
         for team_name in [away_team, home_team]:
-            best_price, books_found = get_best_market_outcome(bookmakers, "h2h", team_name)
+            best_price, books_found, best_book = get_best_market_outcome(bookmakers, "h2h", team_name)
             if best_price is None or books_found == 0:
                 continue
             if not in_allowed_odds_range(format_american(best_price), DEFAULT_ODDS_RANGE[0], DEFAULT_ODDS_RANGE[1]):
@@ -3761,7 +3935,8 @@ def generate_ai_plays():
                 "watch_tier": "",
                 "confidence": "Low",
                 "books_seen": books_found,
-                "best_price": "Yes",
+                "best_price": format_american(best_price),
+                "best_book": best_book,
                 "consensus": consensus,
                 "price_edge": price_edge,
                 "ai_tags": [],
@@ -3770,7 +3945,7 @@ def generate_ai_plays():
             add_scored_row(row, ["API live odds", "moneyline", "best price"])
 
         for team_name in [away_team, home_team]:
-            best_point, best_price, books_found = get_best_spread_outcome(bookmakers, team_name)
+            best_point, best_price, books_found, best_book = get_best_spread_outcome(bookmakers, team_name)
             if best_point is None or best_price is None or books_found == 0:
                 continue
             if not in_allowed_odds_range(format_american(best_price), DEFAULT_ODDS_RANGE[0], DEFAULT_ODDS_RANGE[1]):
@@ -3801,7 +3976,8 @@ def generate_ai_plays():
                 "watch_tier": "",
                 "confidence": "Low",
                 "books_seen": books_found,
-                "best_price": "Yes",
+                "best_price": format_american(best_price),
+                "best_book": best_book,
                 "consensus": consensus,
                 "price_edge": price_edge,
                 "ai_tags": [],
@@ -3810,7 +3986,7 @@ def generate_ai_plays():
             add_scored_row(row, ["API live odds", "spread", "best line"])
 
         for side in ["Over", "Under"]:
-            best_point, best_price, books_found = get_best_total_outcome(bookmakers, side)
+            best_point, best_price, books_found, best_book = get_best_total_outcome(bookmakers, side)
             if best_point is None or best_price is None or books_found == 0:
                 continue
             if not in_allowed_odds_range(format_american(best_price), DEFAULT_ODDS_RANGE[0], DEFAULT_ODDS_RANGE[1]):
@@ -3839,7 +4015,8 @@ def generate_ai_plays():
                 "watch_tier": "",
                 "confidence": "Low",
                 "books_seen": books_found,
-                "best_price": "Yes",
+                "best_price": format_american(best_price),
+                "best_book": best_book,
                 "consensus": consensus,
                 "price_edge": price_edge,
                 "ai_tags": [],
@@ -3854,9 +4031,10 @@ def generate_ai_plays():
         return pd.DataFrame(columns=empty_cols)
 
     df = normalize_dataframe_for_selected_sport(df, selected_sport_name)
+    df = _cleanup_play_pool(df)
 
-    if "selection" in df.columns:
-        df = df.drop_duplicates(subset=["game", "market", "selection", "odds"]).copy()
+    if df.empty:
+        return pd.DataFrame(columns=empty_cols)
 
     df["rank_score"] = (
         df["true_confidence"] * 0.55
@@ -3939,14 +4117,19 @@ def generate_ai_plays():
     active_local = apply_learning_engine_to_df(active_local, "Top Plays", sport=selected_sport_name)
     watch_local = apply_learning_engine_to_df(watch_local, "Watchlist", sport=selected_sport_name)
 
+    active_local = _cleanup_play_pool(active_local)
+    watch_local = _cleanup_play_pool(watch_local)
+
     if active_local.empty and watch_local.empty:
         return pd.DataFrame(columns=empty_cols)
 
     active_rows = []
     running_units = 0.0
+    active_games_used = set()
 
     for _, row in active_local.iterrows():
         proposed_units = float(row["units"])
+        row_game = str(row.get("game", "")).strip()
 
         row_play_type = str(row.get("play_type", "")).strip().lower()
         play_type_blocked = False
@@ -3984,6 +4167,17 @@ def generate_ai_plays():
             watch_local = pd.concat([watch_local, pd.DataFrame([row2])], ignore_index=True)
             continue
 
+        if row_game and row_game in active_games_used:
+            row2 = row.copy()
+            row2["status"] = "Watch"
+            row2["category"] = "Watchlist"
+            row2["watch_tier"] = classify_watch_tier(row2)
+            row2["units"] = scale_watch_units(row2)
+            row2["learning_status"] = "Filtered"
+            row2["learning_reason"] = "Reduced duplicate same-game exposure"
+            watch_local = pd.concat([watch_local, pd.DataFrame([row2])], ignore_index=True)
+            continue
+
         if len(active_rows) >= MAX_ACTIVE_PLAYS:
             row2 = row.copy()
             row2["status"] = "Watch"
@@ -4004,11 +4198,14 @@ def generate_ai_plays():
 
         active_rows.append(row)
         running_units += proposed_units
+        if row_game:
+            active_games_used.add(row_game)
 
     active_final = pd.DataFrame(active_rows) if active_rows else pd.DataFrame(columns=df.columns)
 
     if not watch_local.empty:
         watch_local = apply_learning_engine_to_df(watch_local, "Watchlist", sport=selected_sport_name)
+        watch_local = _cleanup_play_pool(watch_local)
 
     if not watch_local.empty:
         watch_priority = {"Near Active": 3, "Monitor": 2, "Weak Watch": 1}
@@ -4024,6 +4221,10 @@ def generate_ai_plays():
         return pd.DataFrame(columns=empty_cols)
 
     combined = normalize_dataframe_for_selected_sport(combined, selected_sport_name)
+    combined = _cleanup_play_pool(combined)
+
+    if combined.empty:
+        return pd.DataFrame(columns=empty_cols)
 
     status_order = {"Active": 0, "Watch": 1}
     combined["status_sort"] = combined["status"].map(status_order).fillna(9)

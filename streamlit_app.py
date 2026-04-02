@@ -4861,7 +4861,25 @@ h1, h2, h3 {
 # =========================================================
 # HEADER
 # =========================================================
-status_text, status_dot, status_bg, status_fg = api_status_label()
+current_api_mode = str(st.session_state.get("api_mode", "idle")).strip().lower()
+current_api_error = str(st.session_state.get("last_refresh_error", "")).strip().lower()
+
+if current_api_mode == "live":
+    status_text, status_dot, status_bg, status_fg = "LIVE", "#10b981", "#ecfdf5", "#065f46"
+elif current_api_mode == "cached":
+    status_text, status_dot, status_bg, status_fg = "CACHED", "#0ea5e9", "#eff6ff", "#075985"
+elif current_api_mode in ["daily_limit", "limit_hit"]:
+    status_text, status_dot, status_bg, status_fg = "DAILY LIMIT", "#7c3aed", "#f5f3ff", "#5b21b6"
+elif current_api_mode == "waiting_reset":
+    status_text, status_dot, status_bg, status_fg = "WAITING RESET", "#f97316", "#fff7ed", "#9a3412"
+elif current_api_mode == "no_key":
+    status_text, status_dot, status_bg, status_fg = "NO KEY", "#f59e0b", "#fffbeb", "#92400e"
+elif current_api_mode in ["error", "fallback"]:
+    status_text, status_dot, status_bg, status_fg = "OFFLINE", "#64748b", "#f8fafc", "#334155"
+elif "401" in current_api_error or "unauthorized" in current_api_error:
+    status_text, status_dot, status_bg, status_fg = "KEY ERROR", "#ef4444", "#fef2f2", "#991b1b"
+else:
+    status_text, status_dot, status_bg, status_fg = "IDLE", "#64748b", "#f8fafc", "#334155"
 
 st.title("🔥 Sports Betting AI Dashboard V34")
 st.caption("Manual Live Odds Refresh • SportsDataIO Context • Cached Fallback • True Probability + True Confidence Engine")

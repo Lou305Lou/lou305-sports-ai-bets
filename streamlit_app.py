@@ -1338,6 +1338,757 @@ def calculate_units(true_confidence, status):
     return round(clamp(base, WATCH_UNIT_MIN, WATCH_UNIT_MAX), 2)
 
 # =========================================================
+# SELF-LEARNING ENGINE HELPERS
+# =========================================================
+def american_odds_to_implied_prob(odds):
+    try:
+        odds = float(american_to_int(odds) if american_to_int(odds) is not None else odds)
+        if odds > 0:
+            return 100.0 / (odds + 100.0)
+        return abs(odds) / (abs(odds) + 100.0)
+    except Exception:
+        return 0.0
+
+def normalize_category_label(category_text):
+    raw = str(category_text or "").strip()
+    if not raw:
+        return "Uncategorized"
+
+    parts = [p.strip() for p in raw.split("|") if str(p).strip()]
+    if not parts:
+        return "Uncategorized"
+
+    priority = ["Top Plays", "AI Picks", "AI Parlays", "Watchlist", "Manual"]
+    for label in priority:
+        if label in parts:
+            return label
+
+    mapping = {
+        "Top Play": "Top Plays",
+        "AI Slip": "AI Picks",
+        "AI Parlay": "AI Parlays",
+    }
+    for part in parts:
+        if part in mapping:
+            return mapping[part]
+
+    return parts[0]
+
+def classify_play_type(row):
+    market = str(row.get("market", "")).strip().lower()
+    selection = str(row.get("selection", row.get("pick", ""))).strip().lower()
+    category = normalize_category_label(row.get("category", row.get("log_category", "")))
+
+    if "parlay" in category.lower() or market == "parlay":
+        return "parlay"
+
+    if market in ["moneyline", "h2h", "ml"]:
+        return "moneyline"
+
+    if "spread" in market:
+        return "spread"
+
+    if "total" in market:
+        if "over" in selection:
+            return "total_over"
+        if "under" in selection:
+            return "total_under"
+        return "total"
+
+    if market.startswith("prop_"):
+        return market
+
+    if "prop" in market:
+        return "prop"
+
+    return "other"
+
+def safe_clv_score(row):
+    clv_result = str(row.get("clv_result", "")).strip().lower()
+    clv_diff = safe_float(row.get("clv_diff", 0.0), 0.0)
+
+    if clv_result == "beat":
+        return clamp(clv_diff / 5.0, 0.0, 1.0)
+    if clv_result == "lost":
+        return clamp(-abs(clv_diff) / 5.0, -1.0, 0.0)
+    return 0.0
+
+def get_active_learning_state(sport=None):
+    return get_learning_state_for_sport(sport or get_selected_sport())
+
+def compute_true_probability(row, sport=None):
+    implied_prob = american_odds_to_implied_prob(row.get("odds", 0))
+
+    model_projection = safe_float(row.get("model_projection", 0.50), 0.50)
+    price_edge = safe_float(row.get("model_price_ev", row.get("price_edge", 0.0)), 0.0)
+    model_risk = safe_float(row.get("model_risk", 0.50), 0.50)
+    model_market = safe_float(row.get("model_market", 0.50), 0.50)
+    model_history = safe_float(row.get("model_history", 0.50), 0.50)
+    multi_ai_score = safe_float(row.get("multi_ai_score", row.get("score", 50)), 50)
+    clv_signal = safe_clv_score(row)
+
+    learning_state = get_active_learning_state(sport)
+    weights = learning_state.get(
+        "weights",
+        {
+            "true_probability": 0.30,
+            "price_edge": 0.25,
+            "market_signal": 0.15,
+            "matchup_quality": 0.15,
+            "historical_performance": 0.15,
+        },
+    )
+
+    projection_component = clamp(model_projection, 0.01, 0.99)
+    market_component = clamp(model_market, 0.01, 0.99)
+    history_component = clamp(model_history, 0.01, 0.99)
+    matchup_quality = clamp(multi_ai_score / 100.0, 0.01, 0.99)
+
+    price_nudge = clamp(implied_prob + (price_edge * 0.25), 0.01, 0.99)
+
+    weighted_prob = (
+        projection_component * safe_float(weights.get("true_probability", 0.30), 0.30)
+        + price_nudge * safe_float(weights.get("price_edge", 0.25), 0.25)
+        + market_component * safe_float(weights.get("market_signal", 0.15), 0.15)
+        + matchup_quality * safe_float(weights.get("matchup_quality", 0.15), 0.15)
+        + history_component * safe_float(weights.get("historical_performance", 0.15), 0.15)
+    )
+
+    clv_nudge = clv_signal * 0.015
+    true_probability = (weighted_prob * 0.55) + (implied_prob * 0.45)
+    true_probability = true_probability + clv_nudge
+
+    return clamp(true_probability, 0.01, 0.99)
+
+def enrich_play_with_learning_fields(row, sport=None):
+    row = dict(row)
+
+    implied_probability = american_odds_to_implied_prob(row.get("odds", 0))
+    true_probability = compute_true_probability(row, sport=sport)
+    edge = true_probability - implied_probability
+
+    row["implied_probability"] = round(implied_probability, 4)
+    row["true_probability"] = round(true_probability, 4)
+    row["edge"] = round(edge if abs(edge) < 2 else edge, 4)
+    row["play_type"] = classify_play_type(row)
+    row["primary_category"] = normalize_category_label(row.get("category", row.get("log_category", "")))
+
+    return row
+
+def should_allow_play(row, sport=None):
+    learning_state = get_active_learning_state(sport)
+    row = enrich_play_with_learning_fields(row, sport=sport)
+
+    category = row.get("primary_category", "Uncategorized")
+    play_type = row.get("play_type", "other")
+    edge = safe_float(row.get("edge", 0.0), 0.0)
+
+    category_threshold = safe_float(
+        learning_state.get("category_thresholds", {}).get(category, 0.03),
+        0.03,
+    )
+
+    bad_play_type_flags = learning_state.get("bad_play_type_flags", {})
+    if isinstance(bad_play_type_flags.get(play_type), dict):
+        if bool(bad_play_type_flags.get(play_type, {}).get("is_filtered", False)):
+            return False, f"Filtered by learning engine: {play_type} underperforming"
+    elif bool(bad_play_type_flags.get(play_type, False)):
+        return False, f"Filtered by learning engine: {play_type} underperforming"
+
+    if edge < category_threshold:
+        return False, f"Edge below threshold ({round(edge, 4)} < {round(category_threshold, 4)})"
+
+    return True, "Allowed"
+
+def calculate_bet_profit(odds, stake, result):
+    odds_int = american_to_int(odds)
+    odds_val = safe_float(odds_int if odds_int is not None else odds, 0.0)
+    stake = safe_float(stake, 0.0)
+    result = str(result or "").strip().lower()
+
+    if result == "win":
+        if odds_val > 0:
+            return round(stake * (odds_val / 100.0), 2)
+        if odds_val < 0:
+            return round(stake * (100.0 / abs(odds_val)), 2)
+        return 0.0
+
+    if result == "loss":
+        return round(-stake, 2)
+
+    return 0.0
+
+def update_learning_from_results(sport=None):
+    selected_sport_name = str(sport or get_selected_sport()).strip().upper()
+    bet_log = get_bet_log_for_sport(selected_sport_name)
+    if not bet_log:
+        return
+
+    df = pd.DataFrame(bet_log)
+    if df.empty:
+        return
+
+    required_cols = ["result", "odds"]
+    for col in required_cols:
+        if col not in df.columns:
+            return
+
+    df["result"] = df["result"].astype(str).str.strip().str.lower()
+    graded = df[df["result"].isin(["win", "loss", "push"])].copy()
+
+    if graded.empty:
+        return
+
+    enriched_rows = []
+    for _, row in graded.iterrows():
+        enriched_rows.append(enrich_play_with_learning_fields(row.to_dict(), sport=selected_sport_name))
+    graded = pd.DataFrame(enriched_rows)
+
+    if "stake" not in graded.columns:
+        graded["stake"] = 1.0
+    graded["stake"] = graded["stake"].apply(lambda x: safe_float(x, 1.0))
+
+    graded["profit"] = graded.apply(
+        lambda r: calculate_bet_profit(r.get("odds", 0), r.get("stake", 1.0), r.get("result", "")),
+        axis=1,
+    )
+
+    if "clv_diff" not in graded.columns:
+        graded["clv_diff"] = 0.0
+    if "clv_result" not in graded.columns:
+        graded["clv_result"] = ""
+
+    graded["clv_diff"] = graded["clv_diff"].apply(lambda x: safe_float(x, 0.0))
+    graded["clv_result"] = graded["clv_result"].astype(str).str.strip()
+    graded["clv_score"] = graded.apply(safe_clv_score, axis=1)
+
+    learning_state = get_active_learning_state(selected_sport_name)
+    min_samples = safe_int(learning_state.get("category_min_samples", 8), 8)
+
+    play_type_stats = {}
+    for play_type, group in graded.groupby("play_type"):
+        bets = len(group)
+        wins = int((group["result"] == "win").sum())
+        losses = int((group["result"] == "loss").sum())
+        pushes = int((group["result"] == "push").sum())
+        profit = round(group["profit"].sum(), 2)
+        stake_sum = max(group["stake"].sum(), 1.0)
+        roi = round(profit / stake_sum, 4)
+
+        beat_clv = int((group["clv_result"].astype(str).str.lower() == "beat").sum())
+        lost_clv = int((group["clv_result"].astype(str).str.lower() == "lost").sum())
+        push_clv = int((group["clv_result"].astype(str).str.lower() == "push").sum())
+        avg_clv = round(group["clv_diff"].mean(), 3) if len(group) > 0 else 0.0
+        avg_clv_score = round(group["clv_score"].mean(), 4) if len(group) > 0 else 0.0
+
+        play_type_stats[play_type] = {
+            "bets": bets,
+            "wins": wins,
+            "losses": losses,
+            "pushes": pushes,
+            "profit": profit,
+            "roi": roi,
+            "beat_clv": beat_clv,
+            "lost_clv": lost_clv,
+            "push_clv": push_clv,
+            "avg_clv": avg_clv,
+            "avg_clv_score": avg_clv_score,
+        }
+
+    learning_state["play_type_stats"] = play_type_stats
+
+    bad_flags = {}
+    for play_type, stats in play_type_stats.items():
+        bets = stats["bets"]
+        roi = stats["roi"]
+        avg_clv_score = stats.get("avg_clv_score", 0.0)
+
+        if bets >= min_samples and (roi <= -0.12 or (roi <= -0.06 and avg_clv_score < -0.15)):
+            bad_flags[play_type] = {
+                "is_filtered": True,
+                "reason": f"Auto-filtered from results: ROI {round(roi * 100, 2)}%, CLV score {round(avg_clv_score, 4)}",
+            }
+        else:
+            bad_flags[play_type] = {
+                "is_filtered": False,
+                "reason": "Not filtered",
+            }
+
+    learning_state["bad_play_type_flags"] = bad_flags
+
+    updated_thresholds = dict(learning_state.get("category_thresholds", {}))
+    for category, group in graded.groupby("primary_category"):
+        bets = len(group)
+        total_stake = max(group["stake"].sum(), 1.0)
+        roi = group["profit"].sum() / total_stake
+        avg_clv_score = group["clv_score"].mean() if len(group) > 0 else 0.0
+
+        current_threshold = updated_thresholds.get(category, 0.03)
+
+        if bets >= min_samples:
+            if roi < -0.08:
+                current_threshold += 0.005
+            elif roi > 0.08:
+                current_threshold -= 0.003
+
+            if avg_clv_score < -0.12:
+                current_threshold += 0.003
+            elif avg_clv_score > 0.12:
+                current_threshold -= 0.002
+
+        updated_thresholds[category] = round(clamp(current_threshold, 0.015, 0.08), 4)
+
+    learning_state["category_thresholds"] = updated_thresholds
+
+    wins = graded[graded["result"] == "win"]
+    losses = graded[graded["result"] == "loss"]
+
+    if not wins.empty and not losses.empty:
+        win_edge = wins["edge"].mean()
+        loss_edge = losses["edge"].mean()
+        win_clv_score = wins["clv_score"].mean() if "clv_score" in wins.columns else 0.0
+        loss_clv_score = losses["clv_score"].mean() if "clv_score" in losses.columns else 0.0
+
+        weights = dict(learning_state.get("weights", {}))
+
+        if win_edge > loss_edge:
+            weights["true_probability"] = clamp(safe_float(weights.get("true_probability", 0.30), 0.30) + 0.01, 0.22, 0.38)
+            weights["price_edge"] = clamp(safe_float(weights.get("price_edge", 0.25), 0.25) + 0.005, 0.18, 0.32)
+            weights["market_signal"] = clamp(safe_float(weights.get("market_signal", 0.15), 0.15) - 0.005, 0.10, 0.22)
+
+        if win_clv_score > loss_clv_score:
+            weights["market_signal"] = clamp(safe_float(weights.get("market_signal", 0.15), 0.15) + 0.006, 0.10, 0.24)
+            weights["historical_performance"] = clamp(safe_float(weights.get("historical_performance", 0.15), 0.15) + 0.004, 0.10, 0.24)
+            weights["matchup_quality"] = clamp(safe_float(weights.get("matchup_quality", 0.15), 0.15) - 0.004, 0.10, 0.22)
+
+        total = sum(weights.values())
+        if total > 0:
+            for key in weights:
+                weights[key] = round(weights[key] / total, 4)
+
+        learning_state["weights"] = weights
+
+    learning_state["last_learning_run"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    save_learning_state_for_sport(learning_state, selected_sport_name)
+
+def get_learning_summary_rows(sport=None):
+    learning_state = get_active_learning_state(sport)
+    stats = learning_state.get("play_type_stats", {})
+
+    rows = []
+    for play_type, info in stats.items():
+        rows.append(
+            {
+                "Play Type": play_type,
+                "Bets": info.get("bets", 0),
+                "Wins": info.get("wins", 0),
+                "Losses": info.get("losses", 0),
+                "Pushes": info.get("pushes", 0),
+                "Profit": round(info.get("profit", 0.0), 2),
+                "ROI %": round(info.get("roi", 0.0) * 100, 2),
+                "Beat CLV": info.get("beat_clv", 0),
+                "Lost CLV": info.get("lost_clv", 0),
+                "Avg CLV": round(info.get("avg_clv", 0.0), 2),
+                "Filtered": "Yes" if learning_state.get("bad_play_type_flags", {}).get(play_type, {}).get("is_filtered", False) else "No",
+            }
+        )
+    return pd.DataFrame(rows)
+
+# =========================================================
+# LEARNING ENGINE COMPATIBILITY LAYER
+# =========================================================
+def get_row_category_for_learning(row):
+    category = str(row.get("category", "")).strip()
+    if category:
+        return category
+
+    log_category = str(row.get("log_category", "")).strip()
+    if log_category:
+        parts = [p.strip() for p in log_category.split("|") if str(p).strip()]
+        if "Top Play" in parts or "Top Plays" in parts:
+            return "Top Plays"
+        if "AI Slip" in parts or "AI Picks" in parts:
+            return "AI Picks"
+        if "AI Parlay" in parts or "AI Parlays" in parts:
+            return "AI Parlays"
+        if "Watchlist" in parts:
+            return "Watchlist"
+        if parts:
+            return parts[0]
+
+    status = str(row.get("status", "")).strip()
+    if status == "Active":
+        return "Top Plays"
+    if status in ["Watch", "Watchlist"]:
+        return "Watchlist"
+
+    return "Uncategorized"
+
+def enrich_play_with_learning_fields_compat(row, sport=None):
+    row = dict(row)
+
+    if "category" not in row or not str(row.get("category", "")).strip():
+        row["category"] = get_row_category_for_learning(row)
+
+    if "model_projection" not in row:
+        row["model_projection"] = clamp(safe_float(row.get("true_prob", 50.0), 50.0) / 100.0, 0.01, 0.99)
+
+    if "model_price_ev" not in row:
+        row["model_price_ev"] = safe_float(row.get("price_edge", row.get("edge", 0.0)), 0.0) / 100.0
+
+    if "model_risk" not in row:
+        tc = safe_float(row.get("true_confidence", 65.0), 65.0)
+        row["model_risk"] = clamp(1.0 - (tc / 100.0), 0.01, 0.99)
+
+    if "model_market" not in row:
+        row["model_market"] = clamp(safe_float(row.get("implied_prob", 50.0), 50.0) / 100.0, 0.01, 0.99)
+
+    if "model_history" not in row:
+        row["model_history"] = clamp(safe_float(row.get("true_confidence", 65.0), 65.0) / 100.0, 0.01, 0.99)
+
+    if "multi_ai_score" not in row:
+        row["multi_ai_score"] = safe_float(row.get("score", row.get("model_score", 50.0)), 50.0)
+
+    if "stake" not in row:
+        row["stake"] = safe_float(row.get("units", 1.0), 1.0)
+
+    enriched = enrich_play_with_learning_fields(row, sport=sport)
+
+    enriched["implied_prob"] = round(safe_float(enriched.get("implied_probability", 0.0), 0.0) * 100.0, 2)
+    enriched["true_prob"] = round(safe_float(enriched.get("true_probability", 0.0), 0.0) * 100.0, 2)
+    enriched["edge"] = round(enriched["true_prob"] - enriched["implied_prob"], 2)
+
+    return enriched
+
+# =========================================================
+# V33.1 LEARNING ACTIVATION ENGINE
+# =========================================================
+LEARNING_MIN_SAMPLE = 10
+BAD_PLAYTYPE_THRESHOLD = -0.25
+GOOD_PLAYTYPE_THRESHOLD = 0.10
+
+def get_learning_activation_metrics(sport=None):
+    selected_sport_name = str(sport or get_selected_sport()).strip().upper()
+    df = pd.DataFrame(get_bet_log_for_sport(selected_sport_name))
+    if df.empty:
+        return {}
+
+    if "result" not in df.columns:
+        return {}
+
+    graded = df[df["result"].isin(["Win", "Loss", "win", "loss"])].copy()
+    if graded.empty:
+        return {}
+
+    summary = {}
+
+    if "play_type" in graded.columns:
+        for play_type, group in graded.groupby("play_type"):
+            bets = len(group)
+            profit = pd.to_numeric(group.get("profit", 0), errors="coerce").fillna(0.0).sum()
+
+            if "stake" in group.columns:
+                stake = pd.to_numeric(group.get("stake", 0), errors="coerce").fillna(0.0).sum()
+            elif "units" in group.columns:
+                stake = pd.to_numeric(group.get("units", 0), errors="coerce").fillna(0.0).sum()
+            else:
+                stake = float(bets)
+
+            roi = (profit / stake) if stake > 0 else 0.0
+
+            summary[str(play_type).strip().lower()] = {
+                "bets": int(bets),
+                "roi": float(roi),
+            }
+
+    return summary
+
+def get_dynamic_edge_threshold(category, sport=None):
+    learning_state = get_active_learning_state(sport)
+    thresholds = learning_state.get("category_thresholds", {})
+
+    base_threshold = float(thresholds.get(category, 0.02))
+    activation = get_learning_activation_metrics(sport)
+
+    for _, stats in activation.items():
+        if int(stats.get("bets", 0)) < LEARNING_MIN_SAMPLE:
+            continue
+
+        roi = float(stats.get("roi", 0.0))
+        if roi < BAD_PLAYTYPE_THRESHOLD:
+            base_threshold += 0.02
+        elif roi > GOOD_PLAYTYPE_THRESHOLD:
+            base_threshold -= 0.01
+
+    return max(0.01, min(base_threshold, 0.10))
+
+def should_block_play_type(play_type, sport=None):
+    activation = get_learning_activation_metrics(sport)
+    stats = activation.get(str(play_type).strip().lower())
+
+    if not stats:
+        return False
+    if int(stats.get("bets", 0)) < LEARNING_MIN_SAMPLE:
+        return False
+
+    return float(stats.get("roi", 0.0)) < BAD_PLAYTYPE_THRESHOLD
+
+def apply_v33_learning_filters(play, sport=None):
+    play_type = str(play.get("play_type", "")).lower()
+    category = str(play.get("category", "Top Plays")).strip() or "Top Plays"
+
+    if should_block_play_type(play_type, sport=sport):
+        return False, "Play type underperforming (auto-blocked)"
+
+    edge = safe_float(play.get("edge", 0), 0) / 100.0
+    min_edge = get_dynamic_edge_threshold(category, sport=sport)
+
+    if edge < min_edge:
+        return False, f"Edge below dynamic threshold ({round(min_edge * 100, 2)}%)"
+
+    return True, "Passed V33.1 filters"
+
+def apply_learning_engine_to_df(df, category_name, sport=None):
+    if df is None or df.empty:
+        return pd.DataFrame() if df is None else df
+
+    selected_sport_name = str(sport or get_selected_sport()).strip().upper()
+    rows = []
+
+    for _, row in df.iterrows():
+        item = row.to_dict()
+        item["category"] = category_name
+        item["sport"] = selected_sport_name
+
+        item = enrich_play_with_learning_fields_compat(item, sport=selected_sport_name)
+
+        allowed, reason = should_allow_play(item, sport=selected_sport_name)
+
+        v33_allowed, v33_reason = apply_v33_learning_filters(item, sport=selected_sport_name)
+        if not v33_allowed:
+            allowed = False
+            reason = v33_reason
+
+        item["learning_status"] = "Allowed" if allowed else "Filtered"
+        item["learning_reason"] = reason
+
+        rows.append(item)
+
+    out = pd.DataFrame(rows)
+    if out.empty:
+        return out
+
+    out = out[out["learning_status"] == "Allowed"].copy()
+
+    if out.empty:
+        return out.reset_index(drop=True)
+
+    if "rank_score" in out.columns:
+        out = out.sort_values(["rank_score", "true_confidence"], ascending=False)
+    elif "edge" in out.columns:
+        out = out.sort_values(["edge", "true_prob"], ascending=False)
+
+    return out.reset_index(drop=True)
+
+# =========================================================
+# PLAYER PROP HELPERS
+# =========================================================
+def prop_line_for_type(prop_type: str, sport_name=None):
+    sport = str(sport_name or get_selected_sport()).strip().upper()
+
+    default_lines = {
+        "NBA": {
+            "points": [17.5, 19.5, 21.5, 23.5, 25.5, 27.5],
+            "rebounds": [5.5, 6.5, 7.5, 8.5, 9.5, 10.5],
+            "assists": [4.5, 5.5, 6.5, 7.5, 8.5],
+            "pra": [28.5, 31.5, 34.5, 37.5, 40.5],
+        },
+        "NHL": {
+            "shots_on_goal": [2.5, 3.5, 4.5],
+            "points": [0.5, 1.5, 2.5],
+            "assists": [0.5, 1.5],
+        },
+        "MLB": {
+            "hits": [0.5, 1.5, 2.5],
+            "total_bases": [1.5, 2.5, 3.5],
+            "runs": [0.5, 1.5],
+            "rbis": [0.5, 1.5],
+            "strikeouts": [4.5, 5.5, 6.5, 7.5],
+        },
+    }
+
+    choices = default_lines.get(sport, {}).get(prop_type, [0.5, 1.5, 2.5])
+    return random.choice(choices)
+
+def build_prop_selection(player_name: str, prop_type: str, sport_name=None):
+    line = prop_line_for_type(prop_type, sport_name=sport_name)
+
+    label_map = {
+        "points": "Points",
+        "rebounds": "Rebounds",
+        "assists": "Assists",
+        "pra": "PRA",
+        "shots_on_goal": "Shots on Goal",
+        "hits": "Hits",
+        "total_bases": "Total Bases",
+        "runs": "Runs",
+        "rbis": "RBIs",
+        "strikeouts": "Strikeouts",
+    }
+
+    direction = random.choice(["Over", "Under"])
+    return f"{player_name} {direction} {line} {label_map.get(prop_type, prop_type.title())}"
+
+def is_prop_market(market: str):
+    return str(market).lower().startswith("prop_")
+
+def prop_market_label(market: str):
+    m = str(market).lower()
+    mapping = {
+        "prop_points": "Player Props • Points",
+        "prop_rebounds": "Player Props • Rebounds",
+        "prop_assists": "Player Props • Assists",
+        "prop_pra": "Player Props • PRA",
+        "prop_shots_on_goal": "Player Props • Shots on Goal",
+        "prop_hits": "Player Props • Hits",
+        "prop_total_bases": "Player Props • Total Bases",
+        "prop_runs": "Player Props • Runs",
+        "prop_rbis": "Player Props • RBIs",
+        "prop_strikeouts": "Player Props • Strikeouts",
+    }
+    return mapping.get(m, str(market).replace("_", " ").title())
+
+def get_mock_players_for_game(game_label, sport_name=None):
+    sport = str(sport_name or get_selected_sport()).strip().upper()
+
+    if sport == "NBA":
+        return [
+            "Jalen Brunson", "Jayson Tatum", "LeBron James", "Nikola Jokic",
+            "Luka Doncic", "Anthony Davis", "Paolo Banchero", "Donovan Mitchell",
+        ]
+    if sport == "NHL":
+        return [
+            "Connor McDavid", "Nathan MacKinnon", "Auston Matthews", "David Pastrnak",
+            "Artemi Panarin", "Leon Draisaitl",
+        ]
+    if sport == "MLB":
+        return [
+            "Aaron Judge", "Juan Soto", "Mookie Betts", "Freddie Freeman",
+            "Ronald Acuna Jr.", "Bryce Harper", "Gerrit Cole", "Zack Wheeler",
+        ]
+    return []
+
+def generate_mock_prop_rows_for_game(game_label, selected_sport, home_team, away_team):
+    if not ENABLE_PLAYER_PROPS:
+        return []
+
+    prop_types = PROP_TYPES_BY_SPORT.get(selected_sport, [])
+    if not prop_types:
+        return []
+
+    players = get_mock_players_for_game(game_label, selected_sport)
+    if not players:
+        return []
+
+    rows = []
+    used_keys = set()
+
+    candidate_players = players[: min(len(players), MAX_PROP_PLAYS_PER_GAME)]
+
+    for player_name in candidate_players:
+        for prop_type in prop_types[:2]:
+            market_name = f"prop_{prop_type}"
+            selection = build_prop_selection(player_name, prop_type, sport_name=selected_sport)
+            odds = random.choice([-125, -120, -115, -110, -105, 100, 105, 110, 115, 120])
+
+            if not in_allowed_odds_range(odds, PROP_ODDS_RANGE[0], PROP_ODDS_RANGE[1]):
+                continue
+
+            implied_prob = american_to_implied_prob(odds)
+            books = random.choice([2, 3, 4, 5])
+            consensus_pct = random.choice([52.0, 56.0, 60.0, 64.0, 68.0])
+            true_prob = estimate_true_probability(implied_prob, books, consensus_pct, market_name)
+            edge = round((true_prob - implied_prob) * 100.0, 2)
+            market_signal = calculate_market_signal(books, edge)
+            matchup_score = calculate_matchup_score(market_name)
+            historical_score = calculate_historical_score()
+            true_confidence = calculate_true_confidence(
+                true_prob,
+                edge,
+                books,
+                market_signal,
+                matchup_score,
+                historical_score,
+            )
+
+            if books >= MIN_ACTIVE_BOOKS and edge >= MIN_ACTIVE_EDGE and true_confidence >= MIN_ACTIVE_TRUE_CONF:
+                status = "Active"
+                log_category = "Top Plays"
+            elif books >= MIN_WATCH_BOOKS and edge >= MIN_WATCH_EDGE and true_confidence >= MIN_WATCH_TRUE_CONF:
+                status = "Watch"
+                log_category = "Watchlist"
+            else:
+                continue
+
+            sharp_score = round(clamp((books * 10.0) + (edge * 5.0), 0.0, 100.0), 1)
+            units = calculate_units(true_confidence, status)
+            model_score = round(calculate_model_score(true_prob, edge, books), 1)
+
+            team_name = home_team if len(rows) % 2 == 0 else away_team
+            opponent = away_team if team_name == home_team else home_team
+            play_id = build_play_id(selected_sport, game_label, market_name, selection, prop_type)
+
+            if play_id in used_keys:
+                continue
+            used_keys.add(play_id)
+
+            rows.append(
+                {
+                    "sport": selected_sport,
+                    "game": game_label,
+                    "market": market_name,
+                    "selection": selection,
+                    "player": player_name,
+                    "team": team_name,
+                    "opponent": opponent,
+                    "line": extract_line_from_selection(selection),
+                    "odds": int(odds),
+                    "best_price": int(odds),
+                    "best_book": random.choice(["DraftKings", "FanDuel", "BetMGM"]),
+                    "implied_prob": round(implied_prob * 100.0, 2),
+                    "true_prob": round(true_prob * 100.0, 2),
+                    "edge": edge,
+                    "price_edge": edge,
+                    "books": books,
+                    "books_seen": books,
+                    "consensus_pct": consensus_pct,
+                    "consensus": f"{consensus_pct:.1f}%",
+                    "sharp_score": sharp_score,
+                    "market_signal": round(market_signal, 1),
+                    "matchup_score": round(matchup_score, 1),
+                    "historical_score": round(historical_score, 1),
+                    "true_confidence": true_confidence,
+                    "status": status,
+                    "units": units,
+                    "play_id": play_id,
+                    "log_category": log_category,
+                    "sportsdata_note": "",
+                    "injury_flag": "",
+                    "lineup_flag": "",
+                    "model_score": model_score,
+                    "context_score": 0.0,
+                }
+            )
+
+            if len(rows) >= MAX_PROP_PLAYS_PER_GAME:
+                break
+
+        if len(rows) >= MAX_PROP_PLAYS_PER_GAME:
+            break
+
+    return rows
+
+# =========================================================
 # DATA BUILD
 # =========================================================
 def generate_ai_plays():
@@ -1429,6 +2180,11 @@ def generate_ai_plays():
                         selection = f"{name} {line_value}".strip() if line_value is not None else name
                         team_name = ""
                         opponent = ""
+                    elif market_key == "spreads":
+                        point_text = f" {line_value:+g}" if line_value is not None else ""
+                        selection = f"{name}{point_text}".strip()
+                        team_name = name
+                        opponent = away_team if name == home_team else home_team
                     else:
                         selection = name
                         team_name = name
@@ -1541,6 +2297,18 @@ def generate_ai_plays():
 
             rows.append(row)
 
+        # -------------------------------------------------
+        # Mock prop layer for NBA / NHL / MLB
+        # -------------------------------------------------
+        if ENABLE_PLAYER_PROPS:
+            prop_rows = generate_mock_prop_rows_for_game(
+                game_label=game_label,
+                selected_sport=selected_sport,
+                home_team=home_team,
+                away_team=away_team,
+            )
+            rows.extend(prop_rows)
+
     plays_df = pd.DataFrame(rows)
     if plays_df.empty:
         return pd.DataFrame(columns=empty_cols)
@@ -1572,13 +2340,15 @@ def build_top_plays_df(plays_df: pd.DataFrame):
     if top_df.empty:
         return pd.DataFrame()
 
-    sort_cols = [c for c in ["true_confidence", "edge", "books"] if c in top_df.columns]
+    sort_cols = [c for c in ["rank_score", "true_confidence", "edge", "books"] if c in top_df.columns]
     if sort_cols:
         top_df = top_df.sort_values(sort_cols, ascending=[False] * len(sort_cols))
 
     top_df["log_category"] = "Top Plays"
-    return top_df.head(TOP_PLAYS_LIMIT).reset_index(drop=True)
+    top_df["category"] = "Top Plays"
+    top_df["primary_category"] = "Top Plays"
 
+    return top_df.head(TOP_PLAYS_LIMIT).reset_index(drop=True)
 
 def build_watchlist_df(plays_df: pd.DataFrame, top_df: pd.DataFrame):
     if plays_df is None or plays_df.empty:
@@ -1600,14 +2370,16 @@ def build_watchlist_df(plays_df: pd.DataFrame, top_df: pd.DataFrame):
     if "play_id" in watch_df.columns:
         watch_df = watch_df[~watch_df["play_id"].astype(str).isin(top_ids)].copy()
 
-    sort_cols = [c for c in ["true_confidence", "edge", "books"] if c in watch_df.columns]
+    sort_cols = [c for c in ["rank_score", "true_confidence", "edge", "books"] if c in watch_df.columns]
     if sort_cols:
         watch_df = watch_df.sort_values(sort_cols, ascending=[False] * len(sort_cols))
 
     watch_df["status"] = "Watch"
     watch_df["log_category"] = "Watchlist"
-    return watch_df.head(WATCHLIST_LIMIT).reset_index(drop=True)
+    watch_df["category"] = "Watchlist"
+    watch_df["primary_category"] = "Watchlist"
 
+    return watch_df.head(WATCHLIST_LIMIT).reset_index(drop=True)
 
 def calculate_parlay_odds(american_odds_list):
     decimal_total = 1.0
@@ -1632,7 +2404,6 @@ def calculate_parlay_odds(american_odds_list):
 
     return int(round(-100.0 / (decimal_total - 1.0)))
 
-
 def build_ai_slip_df(top_df: pd.DataFrame, watch_df: pd.DataFrame):
     source_frames = []
 
@@ -1649,22 +2420,22 @@ def build_ai_slip_df(top_df: pd.DataFrame, watch_df: pd.DataFrame):
     if candidate_df.empty:
         return pd.DataFrame()
 
-    sort_cols = [c for c in ["true_confidence", "edge", "books"] if c in candidate_df.columns]
+    sort_cols = [c for c in ["rank_score", "true_confidence", "edge", "books"] if c in candidate_df.columns]
     if sort_cols:
         candidate_df = candidate_df.sort_values(sort_cols, ascending=[False] * len(sort_cols)).reset_index(drop=True)
 
     rows = []
 
-    # Best single
     best_row = candidate_df.iloc[0].to_dict()
     best_row["slip_type"] = "Best Single"
     best_row["parlay_legs"] = 1
     best_row["parlay_odds"] = best_row.get("odds", 0)
     best_row["recommended_units"] = best_row.get("units", 0.5)
     best_row["log_category"] = "AI Picks"
+    best_row["category"] = "AI Picks"
+    best_row["primary_category"] = "AI Picks"
     rows.append(best_row)
 
-    # Best 2-leg and 3-leg
     parlay_candidates = candidate_df.head(6).copy()
 
     for leg_count in [2, 3]:
@@ -1702,11 +2473,16 @@ def build_ai_slip_df(top_df: pd.DataFrame, watch_df: pd.DataFrame):
                     "opponent": "",
                     "line": 0,
                     "odds": parlay_odds,
-                    "implied_prob": american_to_implied_prob(parlay_odds),
-                    "true_prob": round(pd.to_numeric(legs["true_prob"], errors="coerce").fillna(0).mean(), 4),
+                    "best_price": parlay_odds,
+                    "best_book": "",
+                    "implied_prob": round(american_to_implied_prob(parlay_odds) * 100.0, 2),
+                    "true_prob": round(pd.to_numeric(legs["true_prob"], errors="coerce").fillna(0).mean(), 2),
                     "edge": round(avg_edge, 2),
+                    "price_edge": round(avg_edge, 2),
                     "books": round(avg_books, 1),
+                    "books_seen": round(avg_books, 1),
                     "consensus_pct": round(pd.to_numeric(legs.get("consensus_pct", 0), errors="coerce").fillna(0).mean(), 1),
+                    "consensus": "AI Parlay",
                     "sharp_score": round(pd.to_numeric(legs.get("sharp_score", 0), errors="coerce").fillna(0).mean(), 1),
                     "market_signal": round(pd.to_numeric(legs.get("market_signal", 0), errors="coerce").fillna(0).mean(), 1),
                     "matchup_score": round(pd.to_numeric(legs.get("matchup_score", 0), errors="coerce").fillna(0).mean(), 1),
@@ -1716,6 +2492,7 @@ def build_ai_slip_df(top_df: pd.DataFrame, watch_df: pd.DataFrame):
                     "units": PARLAY_UNIT_SHARP if leg_count == 2 else PARLAY_UNIT_FALLBACK_3,
                     "play_id": build_play_id(
                         {
+                            "sport": get_selected_sport(),
                             "game": " | ".join(legs["game"].astype(str).tolist()),
                             "market": "Parlay",
                             "selection": " + ".join(legs["selection"].astype(str).tolist()),
@@ -1723,6 +2500,8 @@ def build_ai_slip_df(top_df: pd.DataFrame, watch_df: pd.DataFrame):
                         }
                     ),
                     "log_category": "AI Parlays",
+                    "category": "AI Parlays",
+                    "primary_category": "AI Parlays",
                     "sportsdata_note": "",
                     "injury_flag": "",
                     "lineup_flag": "",
@@ -1739,13 +2518,16 @@ def build_ai_slip_df(top_df: pd.DataFrame, watch_df: pd.DataFrame):
     if not rows:
         return pd.DataFrame()
 
-    return pd.DataFrame(rows).reset_index(drop=True)
-
+    out = pd.DataFrame(rows).reset_index(drop=True)
+    out = normalize_dataframe_for_selected_sport(out, get_selected_sport())
+    return out
 
 def save_generated_play_snapshots(plays_df: pd.DataFrame):
     selected_sport = get_selected_sport()
 
     plays_df = normalize_dataframe_for_selected_sport(plays_df, selected_sport)
+    plays_df = recalculate_play_metrics(plays_df)
+
     top_df = build_top_plays_df(plays_df)
     watch_df = build_watchlist_df(plays_df, top_df)
     ai_slip_df = build_ai_slip_df(top_df, watch_df)
@@ -1771,19 +2553,22 @@ def save_generated_play_snapshots(plays_df: pd.DataFrame):
     st.session_state["snapshot_refresh_id"] = int(st.session_state.get("snapshot_refresh_id", 0)) + 1
 
     try:
+        persist_generated_play_snapshots(plays_df)
+    except Exception:
+        pass
+
+    try:
         save_tab_snapshots_to_disk()
     except Exception:
         pass
 
     return top_df, watch_df, ai_slip_df
 
-
 def get_snapshot_df(key_name: str):
     value = st.session_state.get(key_name, pd.DataFrame())
     if isinstance(value, pd.DataFrame):
         return value.copy()
     return pd.DataFrame()
-
 
 # =========================================================
 # PARLAY INTELLIGENCE
@@ -1807,7 +2592,6 @@ def calculate_correlation_score(legs):
                 score += 0.5
     return score
 
-
 def selections_conflict(row_a, row_b):
     if row_a["game"] != row_b["game"]:
         return False
@@ -1822,7 +2606,6 @@ def selections_conflict(row_a, row_b):
 
     return False
 
-
 def pair_correlation_penalty(row_a, row_b):
     penalty = 0.0
     reasons = []
@@ -1835,7 +2618,6 @@ def pair_correlation_penalty(row_a, row_b):
         reasons.append("same-game correlation")
 
     return clamp(penalty, 0.0, 1.0), reasons
-
 
 def score_parlay_combo(combo):
     total_penalty = 0.0
@@ -1861,7 +2643,7 @@ def score_parlay_combo(combo):
 
     avg_true_conf = sum(float(leg["true_confidence"]) for leg in combo) / len(combo)
     avg_edge = sum(float(leg["edge"]) for leg in combo) / len(combo)
-    avg_books = sum(float(leg["books_seen"]) for leg in combo) / len(combo)
+    avg_books = sum(float(leg.get("books_seen", leg.get("books", 0))) for leg in combo) / len(combo)
 
     distinct_games = len(set(leg["game"] for leg in combo))
     cross_game = distinct_games == len(combo)
@@ -1911,9 +2693,8 @@ def score_parlay_combo(combo):
         "reasons": reasons[:6],
     }
 
-
 def build_all_parlay_candidates(active_df):
-    if active_df.empty or len(active_df) < 2:
+    if active_df is None or active_df.empty or len(active_df) < 2:
         return []
 
     rows = active_df.to_dict("records")
@@ -1921,11 +2702,11 @@ def build_all_parlay_candidates(active_df):
 
     for leg_count in range(MIN_PARLAY_LEGS, min(MAX_PARLAY_LEGS, len(rows)) + 1):
         for combo in combinations(rows, leg_count):
-            if any(float(leg["edge"]) < 4.0 for leg in combo):
+            if any(float(safe_float(leg.get("edge", 0), 0)) < 4.0 for leg in combo):
                 continue
-            if any(float(leg["true_confidence"]) < 70.0 for leg in combo):
+            if any(float(safe_float(leg.get("true_confidence", 0), 0)) < 70.0 for leg in combo):
                 continue
-            if any(int(leg["books_seen"]) < 3 for leg in combo):
+            if any(int(safe_int(leg.get("books_seen", leg.get("books", 0)), 0)) < 3 for leg in combo):
                 continue
 
             scored = score_parlay_combo(combo)
@@ -1933,7 +2714,6 @@ def build_all_parlay_candidates(active_df):
                 candidates.append(scored)
 
     return candidates
-
 
 def classify_parlay_candidates(candidates):
     sharp_candidates = []
@@ -1966,7 +2746,6 @@ def classify_parlay_candidates(candidates):
     fallback_candidates.sort(key=lambda x: (x["score"], x["avg_true_conf"]), reverse=True)
     return sharp_candidates, fallback_candidates
 
-
 def choose_best_parlay(active_df):
     all_candidates = build_all_parlay_candidates(active_df)
     sharp_candidates, fallback_candidates = classify_parlay_candidates(all_candidates)
@@ -1985,7 +2764,6 @@ def normalize_result_value(result_value):
     if value in ["Pending", "Win", "Loss", "Push"]:
         return value
     return "Pending"
-
 
 def normalize_log_categories(value):
     if isinstance(value, list):
@@ -2007,11 +2785,9 @@ def normalize_log_categories(value):
             cleaned.append(part)
     return cleaned
 
-
 def format_log_categories_for_storage(categories):
     cleaned = normalize_log_categories(categories)
     return " | ".join(cleaned)
-
 
 def add_category_to_logged_bet(existing_row, new_category):
     row = dict(existing_row)
@@ -2020,7 +2796,6 @@ def add_category_to_logged_bet(existing_row, new_category):
         categories.append(new_category)
     row["log_category"] = format_log_categories_for_storage(categories)
     return row
-
 
 def ensure_logged_bet_clv_fields(row):
     row = dict(row)
@@ -2045,7 +2820,6 @@ def ensure_logged_bet_clv_fields(row):
 
     return row
 
-
 def find_logged_bet_index_by_exact_play_id(play_id):
     target = str(play_id).strip()
     if not target:
@@ -2056,7 +2830,6 @@ def find_logged_bet_index_by_exact_play_id(play_id):
             return i
 
     return None
-
 
 def find_logged_bet_index_by_suffix_play_id(play_id):
     target = str(play_id).strip()
@@ -2070,7 +2843,6 @@ def find_logged_bet_index_by_suffix_play_id(play_id):
 
     return None
 
-
 def find_logged_bet_index_by_base_play_id(play_id):
     target = str(play_id).strip()
     if not target:
@@ -2082,17 +2854,14 @@ def find_logged_bet_index_by_base_play_id(play_id):
 
     return find_logged_bet_index_by_suffix_play_id(target)
 
-
 def get_base_play_id(play_id):
     pid = str(play_id).strip()
     if "__" in pid:
         return pid.split("__")[0].strip()
     return pid
 
-
 def same_play_family(play_id_a, play_id_b):
     return get_base_play_id(play_id_a) == get_base_play_id(play_id_b)
-
 
 def extract_line_from_selection(selection_text):
     text = str(selection_text).strip()
@@ -2108,7 +2877,6 @@ def extract_line_from_selection(selection_text):
     except Exception:
         return None
 
-
 def build_logged_bet_row(row_dict, log_category_label):
     enriched = enrich_play_with_learning_fields_compat(row_dict)
 
@@ -2118,15 +2886,23 @@ def build_logged_bet_row(row_dict, log_category_label):
 
     new_row = {
         "play_id": str(enriched.get("play_id", "")).strip(),
+        "sport": get_selected_sport(),
         "game": enriched.get("game"),
         "market": enriched.get("market"),
         "selection": enriched.get("selection"),
+        "player": enriched.get("player", ""),
+        "team": enriched.get("team", ""),
+        "opponent": enriched.get("opponent", ""),
+        "line": enriched.get("line"),
         "odds": enriched.get("odds"),
+        "best_price": enriched.get("best_price", enriched.get("odds")),
+        "best_book": enriched.get("best_book", ""),
         "implied_prob": enriched.get("implied_prob"),
         "true_prob": enriched.get("true_prob"),
         "implied_probability": enriched.get("implied_probability"),
         "true_probability": enriched.get("true_probability"),
         "edge": enriched.get("edge"),
+        "price_edge": enriched.get("price_edge", enriched.get("edge")),
         "play_type": enriched.get("play_type"),
         "primary_category": enriched.get("primary_category"),
         "category": enriched.get("category"),
@@ -2134,15 +2910,26 @@ def build_logged_bet_row(row_dict, log_category_label):
         "stake": safe_float(enriched.get("units", 1.0), 1.0),
         "confidence": enriched.get("confidence"),
         "true_confidence": enriched.get("true_confidence"),
-        "books_seen": enriched.get("books_seen"),
+        "books_seen": enriched.get("books_seen", enriched.get("books")),
+        "books": enriched.get("books", enriched.get("books_seen")),
         "consensus": enriched.get("consensus"),
+        "consensus_pct": enriched.get("consensus_pct"),
         "result": "Pending",
         "profit": 0.0,
         "mode": TEST_MODE,
         "log_category": log_category_label,
         "timestamp": datetime.now().isoformat(),
-
-        # CLV / MARKET TRACKING
+        "sportsdata_note": enriched.get("sportsdata_note", ""),
+        "injury_flag": enriched.get("injury_flag", ""),
+        "lineup_flag": enriched.get("lineup_flag", ""),
+        "context_score": enriched.get("context_score", 0.0),
+        "model_score": enriched.get("model_score", 0.0),
+        "score": enriched.get("score", enriched.get("model_score", 0.0)),
+        "rank_score": enriched.get("rank_score", enriched.get("score", 0.0)),
+        "tier": enriched.get("tier", "C"),
+        "quality_label": enriched.get("quality_label", "Watch"),
+        "watch_tier": enriched.get("watch_tier", ""),
+        "ai_tags": enriched.get("ai_tags", []),
         "open_odds": open_odds,
         "open_line": open_line,
         "closing_odds": None,
@@ -2152,7 +2939,6 @@ def build_logged_bet_row(row_dict, log_category_label):
     }
 
     return ensure_logged_bet_clv_fields(new_row)
-
 
 def auto_log_active_plays(df: pd.DataFrame):
     if df is None or df.empty:
@@ -2226,12 +3012,11 @@ def auto_log_active_plays(df: pd.DataFrame):
 
     return added
 
-
 def log_ai_slip_pick(best_row):
     if best_row is None:
         return False
 
-    pid = str(best_row.get("play_id", "")).strip()
+    pid = str(best_row.get("play_id", "")).strip() if hasattr(best_row, "get") else ""
     if not pid:
         return False
 
@@ -2273,6 +3058,22 @@ def log_ai_slip_pick(best_row):
     save_bet_log()
     return True
 
+def scale_parlay_units(parlay):
+    if not parlay:
+        return 0.0
+
+    leg_count = safe_int(parlay.get("leg_count", 2), 2)
+    avg_true_conf = safe_float(parlay.get("avg_true_conf", 0), 0.0)
+    penalty = safe_float(parlay.get("total_penalty", 1.0), 1.0)
+    approval_type = str(parlay.get("approval_type", "")).strip()
+
+    if approval_type == "Sharp Approved" and avg_true_conf >= 70 and penalty <= SHARP_PARLAY_MAX_PENALTY:
+        return round(PARLAY_UNIT_SHARP, 2)
+
+    if leg_count <= 2:
+        return round(PARLAY_UNIT_FALLBACK_2, 2)
+
+    return round(PARLAY_UNIT_FALLBACK_3, 2)
 
 def log_ai_parlay_pick(best_parlay):
     if best_parlay is None:
@@ -2303,15 +3104,23 @@ def log_ai_parlay_pick(best_parlay):
 
     new_row = {
         "play_id": parlay_id,
+        "sport": get_selected_sport(),
         "game": " | ".join(sorted(set([str(leg.get("game", "")) for leg in best_parlay.get("legs", [])]))),
         "market": "parlay",
         "selection": " | ".join([str(leg.get("selection", "")) for leg in best_parlay.get("legs", [])]),
+        "player": "",
+        "team": "",
+        "opponent": "",
+        "line": None,
         "odds": best_parlay.get("combined_odds"),
+        "best_price": best_parlay.get("combined_odds"),
+        "best_book": "",
         "implied_prob": None,
         "true_prob": None,
         "implied_probability": None,
         "true_probability": None,
         "edge": best_parlay.get("avg_edge"),
+        "price_edge": best_parlay.get("avg_edge"),
         "play_type": "parlay",
         "primary_category": "AI Parlays",
         "category": "AI Parlays",
@@ -2320,14 +3129,25 @@ def log_ai_parlay_pick(best_parlay):
         "confidence": "High" if float(best_parlay.get("avg_true_conf", 0)) >= 70 else "Medium",
         "true_confidence": best_parlay.get("avg_true_conf"),
         "books_seen": best_parlay.get("avg_books"),
+        "books": best_parlay.get("avg_books"),
         "consensus": best_parlay.get("approval_type"),
+        "consensus_pct": None,
         "result": "Pending",
         "profit": 0.0,
         "mode": TEST_MODE,
         "log_category": "AI Parlay",
         "timestamp": datetime.now().isoformat(),
-
-        # CLV / MARKET TRACKING
+        "sportsdata_note": "",
+        "injury_flag": "",
+        "lineup_flag": "",
+        "context_score": 0.0,
+        "model_score": best_parlay.get("score", 0.0),
+        "score": best_parlay.get("score", 0.0),
+        "rank_score": best_parlay.get("score", 0.0),
+        "tier": "B",
+        "quality_label": "Strong",
+        "watch_tier": "",
+        "ai_tags": [],
         "open_odds": best_parlay.get("combined_odds"),
         "open_line": None,
         "closing_odds": None,
@@ -2341,255 +3161,6 @@ def log_ai_parlay_pick(best_parlay):
     st.session_state["bet_log"].append(new_row)
     save_bet_log()
     return True
-# =========================================================
-# PLAY CARD RENDER
-# =========================================================
-def render_play_card(row: pd.Series, show_best_badge: bool = False):
-    badge_bg, badge_fg = tier_colors(row["tier"])
-    is_active_play = str(row["status"]) == "Active"
-    status_bg = "#f59e0b" if is_active_play else "#64748b"
-    status_fg = "#111827" if is_active_play else "#f8fafc"
-    best_display = "inline-flex" if show_best_badge else "none"
-
-    fill_width, fill_color, conf_label = confidence_fill_and_color(row["true_confidence"])
-    edge_color = "#4ade80" if float(row["edge"]) >= 4 else ("#fbbf24" if float(row["edge"]) >= 2 else "#f87171")
-
-    watch_tier = row["watch_tier"] if "watch_tier" in row and pd.notna(row["watch_tier"]) else ""
-    watch_display = "none"
-    watch_bg = "#334155"
-    watch_fg = "#e2e8f0"
-
-    if not is_active_play and watch_tier:
-        watch_display = "inline-flex"
-        if watch_tier == "Near Active":
-            watch_bg = "#fef3c7"
-            watch_fg = "#92400e"
-        elif watch_tier == "Monitor":
-            watch_bg = "#dbeafe"
-            watch_fg = "#1d4ed8"
-        else:
-            watch_bg = "#e5e7eb"
-            watch_fg = "#374151"
-
-    visible_tags = list(row["ai_tags"])[:3]
-    tags_html = ""
-    for tag in visible_tags:
-        tags_html += f"""
-        <span style="background:#1e2638;color:#d8e0ec;border:1px solid #2a3448;border-radius:999px;
-        padding:3px 7px;font-size:10px;line-height:1;display:inline-block;margin-right:5px;margin-bottom:4px;white-space:nowrap;">{tag}</span>
-        """
-
-    injury_flag = str(row.get("injury_flag", "")).strip()
-    lineup_flag = str(row.get("lineup_flag", "")).strip()
-    sportsdata_note = str(row.get("sportsdata_note", "")).strip()
-    context_score = row.get("context_score", 0)
-
-    injury_html = ""
-    if injury_flag:
-        injury_html = f"""
-        <span style="background:#7f1d1d;color:#fecaca;padding:4px 8px;border-radius:999px;font-size:10px;font-weight:800;">
-            Injury: {injury_flag}
-        </span>
-        """
-
-    lineup_html = ""
-    if lineup_flag:
-        lineup_bg = "#14532d" if lineup_flag == "Starting" else "#3f3f46"
-        lineup_fg = "#dcfce7" if lineup_flag == "Starting" else "#e4e4e7"
-        lineup_html = f"""
-        <span style="background:{lineup_bg};color:{lineup_fg};padding:4px 8px;border-radius:999px;font-size:10px;font-weight:800;">
-            {lineup_flag}
-        </span>
-        """
-
-    context_html = ""
-    try:
-        context_val = float(context_score)
-        context_color = "#22c55e" if context_val > 0 else ("#ef4444" if context_val < 0 else "#94a3b8")
-        context_html = f"""
-        <div><div style="color:#91a0b7;font-size:10px;">Context</div><div style="color:{context_color};font-weight:700;">{context_val:+.1f}</div></div>
-        """
-    except:
-        pass
-
-    note_html = ""
-    if sportsdata_note:
-        note_html = f"""
-        <div style="margin-top:8px;padding:8px 10px;background:#111827;border:1px solid #243047;border-radius:12px;
-        color:#d1d5db;font-size:11px;line-height:1.35;">
-            <strong style="color:#93c5fd;">SportsData:</strong> {sportsdata_note}
-        </div>
-        """
-
-    implied_prob = float(row.get("implied_prob", 0))
-    true_prob = float(row.get("true_prob", 0))
-    value_edge = float(row.get("edge", 0))
-
-    html = f"""
-    <html><head><meta name="viewport" content="width=device-width, initial-scale=1" /></head>
-    <body style="margin:0;background:transparent;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
-    <div style="background:linear-gradient(180deg, #151b29 0%, #0e1422 100%);
-    border:1px solid #243047;border-radius:22px;padding:12px;color:#ffffff;box-sizing:border-box;">
-
-        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:7px;">
-            <span style="background:{badge_bg};color:{badge_fg};padding:5px 9px;border-radius:999px;font-size:10px;font-weight:800;">Tier {row['tier']}</span>
-            <span style="background:{status_bg};color:{status_fg};padding:5px 9px;border-radius:999px;font-size:10px;font-weight:800;">{row['status']}</span>
-            <span style="background:{watch_bg};color:{watch_fg};padding:5px 9px;border-radius:999px;font-size:10px;font-weight:800;display:{watch_display};">{watch_tier}</span>
-            <span style="background:#efe2ff;color:#6b21a8;padding:4px 8px;border-radius:999px;font-size:9px;font-weight:800;display:{best_display};">🏆 Best Bet</span>
-            {injury_html}
-            {lineup_html}
-        </div>
-
-        <div style="font-size:21px;font-weight:800;margin-bottom:5px;">{row['selection']}</div>
-        <div style="color:#d4dbe8;font-size:12px;margin-bottom:8px;">{row['game']} • {prop_market_label(row['market']) if is_prop_market(row['market']) else str(row['market']).title()}</div>
-
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 12px;margin-bottom:6px;">
-            <div><div style="color:#91a0b7;font-size:10px;">Odds</div><div style="font-weight:700;">{row['odds']}</div></div>
-            <div><div style="color:#91a0b7;font-size:10px;">AI Score</div><div style="color:#60a5fa;font-weight:700;">{row['score']}</div></div>
-            <div><div style="color:#91a0b7;font-size:10px;">Implied Prob</div><div style="font-weight:700;">{implied_prob:.1f}%</div></div>
-            <div><div style="color:#91a0b7;font-size:10px;">True Prob</div><div style="font-weight:700;">{true_prob:.1f}%</div></div>
-            <div><div style="color:#91a0b7;font-size:10px;">Value Edge</div><div style="color:{edge_color};font-weight:700;">{value_edge:.2f}%</div></div>
-            <div><div style="color:#91a0b7;font-size:10px;">Units</div><div style="font-weight:700;">{row['units']:.2f}u</div></div>
-            <div><div style="color:#91a0b7;font-size:10px;">Consensus</div><div style="font-weight:700;">{row['consensus']}</div></div>
-            <div><div style="color:#91a0b7;font-size:10px;">Books</div><div style="font-weight:700;">{row['books_seen']}</div></div>
-            <div><div style="color:#91a0b7;font-size:10px;">True Conf</div><div style="font-weight:700;">{row['true_confidence']:.1f}</div></div>
-            <div><div style="color:#91a0b7;font-size:10px;">Quality</div><div style="font-weight:700;">{row['quality_label']}</div></div>
-            {context_html}
-        </div>
-
-        <div style="height:1px;background:#283550;margin:6px 0;"></div>
-
-        <div style="color:#91a0b7;font-size:10px;">Confidence • {conf_label}</div>
-        <div style="width:100%;height:5px;background:#24324b;border-radius:999px;">
-            <div style="width:{fill_width};height:5px;background:{fill_color};border-radius:999px;"></div>
-        </div>
-
-        <div style="margin-top:6px;">{tags_html}</div>
-        {note_html}
-
-    </div></body></html>
-    """
-
-    components.html(html, height=390 if is_mobile() else 445, scrolling=False)
-# =========================================================
-# PARLAY CARD RENDER
-# =========================================================
-def render_parlay_card(parlay):
-    if not parlay:
-        st.info("No qualifying parlay available.")
-        return
-
-    risk_color = {
-        "Low": "#10b981",
-        "Moderate": "#f59e0b",
-        "Elevated": "#ef4444",
-    }.get(parlay["risk_label"], "#94a3b8")
-
-    legs_html = ""
-    for i, leg in enumerate(parlay["legs"], start=1):
-        legs_html += f"""
-        <div style="padding:6px 0;border-bottom:1px solid #243047;">
-            <div style="font-weight:800;">{i}. {leg['selection']}</div>
-            <div style="font-size:12px;color:#cbd5e1;">
-                {leg['game']} • {prop_market_label(leg['market']) if is_prop_market(leg['market']) else "Team Market"} • {leg['odds']}
-            </div>
-        </div>
-        """
-
-    html = f"""
-    <html>
-    <body style="margin:0;font-family:sans-serif;">
-        <div style="background:#0e1422;border-radius:20px;padding:12px;border:1px solid #243047;color:white;">
-            <div style="font-weight:800;margin-bottom:6px;">🔥 AI PARLAY</div>
-            <div style="margin-bottom:6px;">{parlay['approval_type']}</div>
-            <div style="margin-bottom:6px;">Odds: {parlay['combined_odds']} | Conf: {parlay['avg_true_conf']}</div>
-            <div style="color:{risk_color};font-weight:800;margin-bottom:10px;">Risk: {parlay['risk_label']}</div>
-            {legs_html}
-        </div>
-    </body>
-    </html>
-    """
-
-    components.html(html, height=260, scrolling=False)
-# =========================================================
-# TABLE RENDER HELPERS
-# =========================================================
-def render_parlay_table(candidates, title):
-    st.markdown(f"**{title}**")
-
-    if not candidates:
-        st.info("No candidates.")
-        return
-
-    rows = []
-    for p in candidates[:5]:
-        rows.append(
-            {
-                "Legs": p.get("leg_count"),
-                "Odds": p.get("combined_odds"),
-                "Avg Conf": round(p.get("avg_true_conf", 0), 1),
-                "Avg Edge": round(p.get("avg_edge", 0), 2),
-                "Score": round(p.get("display_score", p.get("score", 0)), 1),
-                "Risk": p.get("risk_label"),
-            }
-        )
-
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-
-
-def render_table_desktop(df: pd.DataFrame):
-    cols = [
-        "tier",
-        "quality_label",
-        "status",
-        "watch_tier",
-        "game",
-        "market",
-        "selection",
-        "odds",
-        "implied_prob",
-        "true_prob",
-        "edge",
-        "score",
-        "context_score",
-        "injury_flag",
-        "lineup_flag",
-        "sportsdata_note",
-        "units",
-        "confidence",
-        "true_confidence",
-        "books_seen",
-        "best_price",
-        "consensus",
-        "price_edge",
-    ]
-    existing_cols = [c for c in cols if c in df.columns]
-
-    table_df = df[existing_cols].copy()
-
-    if "implied_prob" in table_df.columns:
-        table_df["implied_prob"] = pd.to_numeric(table_df["implied_prob"], errors="coerce").round(1)
-    if "true_prob" in table_df.columns:
-        table_df["true_prob"] = pd.to_numeric(table_df["true_prob"], errors="coerce").round(1)
-    if "edge" in table_df.columns:
-        table_df["edge"] = pd.to_numeric(table_df["edge"], errors="coerce").round(2)
-    if "true_confidence" in table_df.columns:
-        table_df["true_confidence"] = pd.to_numeric(table_df["true_confidence"], errors="coerce").round(1)
-
-    st.dataframe(table_df, use_container_width=True, hide_index=True)
-
-
-def render_mobile_or_table(df: pd.DataFrame, best_first: bool = False):
-    if df.empty:
-        st.info("No plays available.")
-        return
-
-    if is_mobile():
-        for idx, (_, row) in enumerate(df.iterrows()):
-            render_play_card(row, show_best_badge=(best_first and idx == 0))
-    else:
-        render_table_desktop(df)
-
 
 # =========================================================
 # ROI CALCULATOR (CATEGORY-BASED)
@@ -2603,7 +3174,6 @@ def build_roi_dashboard(log_df: pd.DataFrame):
     if "log_category" not in df.columns:
         df["log_category"] = "Uncategorized"
 
-    # Only settled bets
     df = df[df["result"].isin(["Win", "Loss", "Push"])].copy()
     if df.empty:
         return pd.DataFrame()
@@ -2673,26 +3243,22 @@ def build_roi_dashboard(log_df: pd.DataFrame):
 # - get_learning_activation_metrics()
 # - apply_v33_learning_filters()
 # - apply_learning_engine_to_df()
-# =========================================================
+
 # =========================================================
 # EFFECTIVE THRESHOLDS + UNIT SCALING HELPERS
 # =========================================================
 def get_effective_min_active_edge():
     return round(get_dynamic_edge_threshold("Top Plays") * 100.0, 2)
 
-
 def get_effective_min_watch_edge():
     active_edge = get_effective_min_active_edge()
     return round(max(MIN_WATCH_EDGE, active_edge - 1.75), 2)
 
-
 def get_effective_min_active_true_conf():
     return float(MIN_ACTIVE_TRUE_CONF)
 
-
 def get_effective_min_watch_true_conf():
     return float(MIN_WATCH_TRUE_CONF)
-
 
 def classify_watch_tier(row):
     edge = safe_float(row.get("edge", 0), 0.0)
@@ -2710,7 +3276,6 @@ def classify_watch_tier(row):
 
     return "Weak Watch"
 
-
 def _confidence_unit_multiplier(true_conf):
     tc = safe_float(true_conf, 0.0)
 
@@ -2721,7 +3286,6 @@ def _confidence_unit_multiplier(true_conf):
     if tc >= 65:
         return 1.00
     return 0.92
-
 
 def scale_single_units(row):
     edge = safe_float(row.get("edge", 0), 0.0)
@@ -2742,7 +3306,6 @@ def scale_single_units(row):
 
     return round(clamp(base_units, SINGLE_UNIT_MIN, SINGLE_UNIT_MAX), 2)
 
-
 def scale_watch_units(row):
     edge = safe_float(row.get("edge", 0), 0.0)
     tc = safe_float(row.get("true_confidence", 0), 0.0)
@@ -2758,23 +3321,6 @@ def scale_watch_units(row):
 
     return round(clamp(base_units, WATCH_UNIT_MIN, WATCH_UNIT_MAX), 2)
 
-
-def scale_parlay_units(parlay):
-    if not parlay:
-        return 0.0
-
-    leg_count = safe_int(parlay.get("leg_count", 2), 2)
-    avg_true_conf = safe_float(parlay.get("avg_true_conf", 0), 0.0)
-    penalty = safe_float(parlay.get("total_penalty", 1.0), 1.0)
-    approval_type = str(parlay.get("approval_type", "")).strip()
-
-    if approval_type == "Sharp Approved" and avg_true_conf >= 70 and penalty <= SHARP_PARLAY_MAX_PENALTY:
-        return round(PARLAY_UNIT_SHARP, 2)
-
-    if leg_count <= 2:
-        return round(PARLAY_UNIT_FALLBACK_2, 2)
-
-    return round(PARLAY_UNIT_FALLBACK_3, 2)
 # =========================================================
 # PORTFOLIO LAYER
 # =========================================================
@@ -2816,7 +3362,7 @@ def build_ai_portfolio(best_single, chosen_parlay, parlay_candidates):
             running_units += units
 
     return portfolio
-    
+
 # =========================================================
 # DATA PREP (CRITICAL FIX)
 # =========================================================

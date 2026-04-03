@@ -2,11 +2,11 @@
 # IMPORTS + API CONFIG (CLEAN MASTER BLOCK)
 # =========================================================
 import os
-import json
 import re
-import hashlib
-import random
+import json
 import time
+import random
+import hashlib
 from itertools import combinations
 from datetime import datetime, timedelta
 
@@ -16,6 +16,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 st.set_page_config(page_title="Sports Betting AI Dashboard V34", layout="wide")
+
 # =========================================================
 # MULTI-SPORT STATE + HELPERS
 # =========================================================
@@ -23,1657 +24,52 @@ SUPPORTED_SPORTS = {
     "NBA": {
         "sport_key": "basketball_nba",
         "sportsdata_slug": "nba",
+        "label": "NBA",
     },
     "NHL": {
         "sport_key": "icehockey_nhl",
         "sportsdata_slug": "nhl",
+        "label": "NHL",
     },
     "MLB": {
         "sport_key": "baseball_mlb",
         "sportsdata_slug": "mlb",
+        "label": "MLB",
     },
     "WNBA": {
         "sport_key": "basketball_wnba",
         "sportsdata_slug": "wnba",
+        "label": "WNBA",
     },
 }
 
 DEFAULT_SPORT = "NBA"
 
-if "selected_sport" not in st.session_state:
-    st.session_state["selected_sport"] = DEFAULT_SPORT
-
-if "learning_state_by_sport" not in st.session_state:
-    st.session_state["learning_state_by_sport"] = {}
-
-if "odds_api_games_by_sport" not in st.session_state:
-    st.session_state["odds_api_games_by_sport"] = {}
-
-if "last_successful_odds_games_by_sport" not in st.session_state:
-    st.session_state["last_successful_odds_games_by_sport"] = {}
-
-if "api_mode_by_sport" not in st.session_state:
-    st.session_state["api_mode_by_sport"] = {}
-
-if "last_api_pull_epoch_by_sport" not in st.session_state:
-    st.session_state["last_api_pull_epoch_by_sport"] = {}
-
-if "odds_api_reset_expected_by_sport" not in st.session_state:
-    st.session_state["odds_api_reset_expected_by_sport"] = {}
-
-def get_selected_sport():
-    raw = str(st.session_state.get("selected_sport", DEFAULT_SPORT)).strip().upper()
-    if raw in SUPPORTED_SPORTS:
-        return raw
-    return DEFAULT_SPORT
+# WNBA intentionally excluded for now to reduce calls until season is closer
+ACTIVE_REFRESH_SPORTS = ["NBA", "NHL", "MLB"]
 
 # =========================================================
-# GENERATED PLAY SNAPSHOT PERSISTENCE
-# =========================================================
-def _safe_df_snapshot(df):
-    if isinstance(df, pd.DataFrame) and not df.empty:
-        return df.copy()
-    return pd.DataFrame()
-
-
-def persist_generated_play_snapshots(plays_df: pd.DataFrame):
-    """
-    Persist generated plays + derived snapshots safely across reruns.
-    This version is STABLE and will NOT wipe snapshots unintentionally.
-    """
-
-    if not isinstance(plays_df, pd.DataFrame):
-        return
-
-    if plays_df.empty:
-        existing_snapshot_df = st.session_state.get("snapshot_plays_df", pd.DataFrame())
-        if not isinstance(existing_snapshot_df, pd.DataFrame) or existing_snapshot_df.empty:
-            clear_generated_play_snapshots()
-        return
-
-    working_df = plays_df.copy()
-
-    selected_sport = get_selected_sport()
-
-    try:
-        working_df = attach_selected_sport_to_dataframe(working_df, selected_sport)
-    except Exception:
-        pass
-
-    try:
-        working_df = normalize_dataframe_for_selected_sport(working_df, selected_sport)
-    except Exception:
-        pass
-
-    # -----------------------------------------------------
-    # COLUMN SAFETY
-    # -----------------------------------------------------
-    if "status" not in working_df.columns:
-        working_df["status"] = ""
-
-    if "edge" not in working_df.columns:
-        working_df["edge"] = 0.0
-
-    if "true_confidence" not in working_df.columns:
-        working_df["true_confidence"] = 0.0
-
-    working_df["status"] = working_df["status"].astype(str).str.strip()
-    working_df["edge"] = pd.to_numeric(working_df["edge"], errors="coerce").fillna(0.0)
-    working_df["true_confidence"] = pd.to_numeric(
-        working_df["true_confidence"], errors="coerce"
-    ).fillna(0.0)
-
-    # -----------------------------------------------------
-    # SNAPSHOT CREATION (FIXED)
-    # -----------------------------------------------------
-    active_df = working_df[
-        working_df["status"].astype(str).str.strip().str.lower() == "active"
-    ].copy()
-
-    watchlist_df = working_df[
-        working_df["status"].astype(str).str.strip().str.lower() == "watchlist"
-    ].copy()
-
-    if not active_df.empty:
-        active_df = active_df.sort_values(
-            by=["true_confidence", "edge"],
-            ascending=[False, False],
-        ).reset_index(drop=True)
-
-    if not watchlist_df.empty:
-        watchlist_df = watchlist_df.sort_values(
-            by=["true_confidence", "edge"],
-            ascending=[False, False],
-        ).reset_index(drop=True)
-
-    top_limit = int(globals().get("TOP_PLAYS_LIMIT", 10))
-    top_plays_df = active_df.head(top_limit).copy() if not active_df.empty else pd.DataFrame()
-
-    # -----------------------------------------------------
-    # SAVE TO SESSION STATE (CORE FIX)
-    # -----------------------------------------------------
-    st.session_state["plays_df"] = working_df.copy()
-    st.session_state["snapshot_plays_df"] = working_df.copy()
-    st.session_state["snapshot_active_df"] = active_df.copy()
-    st.session_state["snapshot_watchlist_df"] = watchlist_df.copy()
-    st.session_state["snapshot_top_plays_df"] = top_plays_df.copy()
-
-    st.session_state["snapshot_last_updated"] = pd.Timestamp.now().strftime(
-        "%Y-%m-%d %I:%M:%S %p"
-    )
-
-
-def get_persisted_plays_df():
-    df = st.session_state.get("plays_df", pd.DataFrame())
-    if isinstance(df, pd.DataFrame):
-        return df.copy()
-    return pd.DataFrame()
-
-
-def clear_generated_play_snapshots():
-    """
-    Only clears snapshots when truly necessary.
-    """
-    st.session_state["plays_df"] = pd.DataFrame()
-    st.session_state["snapshot_plays_df"] = pd.DataFrame()
-    st.session_state["snapshot_active_df"] = pd.DataFrame()
-    st.session_state["snapshot_watchlist_df"] = pd.DataFrame()
-    st.session_state["snapshot_top_plays_df"] = pd.DataFrame()
-    st.session_state["snapshot_last_updated"] = pd.Timestamp.now().strftime(
-        "%Y-%m-%d %I:%M:%S %p"
-    )
-
-# =========================================================
-# SPORT SELECTOR (V35 BLOCK 3)
-# =========================================================
-
-st.sidebar.markdown("### 🏆 Select Sport")
-
-# Build dropdown options
-sport_options = list(SUPPORTED_SPORTS.keys())
-
-# Ensure current selection is valid
-current_selected = st.session_state.get("selected_sport", DEFAULT_SPORT)
-if current_selected not in sport_options:
-    current_selected = DEFAULT_SPORT
-
-# UI selector
-selected_sport_ui = st.sidebar.selectbox(
-    "Choose Sport",
-    sport_options,
-    index=sport_options.index(current_selected)
-)
-
-# Sync UI → session state
-st.session_state["selected_sport"] = selected_sport_ui
-
-# Always use helper (single source of truth)
-CURRENT_SPORT = get_selected_sport()
-
-# Convenience accessors (CRITICAL FOR NEXT BLOCKS)
-CURRENT_SPORT_CONFIG = SUPPORTED_SPORTS.get(CURRENT_SPORT, {})
-
-CURRENT_ODDS_KEY = CURRENT_SPORT_CONFIG.get("sport_key", "")
-CURRENT_SPORTSDATA_SLUG = CURRENT_SPORT_CONFIG.get("sportsdata_slug", "")
-
-# Debug (safe to remove later)
-st.sidebar.caption(f"Active Sport: {CURRENT_SPORT}")
-
-def get_sport_config(sport=None):
-    sport_name = str(sport or get_selected_sport()).strip().upper()
-    return SUPPORTED_SPORTS.get(sport_name, SUPPORTED_SPORTS[DEFAULT_SPORT])
-
-def get_current_sport_key():
-    return get_sport_config()["sport_key"]
-
-def get_current_sportsdata_slug():
-    return get_sport_config()["sportsdata_slug"]
-
-def get_learning_state_for_sport(sport=None):
-    sport_name = str(sport or get_selected_sport()).strip().upper()
-    all_states = st.session_state.get("learning_state_by_sport", {})
-
-    if sport_name not in all_states or not isinstance(all_states.get(sport_name), dict):
-        all_states[sport_name] = {
-            "weights": {
-                "true_probability": 0.30,
-                "price_edge": 0.25,
-                "market_signal": 0.15,
-                "matchup_quality": 0.15,
-                "historical_performance": 0.15,
-            },
-            "category_thresholds": {
-                "Top Plays": 0.030,
-                "AI Picks": 0.035,
-                "AI Parlays": 0.050,
-                "Watchlist": 0.020,
-            },
-            "last_update": None,
-            "play_type_stats": {},
-            "category_stats": {},
-            "bad_play_type_flags": {},
-            "category_min_samples": 3,
-            "accelerated_learning_mode": True,
-        }
-
-    st.session_state["learning_state_by_sport"] = all_states
-    return all_states[sport_name]
-
-def save_learning_state_for_sport(state, sport=None):
-    sport_name = str(sport or get_selected_sport()).strip().upper()
-    all_states = st.session_state.get("learning_state_by_sport", {})
-    all_states[sport_name] = state
-    st.session_state["learning_state_by_sport"] = all_states
-
-def get_odds_games_for_sport(sport=None):
-    sport_name = str(sport or get_selected_sport()).strip().upper()
-    return st.session_state.get("odds_api_games_by_sport", {}).get(sport_name, [])
-
-def set_odds_games_for_sport(games, sport=None):
-    sport_name = str(sport or get_selected_sport()).strip().upper()
-    mapping = st.session_state.get("odds_api_games_by_sport", {})
-    mapping[sport_name] = games
-    st.session_state["odds_api_games_by_sport"] = mapping
-
-def get_cached_games_for_sport(sport=None):
-    sport_name = str(sport or get_selected_sport()).strip().upper()
-    return st.session_state.get("last_successful_odds_games_by_sport", {}).get(sport_name, [])
-
-def set_cached_games_for_sport(games, sport=None):
-    sport_name = str(sport or get_selected_sport()).strip().upper()
-    mapping = st.session_state.get("last_successful_odds_games_by_sport", {})
-    mapping[sport_name] = games
-    st.session_state["last_successful_odds_games_by_sport"] = mapping
-
-def get_api_mode_for_sport(sport=None):
-    sport_name = str(sport or get_selected_sport()).strip().upper()
-    return st.session_state.get("api_mode_by_sport", {}).get(sport_name, "idle")
-
-def set_api_mode_for_sport(mode, sport=None):
-    sport_name = str(sport or get_selected_sport()).strip().upper()
-    mapping = st.session_state.get("api_mode_by_sport", {})
-    mapping[sport_name] = str(mode).strip().lower()
-    st.session_state["api_mode_by_sport"] = mapping
-
-def get_last_pull_epoch_for_sport(sport=None):
-    sport_name = str(sport or get_selected_sport()).strip().upper()
-    return float(st.session_state.get("last_api_pull_epoch_by_sport", {}).get(sport_name, 0) or 0)
-
-def set_last_pull_epoch_for_sport(epoch_value, sport=None):
-    sport_name = str(sport or get_selected_sport()).strip().upper()
-    mapping = st.session_state.get("last_api_pull_epoch_by_sport", {})
-    mapping[sport_name] = float(epoch_value or 0)
-    st.session_state["last_api_pull_epoch_by_sport"] = mapping
-
-def get_api_reset_expected_for_sport(sport=None):
-    sport_name = str(sport or get_selected_sport()).strip().upper()
-    return str(st.session_state.get("odds_api_reset_expected_by_sport", {}).get(sport_name, "")).strip()
-
-def set_api_reset_expected_for_sport(value, sport=None):
-    sport_name = str(sport or get_selected_sport()).strip().upper()
-    mapping = st.session_state.get("odds_api_reset_expected_by_sport", {})
-    mapping[sport_name] = str(value).strip()
-    st.session_state["odds_api_reset_expected_by_sport"] = mapping
-
-def get_effective_odds_games_for_sport(sport=None):
-    live_games = get_odds_games_for_sport(sport)
-    if live_games:
-        return live_games
-    return get_cached_games_for_sport(sport)
-
-def get_bet_log_for_sport(sport=None):
-    sport_name = str(sport or get_selected_sport()).strip().upper()
-    rows = st.session_state.get("bet_log", [])
-    return [
-        row for row in rows
-        if str(row.get("sport", "")).strip().upper() == sport_name
-    ]
-# =========================================================
-# API CONFIG (REQUIRED)
-# =========================================================
-
-# -----------------------------
-# SPORTS DATA IO CONFIG
-# -----------------------------
-SPORTSDATA_BASES = {
-    "nba": "https://api.sportsdata.io/v3/nba",
-    "nhl": "https://api.sportsdata.io/v3/nhl",
-    "mlb": "https://api.sportsdata.io/v3/mlb",
-}
-
-def get_sportsdata_key():
-    possible_keys = [
-        "SPORTSDATA_API_KEY",
-        "SPORTSDATAIO_API_KEY",
-        "SPORTS_DATA_API_KEY",
-    ]
-    for key_name in possible_keys:
-        try:
-            value = st.secrets.get(key_name, "")
-            if value:
-                return str(value).strip()
-        except:
-            pass
-    return ""
-
-SPORTSDATA_API_KEY = get_sportsdata_key()
-
-
-# -----------------------------
-# ODDS API CONFIG
-# -----------------------------
-def get_odds_api_key():
-    possible_keys = [
-        "ODDS_API_KEY",
-        "THE_ODDS_API_KEY",
-    ]
-    for key_name in possible_keys:
-        try:
-            value = st.secrets.get(key_name, "")
-            if value:
-                return str(value).strip()
-        except:
-            pass
-    return ""
-
-ODDS_API_KEY = get_odds_api_key()
-
-# =========================================================
-# ODDS API ENDPOINT (MULTI-SPORT - V35 BLOCK 4)
-# =========================================================
-
-CURRENT_SPORT_KEY = get_current_sport_key()
-
-ODDS_API_URL = f"https://api.the-odds-api.com/v4/sports/{CURRENT_SPORT_KEY}/odds"
-# Free-plan friendly bookmaker set
-ODDS_BOOKMAKERS = "draftkings,fanduel,betmgm"
-# =========================================================
-# PERSISTENCE (BET LOG CSV)
+# GLOBAL CONSTANTS
 # =========================================================
 BET_LOG_FILE = "bet_log.csv"
+LEARNING_STATE_FILE = "learning_state_by_sport.json"
+TAB_SNAPSHOT_FILE = "tab_snapshots_by_sport.json"
+PERSISTED_PLAYS_FILE = "persisted_plays_by_sport.json"
 
-REQUIRED_BET_LOG_COLUMNS = [
-    "play_id",
-    "game",
-    "market",
-    "selection",
-    "odds",
-    "units",
-    "stake",
-    "confidence",
-    "true_confidence",
-    "edge",
-    "books_seen",
-    "consensus",
-    "result",
-    "profit",
-    "mode",
-    "log_category",
-    "timestamp",
+ODDS_API_BASE = "https://api.the-odds-api.com/v4/sports"
+ODDS_REGIONS = "us"
+ODDS_MARKETS = "h2h,spreads,totals"
+ODDS_ODDS_FORMAT = "american"
+ODDS_BOOKMAKERS = "draftkings,fanduel,betmgm,caesars,espnbet,betrivers"
 
-    # learning / compatibility
-    "implied_prob",
-    "true_prob",
-    "implied_probability",
-    "true_probability",
-    "play_type",
-    "primary_category",
-    "category",
+DAILY_API_CALL_LIMIT = 10
+API_COOLDOWN_SECONDS = 90
 
-    # -----------------------------
-    # CLV / MARKET TRACKING FIELDS
-    # -----------------------------
-    "open_odds",
-    "open_line",
-    "closing_odds",
-    "closing_line",
-    "clv_diff",
-    "clv_result",
-]
+TEST_MODE = "Paper Test"
 
+TOP_PLAYS_LIMIT = 10
+WATCHLIST_LIMIT = 18
 
-def load_bet_log():
-    try:
-        df = pd.read_csv(BET_LOG_FILE)
-
-        if df is None or df.empty:
-            return []
-
-        # Ensure all required columns exist
-        for col in REQUIRED_BET_LOG_COLUMNS:
-            if col not in df.columns:
-                df[col] = None
-
-        # Normalize core text fields
-        for col in ["play_id", "game", "market", "selection", "odds", "log_category", "result"]:
-            if col in df.columns:
-                df[col] = df[col].fillna("").astype(str).replace({"nan": "", "None": "", "none": ""}).str.strip()
-
-        # Clean result labels
-        if "result" in df.columns:
-            df["result"] = df["result"].replace(
-                {
-                    "win": "Win",
-                    "loss": "Loss",
-                    "push": "Push",
-                    "pending": "Pending",
-                    "": "Pending",
-                    "nan": "Pending",
-                    "None": "Pending",
-                    "none": "Pending",
-                }
-            )
-            df["result"] = df["result"].apply(
-                lambda x: x if x in ["Pending", "Win", "Loss", "Push"] else "Pending"
-            )
-
-        # Numeric cleanup
-        numeric_cols = [
-            "units",
-            "stake",
-            "true_confidence",
-            "edge",
-            "books_seen",
-            "profit",
-            "implied_prob",
-            "true_prob",
-            "implied_probability",
-            "true_probability",
-            "open_line",
-            "closing_line",
-            "clv_diff",
-        ]
-        for col in numeric_cols:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce")
-
-        # Fill text blanks only after numeric conversion
-        text_cols = [c for c in df.columns if c not in numeric_cols]
-        for col in text_cols:
-            df[col] = df[col].fillna("").astype(str).replace({"nan": "", "None": "", "none": ""}).str.strip()
-
-        # Backfill stake from units if needed
-        if "stake" in df.columns and "units" in df.columns:
-            df["stake"] = df["stake"].fillna(df["units"])
-
-        # Deduplicate by play_id for non-blank IDs
-        if "play_id" in df.columns:
-            df["play_id"] = df["play_id"].fillna("").astype(str).str.strip()
-            non_blank_ids = df["play_id"] != ""
-
-            df_with_ids = df[non_blank_ids].drop_duplicates(
-                subset=["play_id"],
-                keep="first",
-            )
-            df_without_ids = df[~non_blank_ids]
-            df = pd.concat([df_with_ids, df_without_ids], ignore_index=True)
-
-        # Final column order
-        ordered_cols = REQUIRED_BET_LOG_COLUMNS + [c for c in df.columns if c not in REQUIRED_BET_LOG_COLUMNS]
-        df = df[ordered_cols]
-
-        return df.to_dict("records")
-
-    except Exception:
-        return []
-
-
-def save_bet_log(records=None):
-    try:
-        if records is None:
-            records = st.session_state.get("bet_log", [])
-
-        df = pd.DataFrame(records)
-
-        if df is None or df.empty:
-            df = pd.DataFrame(columns=REQUIRED_BET_LOG_COLUMNS)
-
-        # Ensure all required columns exist
-        for col in REQUIRED_BET_LOG_COLUMNS:
-            if col not in df.columns:
-                df[col] = None
-
-        # Normalize text fields
-        for col in ["play_id", "game", "market", "selection", "odds", "log_category", "result"]:
-            if col in df.columns:
-                df[col] = df[col].fillna("").astype(str).replace({"nan": "", "None": "", "none": ""}).str.strip()
-
-        # Normalize result values
-        if "result" in df.columns:
-            df["result"] = df["result"].replace(
-                {
-                    "win": "Win",
-                    "loss": "Loss",
-                    "push": "Push",
-                    "pending": "Pending",
-                    "": "Pending",
-                    "nan": "Pending",
-                    "None": "Pending",
-                    "none": "Pending",
-                }
-            )
-            df["result"] = df["result"].apply(
-                lambda x: x if x in ["Pending", "Win", "Loss", "Push"] else "Pending"
-            )
-
-        # Numeric cleanup
-        numeric_cols = [
-            "units",
-            "stake",
-            "true_confidence",
-            "edge",
-            "books_seen",
-            "profit",
-            "implied_prob",
-            "true_prob",
-            "implied_probability",
-            "true_probability",
-            "open_line",
-            "closing_line",
-            "clv_diff",
-        ]
-        for col in numeric_cols:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce")
-
-        # Backfill stake from units if missing
-        if "stake" in df.columns and "units" in df.columns:
-            df["stake"] = df["stake"].fillna(df["units"])
-
-        # De-duplicate saved rows by play_id
-        if "play_id" in df.columns:
-            df["play_id"] = df["play_id"].fillna("").astype(str).str.strip()
-            non_blank_ids = df["play_id"] != ""
-
-            df_with_ids = df[non_blank_ids].drop_duplicates(
-                subset=["play_id"],
-                keep="first",
-            )
-            df_without_ids = df[~non_blank_ids]
-            df = pd.concat([df_with_ids, df_without_ids], ignore_index=True)
-
-        # Final column order
-        ordered_cols = REQUIRED_BET_LOG_COLUMNS + [c for c in df.columns if c not in REQUIRED_BET_LOG_COLUMNS]
-        df = df[ordered_cols]
-
-        df.to_csv(BET_LOG_FILE, index=False)
-
-        # Sync back into session
-        st.session_state["bet_log"] = df.to_dict("records")
-
-    except Exception:
-        pass
-
-
-def calculate_clv_diff(open_line, closing_line, market, selection):
-    try:
-        if open_line in [None, ""] or closing_line in [None, ""]:
-            return None, None
-
-        open_line = float(open_line)
-        closing_line = float(closing_line)
-
-        market = str(market).strip().lower()
-        selection = str(selection).strip().lower()
-
-        if "total" in market:
-            if "over" in selection:
-                diff = closing_line - open_line
-            elif "under" in selection:
-                diff = open_line - closing_line
-            else:
-                diff = closing_line - open_line
-        elif "spread" in market:
-            diff = closing_line - open_line
-        elif "moneyline" in market or market == "ml":
-            diff = open_line - closing_line
-        else:
-            diff = closing_line - open_line
-
-        diff = round(diff, 2)
-
-        if diff > 0:
-            result = "Beat"
-        elif diff < 0:
-            result = "Lost"
-        else:
-            result = "Push"
-
-        return diff, result
-
-    except Exception:
-        return None, None
-# =========================================================
-# LEGACY COMPATIBILITY HELPERS (DO NOT REMOVE)
-# =========================================================
-def build_logged_id_set(bet_log):
-    ids = set()
-    for row in bet_log:
-        pid = str(row.get("play_id", "")).strip()
-        if pid:
-            ids.add(pid)
-    return ids
-
-
-def _normalize_category_text(value):
-    if isinstance(value, list):
-        cleaned = []
-        for item in value:
-            label = str(item).strip()
-            if label and label not in cleaned:
-                cleaned.append(label)
-        return " | ".join(cleaned)
-
-    raw = str(value).strip()
-    if not raw:
-        return ""
-
-    cleaned = []
-    for part in raw.split("|"):
-        label = str(part).strip()
-        if label and label not in cleaned:
-            cleaned.append(label)
-
-    return " | ".join(cleaned)
-
-
-def _merge_duplicate_play_id_rows(df: pd.DataFrame) -> pd.DataFrame:
-    if df is None or df.empty or "play_id" not in df.columns:
-        return df
-
-    df = df.copy()
-    df["play_id"] = df["play_id"].astype(str).str.strip()
-
-    non_blank_ids = df["play_id"] != ""
-
-    df_with_ids = df[non_blank_ids].drop_duplicates(
-        subset=["play_id"],
-        keep="first",
-    )
-
-    df_without_ids = df[~non_blank_ids]
-
-    return pd.concat([df_with_ids, df_without_ids], ignore_index=True)
-
-# =========================================================
-# SESSION STATE / LEARNING ENGINE STATE / SNAPSHOT STATE
-# =========================================================
-if "is_mobile" not in st.session_state:
-    st.session_state["is_mobile"] = True
-
-if "bet_log" not in st.session_state:
-    st.session_state["bet_log"] = []
-
-if "auto_logged_ids" not in st.session_state:
-    st.session_state["auto_logged_ids"] = set()
-
-if "nav_choice" not in st.session_state:
-    st.session_state["nav_choice"] = "Top Plays"
-
-if "manual_results" not in st.session_state:
-    st.session_state["manual_results"] = {}
-
-if "odds_api_games" not in st.session_state:
-    st.session_state["odds_api_games"] = []
-
-if "last_successful_odds_games" not in st.session_state:
-    st.session_state["last_successful_odds_games"] = []
-
-if "odds_api_last_refresh" not in st.session_state:
-    st.session_state["odds_api_last_refresh"] = None
-
-if "last_odds_refresh_ok" not in st.session_state:
-    st.session_state["last_odds_refresh_ok"] = False
-
-if "last_refresh_error" not in st.session_state:
-    st.session_state["last_refresh_error"] = ""
-
-if "last_refresh_count" not in st.session_state:
-    st.session_state["last_refresh_count"] = 0
-
-if "last_refresh_time" not in st.session_state:
-    st.session_state["last_refresh_time"] = None
-
-if "last_api_pull_epoch" not in st.session_state:
-    st.session_state["last_api_pull_epoch"] = None
-
-if "api_mode" not in st.session_state:
-    st.session_state["api_mode"] = "idle"
-
-if "api_status_note" not in st.session_state:
-    st.session_state["api_status_note"] = ""
-
-if "daily_api_call_limit" not in st.session_state:
-    st.session_state["daily_api_call_limit"] = 10
-
-if "daily_api_call_count" not in st.session_state:
-    st.session_state["daily_api_call_count"] = 0
-
-if "daily_api_call_date" not in st.session_state:
-    st.session_state["daily_api_call_date"] = datetime.now().strftime("%Y-%m-%d")
-
-# Optional testing note for current quota situation
-if "odds_api_reset_expected" not in st.session_state:
-    st.session_state["odds_api_reset_expected"] = "2026-04-01"
-
-if "sportsdata_cache" not in st.session_state:
-    st.session_state["sportsdata_cache"] = {}
-
-if "sportsdata_last_refresh" not in st.session_state:
-    st.session_state["sportsdata_last_refresh"] = {}
-
-if "api_calls_today" not in st.session_state:
-    st.session_state["api_calls_today"] = 0
-
-if "api_call_date" not in st.session_state:
-    st.session_state["api_call_date"] = datetime.now().strftime("%Y-%m-%d")
-
-if "learning_state_by_sport" not in st.session_state:
-    st.session_state["learning_state_by_sport"] = {}
-
-# -------------------------
-# SNAPSHOT STATE (LOCK TAB DATA UNTIL NEXT REFRESH)
-# -------------------------
-if "snapshot_plays_df" not in st.session_state:
-    st.session_state["snapshot_plays_df"] = pd.DataFrame()
-
-if "snapshot_active_df" not in st.session_state:
-    st.session_state["snapshot_active_df"] = pd.DataFrame()
-
-if "snapshot_watchlist_df" not in st.session_state:
-    st.session_state["snapshot_watchlist_df"] = pd.DataFrame()
-
-if "snapshot_top_plays_df" not in st.session_state:
-    st.session_state["snapshot_top_plays_df"] = pd.DataFrame()
-
-if "snapshot_ai_slip_df" not in st.session_state:
-    st.session_state["snapshot_ai_slip_df"] = pd.DataFrame()
-
-if "snapshot_parlay_df" not in st.session_state:
-    st.session_state["snapshot_parlay_df"] = pd.DataFrame()
-
-if "snapshot_best_row" not in st.session_state:
-    st.session_state["snapshot_best_row"] = None
-
-if "snapshot_generated_at" not in st.session_state:
-    st.session_state["snapshot_generated_at"] = ""
-
-if "snapshot_refresh_id" not in st.session_state:
-    st.session_state["snapshot_refresh_id"] = 0
-# =========================================================
-# SNAPSHOT PERSISTENCE HELPERS
-# =========================================================
-SNAPSHOT_STORE_FILE = "tab_snapshot_store.json"
-
-def load_saved_tab_snapshots():
-    try:
-        if not os.path.exists(SNAPSHOT_STORE_FILE):
-            return
-
-        with open(SNAPSHOT_STORE_FILE, "r") as f:
-            payload = json.load(f)
-
-        mapping = {
-            "snapshot_top_plays_df": "snapshot_top_plays_df",
-            "snapshot_active_df": "snapshot_active_df",
-            "snapshot_watchlist_df": "snapshot_watchlist_df",
-            "snapshot_ai_slip_df": "snapshot_ai_slip_df",
-            "snapshot_parlay_df": "snapshot_parlay_df",
-        }
-
-        for payload_key, session_key in mapping.items():
-            rows = payload.get(payload_key, [])
-            current_val = st.session_state.get(session_key, pd.DataFrame())
-
-            if rows:
-                if not isinstance(current_val, pd.DataFrame) or current_val.empty:
-                    st.session_state[session_key] = pd.DataFrame(rows)
-
-        best_row = payload.get("snapshot_best_row", {})
-        current_best = st.session_state.get("snapshot_best_row", None)
-        if isinstance(best_row, dict) and best_row:
-            if current_best in [None, {}, ""]:
-                st.session_state["snapshot_best_row"] = best_row
-
-        saved_generated_at = str(payload.get("snapshot_generated_at", "")).strip()
-        current_generated_at = str(st.session_state.get("snapshot_generated_at", "")).strip()
-        if saved_generated_at and not current_generated_at:
-            st.session_state["snapshot_generated_at"] = saved_generated_at
-
-        saved_refresh_id = int(payload.get("snapshot_refresh_id", 0) or 0)
-        current_refresh_id = int(st.session_state.get("snapshot_refresh_id", 0) or 0)
-        if saved_refresh_id > current_refresh_id:
-            st.session_state["snapshot_refresh_id"] = saved_refresh_id
-
-    except Exception:
-        pass
-
-
-if "tab_snapshots_loaded" not in st.session_state:
-    load_saved_tab_snapshots()
-    st.session_state["tab_snapshots_loaded"] = True
-
-
-def save_tab_snapshots_to_disk():
-    try:
-        def _df_to_records(key_name):
-            value = st.session_state.get(key_name, pd.DataFrame())
-            if isinstance(value, pd.DataFrame) and not value.empty:
-                return value.to_dict("records")
-            return []
-
-        payload = {
-            "snapshot_top_plays_df": _df_to_records("snapshot_top_plays_df"),
-            "snapshot_active_df": _df_to_records("snapshot_active_df"),
-            "snapshot_watchlist_df": _df_to_records("snapshot_watchlist_df"),
-            "snapshot_ai_slip_df": _df_to_records("snapshot_ai_slip_df"),
-            "snapshot_parlay_df": _df_to_records("snapshot_parlay_df"),
-            "snapshot_best_row": st.session_state.get("snapshot_best_row", {}),
-            "snapshot_generated_at": st.session_state.get("snapshot_generated_at", ""),
-            "snapshot_refresh_id": int(st.session_state.get("snapshot_refresh_id", 0)),
-        }
-
-        with open(SNAPSHOT_STORE_FILE, "w") as f:
-            json.dump(payload, f)
-
-    except Exception:
-        pass
-# =========================================================
-# SPORTS DATA FEED CONTROL
-# =========================================================
-SPORTSDATA_FEEDS = {
-    "player_details": True,
-    "depth_chart": True,
-    "injured_players": True,
-    "starting_lineups": True,
-    "team_game_stats_by_date": True,
-}
-
-SPORTSDATA_CALL_LIMITS = {
-    "player_details_hours": 24,
-    "depth_chart_hours": 24,
-    "injured_players_hours": 8,
-    "starting_lineups_hours": 8,
-    "team_game_stats_by_date_hours": 12,
-}
-# =========================================================
-# MULTI-SPORT API HELPERS
-# =========================================================
-def get_sportsdata_base(sport_slug=None):
-    slug = str(sport_slug or get_current_sportsdata_slug()).strip().lower()
-    return SPORTSDATA_BASES.get(slug, SPORTSDATA_BASES["nba"])
-
-def get_odds_api_sport_key(sport_name=None):
-    return get_sport_config(sport_name)["sport_key"]
-
-def get_sportsdata_sport_slug(sport_name=None):
-    return get_sport_config(sport_name)["sportsdata_slug"]
-
-# =========================================================
-# MULTI-SPORT ODDS STATE COMPATIBILITY HELPERS
-# =========================================================
-def sync_selected_sport_state_to_legacy_keys():
-    """
-    Keeps old single-sport parts of the app working while V35 is being upgraded.
-    This mirrors the selected sport's state into the original session keys.
-    """
-    selected_sport = get_selected_sport()
-
-    st.session_state["api_mode"] = get_api_mode_for_sport(selected_sport)
-    st.session_state["odds_api_games"] = get_odds_games_for_sport(selected_sport)
-    st.session_state["last_successful_odds_games"] = get_cached_games_for_sport(selected_sport)
-    st.session_state["last_api_pull_epoch"] = get_last_pull_epoch_for_sport(selected_sport)
-    st.session_state["odds_api_reset_expected"] = get_api_reset_expected_for_sport(selected_sport)
-
-def sync_legacy_keys_to_selected_sport_state():
-    """
-    Pushes results from older existing code back into the selected sport bucket.
-    Use this after old refresh/fetch logic runs, so V35 keeps sport-isolated storage.
-    """
-    selected_sport = get_selected_sport()
-
-    set_api_mode_for_sport(st.session_state.get("api_mode", "idle"), selected_sport)
-    set_odds_games_for_sport(st.session_state.get("odds_api_games", []), selected_sport)
-    set_cached_games_for_sport(st.session_state.get("last_successful_odds_games", []), selected_sport)
-    set_last_pull_epoch_for_sport(st.session_state.get("last_api_pull_epoch", 0), selected_sport)
-    set_api_reset_expected_for_sport(st.session_state.get("odds_api_reset_expected", ""), selected_sport)
-
-def get_active_odds_api_sport_key():
-    return get_sport_config(get_selected_sport())["sport_key"]
-
-def get_active_sportsdata_slug():
-    return get_sport_config(get_selected_sport())["sportsdata_slug"]
-
-# Make sure old code below can still operate on the currently selected sport
-sync_selected_sport_state_to_legacy_keys()
-
-# =========================================================
-# MULTI-SPORT ODDS REQUEST HELPERS
-# =========================================================
-def get_odds_api_url_for_sport(sport_name=None):
-    sport_key = get_odds_api_sport_key(sport_name)
-    return f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds"
-
-def get_default_odds_params_for_sport(sport_name=None):
-    return {
-        "regions": "us",
-        "markets": "h2h,spreads,totals",
-        "oddsFormat": "american",
-        "dateFormat": "iso",
-        "bookmakers": "draftkings,fanduel,betmgm,caesars,espnbet,betrivers",
-    }
-
-def get_supported_market_types_for_sport(sport_name=None):
-    sport_name = str(sport_name or get_selected_sport()).strip().upper()
-
-    if sport_name == "MLB":
-        return ["h2h", "spreads", "totals"]
-    if sport_name == "NHL":
-        return ["h2h", "spreads", "totals"]
-    if sport_name == "WNBA":
-        return ["h2h", "spreads", "totals"]
-    return ["h2h", "spreads", "totals"]
-
-def normalize_market_name_by_sport(market_name, sport_name=None):
-    sport_name = str(sport_name or get_selected_sport()).strip().upper()
-    raw = str(market_name).strip().lower()
-
-    if raw in ["h2h", "moneyline", "ml"]:
-        return "moneyline"
-    if raw in ["spreads", "spread"]:
-        return "spread"
-    if raw in ["totals", "total", "ou", "over_under"]:
-        return "total"
-
-    # keep raw label for anything custom that may come later
-    return raw
-
-def enrich_play_row_with_sport(play_row, sport_name=None):
-    sport_name = str(sport_name or get_selected_sport()).strip().upper()
-    row = dict(play_row) if isinstance(play_row, dict) else {}
-
-    row["sport"] = sport_name
-
-    if "market" in row:
-        row["market"] = normalize_market_name_by_sport(row.get("market", ""), sport_name)
-
-    return row
-
-def normalize_dataframe_for_selected_sport(df, sport_name=None):
-    sport_name = str(sport_name or get_selected_sport()).strip().upper()
-
-    if df is None or not isinstance(df, pd.DataFrame):
-        return pd.DataFrame()
-
-    out = df.copy()
-
-    if "sport" not in out.columns:
-        out["sport"] = sport_name
-    else:
-        out["sport"] = out["sport"].astype(str).str.upper().replace("", sport_name)
-
-    if "market" in out.columns:
-        out["market"] = out["market"].apply(lambda x: normalize_market_name_by_sport(x, sport_name))
-
-    return out
-
-# =========================================================
-# MULTI-SPORT FETCH / STATE WRAPPER HELPERS
-# =========================================================
-def prepare_selected_sport_context():
-    """
-    Before older odds-fetch code runs, mirror the selected sport's state
-    into the original single-sport session keys so legacy logic keeps working.
-    """
-    sync_selected_sport_state_to_legacy_keys()
-
-
-def finalize_selected_sport_context():
-    """
-    After older odds-fetch code runs, push any updated legacy keys back into
-    the selected sport's dedicated storage bucket.
-    """
-    sync_legacy_keys_to_selected_sport_state()
-
-# =========================================================
-# MULTI-SPORT DISPLAY / LOG HELPERS
-# =========================================================
-def get_selected_sport_label():
-    return str(get_selected_sport()).strip().upper()
-
-def format_scope_caption(base_text):
-    return f"{base_text} ({get_selected_sport_label()})"
-
-def get_selected_sport_bet_count():
-    return len(get_bet_log_for_sport(get_selected_sport()))
-
-def build_composite_play_id(play_id, sport_name=None):
-    sport_name = str(sport_name or get_selected_sport()).strip().upper()
-    raw_play_id = str(play_id).strip()
-    return f"{sport_name}__{raw_play_id}"
-
-def get_existing_composite_play_ids():
-    existing_rows = st.session_state.get("bet_log", [])
-    output = set()
-
-    for row in existing_rows:
-        sport_name = str(row.get("sport", "")).strip().upper()
-        play_id = str(row.get("play_id", "")).strip()
-        if sport_name and play_id:
-            output.add(f"{sport_name}__{play_id}")
-
-    return output
-
-def ensure_row_has_selected_sport(row, sport_name=None):
-    sport_name = str(sport_name or get_selected_sport()).strip().upper()
-    out = dict(row) if isinstance(row, dict) else {}
-    out["sport"] = sport_name
-    return out
-
-def filter_dataframe_to_selected_sport(df, sport_name=None):
-    sport_name = str(sport_name or get_selected_sport()).strip().upper()
-
-    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
-        return pd.DataFrame() if not isinstance(df, pd.DataFrame) else df.copy()
-
-    out = df.copy()
-
-    if "sport" not in out.columns:
-        out["sport"] = sport_name
-        return out
-
-    out["sport"] = out["sport"].astype(str).str.upper().str.strip()
-    filtered = out[out["sport"].isin(["", sport_name])].copy()
-
-    if filtered.empty:
-        return out.copy()
-
-    filtered.loc[:, "sport"] = filtered["sport"].replace("", sport_name)
-    return filtered
-
-def get_selected_sport_learning_summary():
-    learning_state = get_learning_state_for_sport(get_selected_sport())
-
-    if not isinstance(learning_state, dict):
-        return {
-            "min_samples": 3,
-            "last_update": None,
-            "accelerated_mode": True,
-        }
-
-    return {
-        "min_samples": int(learning_state.get("category_min_samples", 3) or 3),
-        "last_update": learning_state.get("last_update"),
-        "accelerated_mode": bool(learning_state.get("accelerated_learning_mode", True)),
-    }
-
-# =========================================================
-# MULTI-SPORT PLAY TEMPLATE HELPERS
-# =========================================================
-def get_default_team_market_templates_for_sport(sport_name=None):
-    sport_name = str(sport_name or get_selected_sport()).strip().upper()
-
-    if sport_name == "NBA":
-        return [
-            ("moneyline", lambda g: g.split(" vs ")[1]),
-            ("moneyline", lambda g: g.split(" vs ")[0]),
-            ("total", lambda g: "Over 221.5"),
-            ("total", lambda g: "Under 221.5"),
-        ]
-
-    if sport_name == "NHL":
-        return [
-            ("moneyline", lambda g: g.split(" vs ")[1]),
-            ("moneyline", lambda g: g.split(" vs ")[0]),
-            ("total", lambda g: "Over 6.5"),
-            ("total", lambda g: "Under 6.5"),
-        ]
-
-    if sport_name == "MLB":
-        return [
-            ("moneyline", lambda g: g.split(" vs ")[1]),
-            ("moneyline", lambda g: g.split(" vs ")[0]),
-            ("total", lambda g: "Over 8.5"),
-            ("total", lambda g: "Under 8.5"),
-        ]
-
-    if sport_name == "WNBA":
-        return [
-            ("moneyline", lambda g: g.split(" vs ")[1]),
-            ("moneyline", lambda g: g.split(" vs ")[0]),
-            ("total", lambda g: "Over 164.5"),
-            ("total", lambda g: "Under 164.5"),
-        ]
-
-    return [
-        ("moneyline", lambda g: g.split(" vs ")[1]),
-        ("moneyline", lambda g: g.split(" vs ")[0]),
-        ("total", lambda g: "Over 221.5"),
-        ("total", lambda g: "Under 221.5"),
-    ]
-
-def get_default_prop_types_for_sport(sport_name=None):
-    sport_name = str(sport_name or get_selected_sport()).strip().upper()
-
-    if sport_name in ["NBA", "WNBA"]:
-        return ["points", "rebounds", "assists", "pra"]
-
-    if sport_name == "NHL":
-        return ["goals", "assists", "points", "sog"]
-
-    if sport_name == "MLB":
-        return ["hits", "runs", "rbis", "strikeouts"]
-
-    return ["points", "rebounds", "assists", "pra"]
-
-def get_default_total_band_for_sport(sport_name=None):
-    sport_name = str(sport_name or get_selected_sport()).strip().upper()
-
-    if sport_name == "NBA":
-        return (210.5, 238.5)
-    if sport_name == "NHL":
-        return (5.5, 7.5)
-    if sport_name == "MLB":
-        return (7.0, 10.5)
-    if sport_name == "WNBA":
-        return (156.5, 178.5)
-
-    return (210.5, 238.5)
-
-def get_sport_display_note(sport_name=None):
-    sport_name = str(sport_name or get_selected_sport()).strip().upper()
-
-    notes = {
-        "NBA": "Basketball scoring environment with standard moneyline / total logic.",
-        "NHL": "Lower-scoring environment; totals and moneylines tend to be tighter.",
-        "MLB": "Baseball scoring environment with lower totals and different volatility.",
-        "WNBA": "Basketball logic with lower default totals than NBA.",
-    }
-
-    return notes.get(sport_name, "Multi-sport framework active.")
-
-def safe_parse_matchup(game_text):
-    raw = str(game_text).strip()
-
-    if " vs " in raw:
-        parts = raw.split(" vs ")
-        if len(parts) == 2:
-            return parts[0].strip(), parts[1].strip()
-
-    if " v " in raw:
-        parts = raw.split(" v ")
-        if len(parts) == 2:
-            return parts[0].strip(), parts[1].strip()
-
-    return "", ""
-
-def build_team_market_templates_for_selected_sport():
-    return get_default_team_market_templates_for_sport(get_selected_sport())
-
-def build_prop_types_for_selected_sport():
-    return get_default_prop_types_for_sport(get_selected_sport())
-
-def get_total_band_for_selected_sport():
-    return get_default_total_band_for_sport(get_selected_sport())
-# =========================================================
-# MULTI-SPORT PLAY GENERATION HELPERS
-# =========================================================
-def build_default_game_label(away_team, home_team):
-    away = str(away_team).strip().upper()
-    home = str(home_team).strip().upper()
-
-    if away and home:
-        return f"{away} vs {home}"
-    return ""
-
-def get_default_total_value_for_sport(sport_name=None):
-    sport_name = str(sport_name or get_selected_sport()).strip().upper()
-
-    defaults = {
-        "NBA": 221.5,
-        "NHL": 6.5,
-        "MLB": 8.5,
-        "WNBA": 164.5,
-    }
-
-    return float(defaults.get(sport_name, 221.5))
-
-def format_default_total_selection(direction, sport_name=None):
-    total_value = get_default_total_value_for_sport(sport_name)
-    direction = str(direction).strip().title()
-
-    if direction not in ["Over", "Under"]:
-        direction = "Over"
-
-    return f"{direction} {total_value}"
-
-def build_team_market_templates_for_game(game_text, sport_name=None):
-    sport_name = str(sport_name or get_selected_sport()).strip().upper()
-    away_team, home_team = safe_parse_matchup(game_text)
-
-    if not away_team or not home_team:
-        return []
-
-    return [
-        {
-            "market": "moneyline",
-            "selection": home_team,
-            "sport": sport_name,
-            "game": game_text,
-        },
-        {
-            "market": "moneyline",
-            "selection": away_team,
-            "sport": sport_name,
-            "game": game_text,
-        },
-        {
-            "market": "total",
-            "selection": format_default_total_selection("Over", sport_name),
-            "sport": sport_name,
-            "game": game_text,
-        },
-        {
-            "market": "total",
-            "selection": format_default_total_selection("Under", sport_name),
-            "sport": sport_name,
-            "game": game_text,
-        },
-    ]
-
-def build_default_market_rows_from_games(games_list, sport_name=None):
-    sport_name = str(sport_name or get_selected_sport()).strip().upper()
-    rows = []
-
-    for game_text in games_list or []:
-        rows.extend(build_team_market_templates_for_game(game_text, sport_name))
-
-    if not rows:
-        return pd.DataFrame(columns=["sport", "game", "market", "selection"])
-
-    return pd.DataFrame(rows)
-
-def attach_selected_sport_to_dataframe(df, sport_name=None):
-    sport_name = str(sport_name or get_selected_sport()).strip().upper()
-
-    if df is None or not isinstance(df, pd.DataFrame):
-        return pd.DataFrame()
-
-    out = df.copy()
-
-    if "sport" not in out.columns:
-        out["sport"] = sport_name
-    else:
-        out["sport"] = out["sport"].astype(str).str.upper().replace("", sport_name)
-
-    return out
-
-def get_selected_sport_template_summary():
-    sport_name = get_selected_sport()
-
-    return {
-        "sport": sport_name,
-        "default_total": get_default_total_value_for_sport(sport_name),
-        "prop_types": get_default_prop_types_for_sport(sport_name),
-        "display_note": get_sport_display_note(sport_name),
-    }
-
-# =========================================================
-# MULTI-SPORT FRAMEWORK STATUS HELPERS
-# =========================================================
-def get_multi_sport_framework_status():
-    selected_sport = get_selected_sport()
-    cfg = get_sport_config(selected_sport)
-    learning_state = get_learning_state_for_sport(selected_sport)
-
-    if not isinstance(learning_state, dict):
-        learning_state = {}
-
-    return {
-        "selected_sport": selected_sport,
-        "sport_key": cfg.get("sport_key", ""),
-        "sportsdata_slug": cfg.get("sportsdata_slug", ""),
-        "api_mode": get_api_mode_for_sport(selected_sport),
-        "live_games_count": len(get_odds_games_for_sport(selected_sport)),
-        "cached_games_count": len(get_cached_games_for_sport(selected_sport)),
-        "bet_log_count": len(get_bet_log_for_sport(selected_sport)),
-        "min_samples": int(learning_state.get("category_min_samples", 3) or 3),
-        "accelerated_learning_mode": bool(learning_state.get("accelerated_learning_mode", True)),
-    }
-
-def render_multi_sport_framework_status():
-    status = get_multi_sport_framework_status()
-
-    st.sidebar.markdown("### 🧭 V35 Framework")
-    st.sidebar.caption(
-        f"Sport: {status['selected_sport']} • Odds key: {status['sport_key']} • SportsData: {status['sportsdata_slug']}"
-    )
-    st.sidebar.caption(
-        f"Live games: {status['live_games_count']} • Cached games: {status['cached_games_count']} • Logged bets: {status['bet_log_count']}"
-    )
-    st.sidebar.caption(
-        f"Learning min samples: {status['min_samples']} • Accelerated mode: {'On' if status['accelerated_learning_mode'] else 'Off'}"
-    )
-
-def get_selected_sport_empty_state_message():
-    selected_sport = get_selected_sport()
-    api_mode = str(get_api_mode_for_sport(selected_sport)).strip().lower()
-
-    if api_mode == "waiting_reset":
-        return f"{selected_sport} odds are waiting for API reset."
-    if api_mode == "limit_hit":
-        return f"{selected_sport} odds API limit has been reached."
-    if api_mode in ["key_error", "invalid_key", "auth_error", "no_key"]:
-        return f"{selected_sport} odds are unavailable because of an API key issue."
-    return f"No live {selected_sport} data loaded yet."
-
-def get_selected_sport_runtime_note():
-    selected_sport = get_selected_sport()
-    notes = {
-        "NBA": "NBA framework ready. Best current sport for immediate testing while season is active.",
-        "NHL": "NHL framework ready. Good parallel test sport during current active season.",
-        "MLB": "MLB framework ready. Strong long-run testing sport because of large game volume.",
-        "WNBA": "WNBA framework ready. Sport lane prepared for season start and later live learning.",
-    }
-    return notes.get(selected_sport, "Multi-sport framework active.")
-
-render_multi_sport_framework_status()
-
-
-
-# =========================================================
-# CACHE + DATE HELPERS
-# =========================================================
-def today_str():
-    return datetime.now().strftime("%Y-%m-%d")
-
-def yesterday_str():
-    return (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-
-def cache_key(*parts):
-    return "||".join([str(p) for p in parts])
-
-def get_cached_data(key, max_age_hours=12):
-    try:
-        cache = st.session_state.get("sportsdata_cache", {})
-        stamp_map = st.session_state.get("sportsdata_last_refresh", {})
-        if key not in cache or key not in stamp_map:
-            return None
-        age = datetime.now() - stamp_map[key]
-        if age.total_seconds() > max_age_hours * 3600:
-            return None
-        return cache[key]
-    except:
-        return None
-
-def set_cached_data(key, data):
-    try:
-        st.session_state["sportsdata_cache"][key] = data
-        st.session_state["sportsdata_last_refresh"][key] = datetime.now()
-    except:
-        pass
-
-# =========================================================
-# SPORTS DATA REQUESTS
-# =========================================================
-def sportsdata_headers():
-    return {
-        "Ocp-Apim-Subscription-Key": SPORTSDATA_API_KEY
-    }
-
-def safe_get_json(url, params=None, timeout=20):
-    if not SPORTSDATA_API_KEY:
-        return None
-    try:
-        r = requests.get(url, headers=sportsdata_headers(), params=params, timeout=timeout)
-        if r.status_code != 200:
-            return None
-        return r.json()
-    except:
-        return None
-
-def sportsdata_enabled(): 
-    return bool(st.session_state.get("sportsdata_enabled", True) and SPORTSDATA_API_KEY)
-
-def normalize_sport_for_sportsdata(sport_label):
-    s = str(sport_label).lower()
-    if "nba" in s or "basketball" in s:
-        return "nba"
-    if "nhl" in s or "hockey" in s:
-        return "nhl"
-    if "mlb" in s or "baseball" in s:
-        return "mlb"
-    return "nba"
-
-# =========================================================
-# SPORTSDATA FEED FUNCTIONS
-# =========================================================
-def fetch_player_details(sport="nba"):
-    sport = normalize_sport_for_sportsdata(sport)
-    key = cache_key("player_details", sport)
-    cached = get_cached_data(key, SPORTSDATA_CALL_LIMITS["player_details_hours"])
-    if cached is not None:
-        return cached
-
-    url = f"{SPORTSDATA_BASES[sport]}/scores/json/Players"
-    data = safe_get_json(url)
-    if data is None:
-        return []
-    set_cached_data(key, data)
-    return data
-
-def fetch_depth_chart(sport="nba"):
-    sport = normalize_sport_for_sportsdata(sport)
-    key = cache_key("depth_chart", sport)
-    cached = get_cached_data(key, SPORTSDATA_CALL_LIMITS["depth_chart_hours"])
-    if cached is not None:
-        return cached
-
-    url = f"{SPORTSDATA_BASES[sport]}/scores/json/DepthCharts"
-    data = safe_get_json(url)
-    if data is None:
-        return []
-    set_cached_data(key, data)
-    return data
-
-def fetch_injured_players(sport="nba"):
-    sport = normalize_sport_for_sportsdata(sport)
-    key = cache_key("injured_players", sport)
-    cached = get_cached_data(key, SPORTSDATA_CALL_LIMITS["injured_players_hours"])
-    if cached is not None:
-        return cached
-
-    url = f"{SPORTSDATA_BASES[sport]}/scores/json/InjuredPlayers"
-    data = safe_get_json(url)
-    if data is None:
-        return []
-    set_cached_data(key, data)
-    return data
-
-def fetch_starting_lineups_by_date(game_date=None, sport="nba"):
-    sport = normalize_sport_for_sportsdata(sport)
-    game_date = game_date or today_str()
-    key = cache_key("starting_lineups", sport, game_date)
-    cached = get_cached_data(key, SPORTSDATA_CALL_LIMITS["starting_lineups_hours"])
-    if cached is not None:
-        return cached
-
-    url = f"{SPORTSDATA_BASES[sport]}/projections/json/StartingLineupsByDate/{game_date}"
-    data = safe_get_json(url)
-    if data is None:
-        return []
-    set_cached_data(key, data)
-    return data
-
-def fetch_team_game_stats_by_date(game_date=None, sport="nba"):
-    sport = normalize_sport_for_sportsdata(sport)
-    game_date = game_date or yesterday_str()
-    key = cache_key("team_game_stats_by_date", sport, game_date)
-    cached = get_cached_data(key, SPORTSDATA_CALL_LIMITS["team_game_stats_by_date_hours"])
-    if cached is not None:
-        return cached
-
-    url = f"{SPORTSDATA_BASES[sport]}/stats/json/TeamGameStatsByDate/{game_date}"
-    data = safe_get_json(url)
-    if data is None:
-        return []
-    set_cached_data(key, data)
-    return data
-
-# =========================================================
-# LOOKUP BUILDERS
-# =========================================================
-def build_injury_lookup(injuries):
-    lookup = {}
-    try:
-        for row in injuries or []:
-            name = str(row.get("Name", "")).strip().lower()
-            team = str(row.get("Team", "")).strip().upper()
-            status = str(row.get("Status", "")).strip()
-            note = str(row.get("InjuryNotes", "")).strip()
-            if name:
-                lookup[name] = {
-                    "team": team,
-                    "status": status,
-                    "note": note,
-                    "raw": row,
-                }
-    except:
-        pass
-    return lookup
-
-def build_player_lookup(players):
-    lookup = {}
-    try:
-        for row in players or []:
-            name = str(row.get("Name", "")).strip().lower()
-            if name:
-                lookup[name] = row
-    except:
-        pass
-    return lookup
-
-def build_lineup_lookup(lineups):
-    lookup = {}
-    try:
-        for row in lineups or []:
-            team = str(row.get("Team", "") or row.get("TeamName", "")).strip().upper()
-            if not team:
-                continue
-            if team not in lookup:
-                lookup[team] = []
-            for slot in ["PG", "SG", "SF", "PF", "C", "G", "F"]:
-                if row.get(slot):
-                    lookup[team].append(str(row.get(slot)).strip())
-    except:
-        pass
-    return lookup
-
-def build_team_game_stats_lookup(team_stats):
-    lookup = {}
-    try:
-        for row in team_stats or []:
-            team = str(row.get("Team", "")).strip().upper()
-            if team:
-                lookup[team] = row
-    except:
-        pass
-    return lookup
-
-# =========================================================
-# REAL DATA ENRICHMENT
-# =========================================================
-def enrich_plays_with_sportsdata(plays_df, sport="nba", game_date=None):
-    if plays_df is None or len(plays_df) == 0:
-        return plays_df
-
-    if not sportsdata_enabled():
-        if "injury_flag" not in plays_df.columns:
-            plays_df["injury_flag"] = ""
-        if "lineup_flag" not in plays_df.columns:
-            plays_df["lineup_flag"] = ""
-        if "context_score" not in plays_df.columns:
-            plays_df["context_score"] = 0
-        if "sportsdata_note" not in plays_df.columns:
-            plays_df["sportsdata_note"] = ""
-        return plays_df
-
-    injuries = fetch_injured_players(sport)
-    lineups = fetch_starting_lineups_by_date(game_date=game_date or today_str(), sport=sport)
-    team_stats = fetch_team_game_stats_by_date(game_date=game_date or yesterday_str(), sport=sport)
-
-    injury_lookup = build_injury_lookup(injuries)
-    lineup_lookup = build_lineup_lookup(lineups)
-    team_stats_lookup = build_team_game_stats_lookup(team_stats)
-
-    out = plays_df.copy()
-    out["injury_flag"] = ""
-    out["lineup_flag"] = ""
-    out["context_score"] = 0
-    out["sportsdata_note"] = ""
-
-    for idx, row in out.iterrows():
-        player = str(row.get("player", "")).strip().lower()
-        team = str(row.get("team", "")).strip().upper()
-        opp = str(row.get("opponent", "")).strip().upper()
-
-        context_score = 0
-        notes = []
-
-        injury = injury_lookup.get(player)
-        if injury:
-            status = str(injury.get("status", "")).lower()
-            out.at[idx, "injury_flag"] = injury.get("status", "")
-            notes.append(f"Injury: {injury.get('status', '')}")
-
-            if any(tag in status for tag in ["out", "doubtful", "injured"]):
-                context_score -= 45
-            elif "questionable" in status:
-                context_score -= 25
-            elif any(tag in status for tag in ["probable", "day-to-day"]):
-                context_score -= 10
-
-        if team in lineup_lookup:
-            starters = [str(x).strip().lower() for x in lineup_lookup.get(team, [])]
-            if player and player in starters:
-                out.at[idx, "lineup_flag"] = "Starting"
-                notes.append("Confirmed/Projected Starter")
-                context_score += 12
-            elif player:
-                out.at[idx, "lineup_flag"] = "Not in listed lineup"
-                notes.append("Not in projected starting lineup")
-                context_score -= 12
-
-        if team in team_stats_lookup:
-            team_row = team_stats_lookup[team]
-            try:
-                pts = float(team_row.get("Points", 0))
-                context_score += min(8, max(0, (pts - 100) / 3))
-            except:
-                pass
-
-        if opp in team_stats_lookup:
-            opp_row = team_stats_lookup[opp]
-            try:
-                opp_pts_allowed = float(opp_row.get("PointsAllowed", 0))
-                context_score += min(8, max(0, (opp_pts_allowed - 100) / 3))
-            except:
-                pass
-
-        out.at[idx, "context_score"] = round(context_score, 1)
-        out.at[idx, "sportsdata_note"] = " | ".join(notes)
-
-        if "score" in out.columns:
-            try:
-                out.at[idx, "score"] = round(float(row.get("score", 0)) + context_score, 1)
-            except:
-                pass
-
-    return out
-
-# =========================================================
-# ENGINE SETTINGS
-# =========================================================
 MIN_ACTIVE_EDGE = 4.00
 MIN_WATCH_EDGE = 2.25
 ACTIVE_EDGE_PROMOTION = 4.50
@@ -1684,57 +80,185 @@ MIN_WATCH_TRUE_CONF = 55.0
 MIN_ACTIVE_BOOKS = 3
 MIN_WATCH_BOOKS = 2
 
-MAX_TOTAL_UNITS = 4.25
-MAX_ACTIVE_PLAYS = 10
-TOP_PLAYS_LIMIT = 10
-WATCHLIST_LIMIT = 18
-
 DEFAULT_ODDS_RANGE = (-200, 150)
 
-MIN_PARLAY_LEGS = 2
-MAX_PARLAY_LEGS = 3
-MIN_PARLAY_ODDS = 200
-
-SHARP_PARLAY_MIN_TRUE_CONF = 70.0
-SHARP_PARLAY_MAX_PENALTY = 0.16
-FALLBACK_PARLAY_MAX_PENALTY = 0.28
-
-TEST_MODE = "Paper Test"
 SINGLE_UNIT_MIN = 0.40
 SINGLE_UNIT_MAX = 1.25
 WATCH_UNIT_MIN = 0.25
 WATCH_UNIT_MAX = 0.75
+
 PARLAY_UNIT_SHARP = 0.60
 PARLAY_UNIT_FALLBACK_2 = 0.35
 PARLAY_UNIT_FALLBACK_3 = 0.20
+
+MIN_PARLAY_LEGS = 2
+MAX_PARLAY_LEGS = 3
+MIN_PARLAY_ODDS = 200
+SHARP_PARLAY_MIN_TRUE_CONF = 70.0
+SHARP_PARLAY_MAX_PENALTY = 0.16
+FALLBACK_PARLAY_MAX_PENALTY = 0.28
+
+MAX_TOTAL_UNITS = 4.25
 TEST_DAILY_UNIT_CAP = 4.50
 
-ENABLE_PLAYER_PROPS = False
-PROPS_ONLY_STARTERS = True
-
-PROP_TYPES = ["points", "rebounds", "assists", "pra"]
-PROP_ODDS_RANGE = (-200, 150)
-MAX_PROP_PLAYS_PER_GAME = 8
-
-# =========================================================
-# HELPERS
-# =========================================================
-TRUE_PROB_WEIGHT = 0.35
+TRUE_PROB_WEIGHT = 0.30
 PRICE_EDGE_WEIGHT = 0.25
 MARKET_SIGNAL_WEIGHT = 0.15
 MATCHUP_WEIGHT = 0.15
-HISTORICAL_WEIGHT = 0.10
+HISTORICAL_WEIGHT = 0.15
 
-DAILY_API_CALL_LIMIT = 10
-API_COOLDOWN_SECONDS = 90
+ENABLE_PLAYER_PROPS = True
+PROPS_ONLY_STARTERS = True
+PROP_TYPES_BY_SPORT = {
+    "NBA": ["points", "rebounds", "assists", "pra"],
+    "NHL": ["shots_on_goal", "points", "assists"],
+    "MLB": ["hits", "total_bases", "runs", "rbis", "strikeouts"],
+}
+PROP_ODDS_RANGE = (-200, 150)
+MAX_PROP_PLAYS_PER_GAME = 8
 
-ODDS_API_BASE = "https://api.the-odds-api.com/v4/sports"
-ODDS_REGIONS = "us"
-ODDS_MARKETS = "h2h,spreads,totals"
-ODDS_ODDS_FORMAT = "american"
+REQUIRED_BET_LOG_COLUMNS = [
+    "play_id",
+    "sport",
+    "game",
+    "market",
+    "selection",
+    "player",
+    "team",
+    "opponent",
+    "line",
+    "odds",
+    "best_price",
+    "best_book",
+    "implied_prob",
+    "true_prob",
+    "implied_probability",
+    "true_probability",
+    "edge",
+    "price_edge",
+    "books",
+    "books_seen",
+    "consensus",
+    "consensus_pct",
+    "sharp_score",
+    "market_signal",
+    "matchup_score",
+    "historical_score",
+    "true_confidence",
+    "status",
+    "units",
+    "stake",
+    "confidence",
+    "result",
+    "profit",
+    "mode",
+    "log_category",
+    "category",
+    "primary_category",
+    "play_type",
+    "timestamp",
+    "sportsdata_note",
+    "injury_flag",
+    "lineup_flag",
+    "context_score",
+    "model_score",
+    "score",
+    "rank_score",
+    "tier",
+    "quality_label",
+    "watch_tier",
+    "ai_tags",
+    "open_odds",
+    "open_line",
+    "closing_odds",
+    "closing_line",
+    "clv_diff",
+    "clv_result",
+]
 
-ACTIVE_REFRESH_SPORTS = ["NBA", "NHL", "MLB"]  # keep WNBA excluded for now
+# =========================================================
+# SECRETS / API KEYS
+# =========================================================
+def _read_secret(*keys, default=""):
+    for key in keys:
+        try:
+            if key in st.secrets:
+                value = st.secrets.get(key)
+                if value is not None and str(value).strip() != "":
+                    return str(value).strip()
+        except Exception:
+            pass
 
+        env_val = os.getenv(key)
+        if env_val is not None and str(env_val).strip() != "":
+            return str(env_val).strip()
+
+    return default
+
+ODDS_API_KEY = _read_secret("THE_ODDS_API_KEY", "ODDS_API_KEY", default="")
+SPORTSDATA_API_KEY = _read_secret("SPORTSDATA_API_KEY", "SPORTS_DATA_IO_API_KEY", default="")
+
+# =========================================================
+# SESSION STATE INIT
+# =========================================================
+def _ensure_session_defaults():
+    defaults = {
+        "selected_sport": DEFAULT_SPORT,
+        "nav_choice": "Top Plays",
+        "nav_choice_native": "Top Plays",
+        "is_mobile": True,
+        "sportsdata_enabled": True,
+        "today_games_text": "",
+        "bet_log": [],
+        "manual_results": {},
+        "auto_logged_ids": set(),
+        "api_mode": "idle",
+        "api_status_note": "",
+        "last_refresh_error": "",
+        "last_refresh_count": 0,
+        "last_refresh_time": "",
+        "last_odds_refresh_ok": False,
+        "last_api_pull_epoch": 0.0,
+        "daily_api_calls_used": 0,
+        "odds_api_reset_expected": "",
+        "odds_api_games_by_sport": {},
+        "last_successful_odds_games_by_sport": {},
+        "last_api_pull_epoch_by_sport": {},
+        "odds_api_reset_expected_by_sport": {},
+        "snapshot_refresh_id": 0,
+        "snapshot_generated_at": "",
+        "snapshot_last_updated": "",
+        "snapshot_save_error": "",
+        "snapshot_plays_df": pd.DataFrame(),
+        "snapshot_all_plays_df": pd.DataFrame(),
+        "snapshot_active_df": pd.DataFrame(),
+        "snapshot_top_plays_df": pd.DataFrame(),
+        "snapshot_watchlist_df": pd.DataFrame(),
+        "snapshot_ai_slip_df": pd.DataFrame(),
+        "snapshot_parlay_df": pd.DataFrame(),
+        "snapshot_best_row": {},
+        "plays_df": pd.DataFrame(),
+        "ai_slip_df": pd.DataFrame(),
+    }
+
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            if isinstance(value, pd.DataFrame):
+                st.session_state[key] = value.copy()
+            elif isinstance(value, dict):
+                st.session_state[key] = value.copy()
+            elif isinstance(value, list):
+                st.session_state[key] = value.copy()
+            elif isinstance(value, set):
+                st.session_state[key] = set(value)
+            else:
+                st.session_state[key] = value
+
+_ensure_session_defaults()
+
+# =========================================================
+# BASIC HELPERS
+# =========================================================
 def is_mobile():
     return bool(st.session_state.get("is_mobile", True))
 
@@ -1757,11 +281,22 @@ def safe_int(value, default=0):
     except Exception:
         return int(default)
 
+def today_str():
+    return pd.Timestamp.now().strftime("%Y-%m-%d")
+
 def american_to_int(odds_str):
     try:
-        return int(float(str(odds_str).replace("+", "").strip()))
+        return int(str(odds_str).replace("+", "").strip())
     except Exception:
         return None
+
+def american_to_implied_prob(odds):
+    odds_val = american_to_int(odds)
+    if odds_val is None:
+        return 0.0
+    if odds_val > 0:
+        return 100.0 / (odds_val + 100.0)
+    return abs(odds_val) / (abs(odds_val) + 100.0)
 
 def in_allowed_odds_range(odds_str, min_odds=-200, max_odds=150):
     odds_val = american_to_int(odds_str)
@@ -1785,25 +320,17 @@ def decimal_to_american(decimal_odds):
     return int(round(-100 / (decimal_odds - 1)))
 
 def format_american(odds_val):
-    if odds_val is None:
+    odds_int = american_to_int(odds_val)
+    if odds_int is None:
         return "N/A"
-    odds_val = int(round(float(odds_val)))
-    if odds_val > 0:
-        return f"+{odds_val}"
-    return str(odds_val)
+    if odds_int > 0:
+        return f"+{int(odds_int)}"
+    return str(int(odds_int))
 
-def american_to_implied_prob(odds):
-    odds_val = american_to_int(odds)
-    if odds_val is None:
-        return 0.0
-    if odds_val > 0:
-        return 100.0 / (odds_val + 100.0)
-    return abs(odds_val) / (abs(odds_val) + 100.0)
-
-def build_play_id(*args, **kwargs):
+def build_play_id(*args):
     """
-    Supports either:
-    - build_play_id(dict_row)
+    Supports:
+    - build_play_id({"game":..., "market":..., "selection":..., "odds":...})
     - build_play_id(sport, game, market, selection, line)
     """
     if len(args) == 1 and isinstance(args[0], dict):
@@ -1814,21 +341,22 @@ def build_play_id(*args, **kwargs):
                 str(row_dict.get("game", "")),
                 str(row_dict.get("market", "")),
                 str(row_dict.get("selection", "")),
-                str(row_dict.get("line", "")),
-                str(row_dict.get("odds", "")),
+                str(row_dict.get("line", row_dict.get("odds", ""))),
             ]
         )
-    else:
-        sport = args[0] if len(args) > 0 else kwargs.get("sport", "")
-        game = args[1] if len(args) > 1 else kwargs.get("game", "")
-        market = args[2] if len(args) > 2 else kwargs.get("market", "")
-        selection = args[3] if len(args) > 3 else kwargs.get("selection", "")
-        line = args[4] if len(args) > 4 else kwargs.get("line", "")
-        raw = "|".join([str(sport), str(game), str(market), str(selection), str(line)])
+        return hashlib.md5(raw.encode()).hexdigest()
+
+    sport = str(args[0]).strip() if len(args) > 0 else ""
+    game = str(args[1]).strip() if len(args) > 1 else ""
+    market = str(args[2]).strip() if len(args) > 2 else ""
+    selection = str(args[3]).strip() if len(args) > 3 else ""
+    line = str(args[4]).strip() if len(args) > 4 else ""
+
+    raw = "|".join([sport, game, market, selection, line])
     return hashlib.md5(raw.encode()).hexdigest()
 
 def confidence_bucket_from_true_conf(true_conf):
-    tc = float(true_conf)
+    tc = float(safe_float(true_conf, 0))
     if tc >= 75:
         return "Elite"
     if tc >= 70:
@@ -1838,7 +366,7 @@ def confidence_bucket_from_true_conf(true_conf):
     return "Low"
 
 def confidence_fill_and_color(true_conf):
-    tc = float(true_conf)
+    tc = float(safe_float(true_conf, 0))
     width = f"{int(clamp(tc, 0, 100))}%"
     if tc >= 75:
         return width, "#10b981", "Elite"
@@ -1868,14 +396,14 @@ def american_profit(odds, stake):
     odds_int = american_to_int(odds)
     if odds_int is None:
         return 0.0
-    stake = float(stake)
+    stake = float(safe_float(stake, 0.0))
     if odds_int > 0:
         return round(stake * (odds_int / 100.0), 2)
     return round(stake * (100.0 / abs(odds_int)), 2)
 
 def settle_result_pnl(odds, units, result):
     result = str(result).strip().lower()
-    units = float(units)
+    units = float(safe_float(units, 0.0))
     if result == "win":
         return american_profit(odds, units)
     if result == "loss":
@@ -1883,139 +411,709 @@ def settle_result_pnl(odds, units, result):
     return 0.0
 
 def market_family(market):
-    m = str(market).lower()
-    if "moneyline" in m or m == "h2h":
+    m = str(market).strip().lower()
+    if "moneyline" in m or m in ["h2h", "ml"]:
         return "moneyline"
     if "spread" in m:
         return "spread"
     if "total" in m:
         return "total"
-    if "prop_" in m:
+    if "prop" in m:
         return "prop"
+    if "parlay" in m:
+        return "parlay"
     return "other"
 
+# =========================================================
+# SPORT HELPERS
+# =========================================================
+def get_sport_config(sport_name=None):
+    sport_key = str(sport_name or st.session_state.get("selected_sport", DEFAULT_SPORT)).strip().upper()
+    return SUPPORTED_SPORTS.get(sport_key, SUPPORTED_SPORTS[DEFAULT_SPORT])
+
+def get_selected_sport():
+    sport = str(st.session_state.get("selected_sport", DEFAULT_SPORT)).strip().upper()
+    if sport not in SUPPORTED_SPORTS:
+        sport = DEFAULT_SPORT
+        st.session_state["selected_sport"] = sport
+    return sport
+
+def set_selected_sport(sport_name):
+    sport = str(sport_name).strip().upper()
+    if sport in SUPPORTED_SPORTS:
+        st.session_state["selected_sport"] = sport
+
+def get_current_sportsdata_slug():
+    return get_sport_config(get_selected_sport()).get("sportsdata_slug", "nba")
+
+def normalize_market_name_by_sport(market_name, sport_name=None):
+    market = str(market_name).strip().lower()
+    if market == "h2h":
+        return "moneyline"
+    if market == "spreads":
+        return "spread"
+    if market == "totals":
+        return "total"
+    return market
+
+def finalize_selected_sport_context():
+    selected_sport = get_selected_sport()
+
+    for key in [
+        "plays_df",
+        "snapshot_plays_df",
+        "snapshot_all_plays_df",
+        "snapshot_active_df",
+        "snapshot_top_plays_df",
+        "snapshot_watchlist_df",
+        "snapshot_ai_slip_df",
+        "snapshot_parlay_df",
+    ]:
+        value = st.session_state.get(key, pd.DataFrame())
+        if not isinstance(value, pd.DataFrame):
+            st.session_state[key] = pd.DataFrame()
+            continue
+
+        if value.empty:
+            continue
+
+        if "sport" in value.columns:
+            filtered = value[value["sport"].astype(str).str.upper() == selected_sport].copy()
+            st.session_state[key] = filtered.reset_index(drop=True)
+
+    best_row = st.session_state.get("snapshot_best_row", {})
+    if isinstance(best_row, dict) and best_row:
+        row_sport = str(best_row.get("sport", selected_sport)).strip().upper()
+        if row_sport != selected_sport:
+            st.session_state["snapshot_best_row"] = {}
+
+# =========================================================
+# API / COOL DOWN / DAILY LIMIT HELPERS
+# =========================================================
+def get_odds_api_key():
+    return ODDS_API_KEY
+
 def get_daily_api_calls_used():
-    today = datetime.now().strftime("%Y-%m-%d")
-    if st.session_state.get("daily_api_call_date") != today:
-        st.session_state["daily_api_call_date"] = today
-        st.session_state["daily_api_call_count"] = 0
-    return int(st.session_state.get("daily_api_call_count", 0))
+    return safe_int(st.session_state.get("daily_api_calls_used", 0), 0)
+
+def set_daily_api_calls_used(value):
+    st.session_state["daily_api_calls_used"] = max(0, safe_int(value, 0))
+
+def increment_daily_api_call_count():
+    set_daily_api_calls_used(get_daily_api_calls_used() + 1)
 
 def get_daily_api_calls_remaining():
     return max(0, DAILY_API_CALL_LIMIT - get_daily_api_calls_used())
 
-def increment_daily_api_call_count():
-    used = get_daily_api_calls_used()
-    st.session_state["daily_api_call_count"] = used + 1
-
 def api_cooldown_ready():
-    last_pull = st.session_state.get("last_api_pull_epoch", 0)
-    if last_pull in [None, ""]:
+    last_epoch = safe_float(st.session_state.get("last_api_pull_epoch", 0), 0.0)
+    if last_epoch <= 0:
         return True
-    try:
-        return (time.time() - float(last_pull)) >= API_COOLDOWN_SECONDS
-    except Exception:
-        return True
+    return (time.time() - last_epoch) >= API_COOLDOWN_SECONDS
 
 def set_api_status(mode, note=""):
-    mode_clean = str(mode).strip().lower()
-    st.session_state["api_mode"] = mode_clean
+    st.session_state["api_mode"] = str(mode).strip()
     st.session_state["api_status_note"] = str(note).strip()
 
-    try:
-        selected_sport = get_selected_sport()
-        set_api_mode_for_sport(mode_clean, selected_sport)
-    except Exception:
-        pass
+def set_last_pull_epoch_for_sport(epoch_value, sport_name):
+    mapping = dict(st.session_state.get("last_api_pull_epoch_by_sport", {}))
+    mapping[str(sport_name).strip().upper()] = float(epoch_value)
+    st.session_state["last_api_pull_epoch_by_sport"] = mapping
+    st.session_state["last_api_pull_epoch"] = float(epoch_value)
 
-def recalculate_play_metrics(df: pd.DataFrame):
-    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+def set_api_reset_expected_for_sport(reset_value, sport_name):
+    mapping = dict(st.session_state.get("odds_api_reset_expected_by_sport", {}))
+    mapping[str(sport_name).strip().upper()] = str(reset_value).strip()
+    st.session_state["odds_api_reset_expected_by_sport"] = mapping
+
+# =========================================================
+# PERSISTENCE HELPERS
+# =========================================================
+def _safe_load_json_file(filepath, default_value):
+    try:
+        if not os.path.exists(filepath):
+            return default_value
+        with open(filepath, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return default_value
+
+def _safe_save_json_file(filepath, payload):
+    try:
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+        return True
+    except Exception:
+        return False
+
+def _normalize_category_text(value):
+    if isinstance(value, list):
+        cleaned = []
+        for item in value:
+            label = str(item).strip()
+            if label and label not in cleaned:
+                cleaned.append(label)
+        return " | ".join(cleaned)
+
+    raw = str(value).strip()
+    if not raw:
+        return ""
+
+    cleaned = []
+    for part in raw.split("|"):
+        label = str(part).strip()
+        if label and label not in cleaned:
+            cleaned.append(label)
+
+    return " | ".join(cleaned)
+
+def _merge_duplicate_play_id_rows(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty or "play_id" not in df.columns:
+        return pd.DataFrame() if df is None else df
+
+    working_df = df.copy()
+    working_df["play_id"] = working_df["play_id"].fillna("").astype(str).str.strip()
+    working_df = working_df[working_df["play_id"] != ""].copy()
+
+    if working_df.empty:
+        return working_df
+
+    rows = []
+    seen_base_ids = set()
+
+    for _, row in working_df.iterrows():
+        row_dict = row.to_dict()
+        play_id = str(row_dict.get("play_id", "")).strip()
+        base_id = play_id.split("__")[0].strip() if "__" in play_id else play_id
+
+        if base_id not in seen_base_ids:
+            row_dict["play_id"] = play_id
+            row_dict["log_category"] = _normalize_category_text(row_dict.get("log_category", ""))
+            rows.append(row_dict)
+            seen_base_ids.add(base_id)
+            continue
+
+        for i, existing in enumerate(rows):
+            existing_id = str(existing.get("play_id", "")).strip()
+            existing_base = existing_id.split("__")[0].strip() if "__" in existing_id else existing_id
+
+            if existing_base != base_id:
+                continue
+
+            merged_categories = _normalize_category_text(
+                f"{existing.get('log_category', '')} | {row_dict.get('log_category', '')}"
+            )
+            rows[i]["log_category"] = merged_categories
+
+            for field in ["result", "profit", "clv_diff", "clv_result", "closing_odds", "closing_line", "timestamp"]:
+                existing_val = rows[i].get(field)
+                new_val = row_dict.get(field)
+                if (existing_val in [None, "", 0, 0.0]) and (new_val not in [None, ""]):
+                    rows[i][field] = new_val
+            break
+
+    out = pd.DataFrame(rows)
+    return out.reset_index(drop=True)
+
+def load_bet_log():
+    try:
+        if not os.path.exists(BET_LOG_FILE):
+            return []
+
+        df = pd.read_csv(BET_LOG_FILE)
+        if df is None or df.empty:
+            return []
+
+        for col in REQUIRED_BET_LOG_COLUMNS:
+            if col not in df.columns:
+                df[col] = None
+
+        df["play_id"] = df["play_id"].fillna("").astype(str).str.strip()
+        df = df[df["play_id"] != ""].copy()
+        df = _merge_duplicate_play_id_rows(df)
+
+        return df.to_dict("records")
+    except Exception:
+        return []
+
+def save_bet_log(rows=None):
+    try:
+        if rows is None:
+            rows = st.session_state.get("bet_log", [])
+
+        df = pd.DataFrame(rows if isinstance(rows, list) else [])
+        for col in REQUIRED_BET_LOG_COLUMNS:
+            if col not in df.columns:
+                df[col] = None
+
+        if not df.empty:
+            df = _merge_duplicate_play_id_rows(df)
+
+        df.to_csv(BET_LOG_FILE, index=False)
+        return True
+    except Exception:
+        return False
+
+def build_logged_id_set(rows):
+    logged_ids = set()
+    for row in rows if isinstance(rows, list) else []:
+        play_id = str(row.get("play_id", "")).strip()
+        if play_id:
+            logged_ids.add(play_id)
+            base_id = play_id.split("__")[0].strip() if "__" in play_id else play_id
+            if base_id:
+                logged_ids.add(base_id)
+    return logged_ids
+
+def get_bet_log_for_sport(sport_name):
+    selected = str(sport_name).strip().upper()
+    rows = st.session_state.get("bet_log", [])
+    if not isinstance(rows, list):
+        return []
+
+    filtered = []
+    for row in rows:
+        row_sport = str(row.get("sport", selected)).strip().upper()
+        if row_sport == selected:
+            filtered.append(row)
+    return filtered
+
+def load_learning_state_by_sport():
+    data = _safe_load_json_file(LEARNING_STATE_FILE, {})
+    return data if isinstance(data, dict) else {}
+
+def save_learning_state_by_sport(payload):
+    return _safe_save_json_file(LEARNING_STATE_FILE, payload if isinstance(payload, dict) else {})
+
+def get_learning_state_for_sport(sport_name=None):
+    sport = str(sport_name or get_selected_sport()).strip().upper()
+    all_states = load_learning_state_by_sport()
+    state = all_states.get(sport, {})
+    return state if isinstance(state, dict) else {}
+
+def save_learning_state_for_sport(state, sport_name=None):
+    sport = str(sport_name or get_selected_sport()).strip().upper()
+    all_states = load_learning_state_by_sport()
+    all_states[sport] = state if isinstance(state, dict) else {}
+    return save_learning_state_by_sport(all_states)
+
+def load_tab_snapshots_from_disk():
+    data = _safe_load_json_file(TAB_SNAPSHOT_FILE, {})
+    return data if isinstance(data, dict) else {}
+
+def save_tab_snapshots_to_disk():
+    selected_sport = get_selected_sport()
+
+    payload = load_tab_snapshots_from_disk()
+    payload[selected_sport] = {
+        "snapshot_generated_at": st.session_state.get("snapshot_generated_at", ""),
+        "snapshot_last_updated": st.session_state.get("snapshot_last_updated", ""),
+        "snapshot_refresh_id": safe_int(st.session_state.get("snapshot_refresh_id", 0), 0),
+        "snapshot_best_row": st.session_state.get("snapshot_best_row", {}),
+        "snapshot_plays_df": st.session_state.get("snapshot_plays_df", pd.DataFrame()).to_dict("records"),
+        "snapshot_all_plays_df": st.session_state.get("snapshot_all_plays_df", pd.DataFrame()).to_dict("records"),
+        "snapshot_active_df": st.session_state.get("snapshot_active_df", pd.DataFrame()).to_dict("records"),
+        "snapshot_top_plays_df": st.session_state.get("snapshot_top_plays_df", pd.DataFrame()).to_dict("records"),
+        "snapshot_watchlist_df": st.session_state.get("snapshot_watchlist_df", pd.DataFrame()).to_dict("records"),
+        "snapshot_ai_slip_df": st.session_state.get("snapshot_ai_slip_df", pd.DataFrame()).to_dict("records"),
+        "snapshot_parlay_df": st.session_state.get("snapshot_parlay_df", pd.DataFrame()).to_dict("records"),
+    }
+    return _safe_save_json_file(TAB_SNAPSHOT_FILE, payload)
+
+def restore_tab_snapshots_for_sport(sport_name=None):
+    sport = str(sport_name or get_selected_sport()).strip().upper()
+    payload = load_tab_snapshots_from_disk()
+    sport_payload = payload.get(sport, {})
+
+    if not isinstance(sport_payload, dict) or not sport_payload:
+        return False
+
+    for key in [
+        "snapshot_plays_df",
+        "snapshot_all_plays_df",
+        "snapshot_active_df",
+        "snapshot_top_plays_df",
+        "snapshot_watchlist_df",
+        "snapshot_ai_slip_df",
+        "snapshot_parlay_df",
+    ]:
+        records = sport_payload.get(key, [])
+        st.session_state[key] = pd.DataFrame(records if isinstance(records, list) else [])
+
+    st.session_state["snapshot_best_row"] = sport_payload.get("snapshot_best_row", {})
+    st.session_state["snapshot_generated_at"] = sport_payload.get("snapshot_generated_at", "")
+    st.session_state["snapshot_last_updated"] = sport_payload.get("snapshot_last_updated", "")
+    st.session_state["snapshot_refresh_id"] = safe_int(sport_payload.get("snapshot_refresh_id", 0), 0)
+
+    return True
+
+def persist_generated_play_snapshots(plays_df: pd.DataFrame):
+    selected_sport = get_selected_sport()
+    payload = _safe_load_json_file(PERSISTED_PLAYS_FILE, {})
+    if not isinstance(payload, dict):
+        payload = {}
+
+    if plays_df is None or plays_df.empty:
+        payload[selected_sport] = []
+    else:
+        safe_df = plays_df.copy()
+        payload[selected_sport] = safe_df.to_dict("records")
+
+    _safe_save_json_file(PERSISTED_PLAYS_FILE, payload)
+
+def get_persisted_plays_df(sport_name=None):
+    sport = str(sport_name or get_selected_sport()).strip().upper()
+    payload = _safe_load_json_file(PERSISTED_PLAYS_FILE, {})
+    if not isinstance(payload, dict):
         return pd.DataFrame()
 
-    out = df.copy()
+    records = payload.get(sport, [])
+    if not isinstance(records, list):
+        return pd.DataFrame()
 
-    numeric_defaults = {
+    return pd.DataFrame(records)
+
+def clear_generated_play_snapshots():
+    for key in [
+        "plays_df",
+        "snapshot_plays_df",
+        "snapshot_all_plays_df",
+        "snapshot_active_df",
+        "snapshot_top_plays_df",
+        "snapshot_watchlist_df",
+        "snapshot_ai_slip_df",
+        "snapshot_parlay_df",
+    ]:
+        st.session_state[key] = pd.DataFrame()
+
+    st.session_state["snapshot_best_row"] = {}
+    st.session_state["snapshot_generated_at"] = ""
+    st.session_state["snapshot_last_updated"] = ""
+
+# =========================================================
+# DATAFRAME NORMALIZATION + RANKING HELPERS
+# =========================================================
+def normalize_dataframe_for_selected_sport(df: pd.DataFrame, sport_name=None):
+    if df is None or not isinstance(df, pd.DataFrame):
+        return pd.DataFrame()
+
+    working_df = df.copy()
+    selected_sport = str(sport_name or get_selected_sport()).strip().upper()
+
+    if "sport" not in working_df.columns:
+        working_df["sport"] = selected_sport
+
+    working_df["sport"] = working_df["sport"].fillna(selected_sport).astype(str).str.upper()
+
+    for col, default_val in {
+        "game": "",
+        "market": "",
+        "selection": "",
+        "player": "",
+        "team": "",
+        "opponent": "",
+        "line": None,
+        "odds": None,
+        "best_price": None,
+        "best_book": "",
         "implied_prob": 0.0,
         "true_prob": 0.0,
+        "implied_probability": 0.0,
+        "true_probability": 0.0,
         "edge": 0.0,
-        "books": 0.0,
-        "books_seen": 0.0,
+        "price_edge": 0.0,
+        "books": 0,
+        "books_seen": 0,
+        "consensus": "",
         "consensus_pct": 0.0,
+        "sharp_score": 0.0,
         "market_signal": 0.0,
         "matchup_score": 0.0,
         "historical_score": 0.0,
         "true_confidence": 0.0,
+        "status": "",
         "units": 0.0,
-        "sharp_score": 0.0,
+        "log_category": "",
+        "sportsdata_note": "",
+        "injury_flag": "",
+        "lineup_flag": "",
         "model_score": 0.0,
+        "score": 0.0,
+        "rank_score": 0.0,
+        "tier": "C",
+        "quality_label": "Watch",
+        "watch_tier": "",
+        "ai_tags": "",
         "context_score": 0.0,
-    }
+    }.items():
+        if col not in working_df.columns:
+            working_df[col] = default_val
 
-    for col, default_val in numeric_defaults.items():
-        if col not in out.columns:
-            out[col] = default_val
-        out[col] = pd.to_numeric(out[col], errors="coerce").fillna(default_val)
+    numeric_cols = [
+        "line",
+        "odds",
+        "best_price",
+        "implied_prob",
+        "true_prob",
+        "implied_probability",
+        "true_probability",
+        "edge",
+        "price_edge",
+        "books",
+        "books_seen",
+        "consensus_pct",
+        "sharp_score",
+        "market_signal",
+        "matchup_score",
+        "historical_score",
+        "true_confidence",
+        "units",
+        "model_score",
+        "score",
+        "rank_score",
+        "context_score",
+    ]
+    for col in numeric_cols:
+        if col in working_df.columns:
+            working_df[col] = pd.to_numeric(working_df[col], errors="coerce")
 
-    if "books_seen" not in out.columns or out["books_seen"].sum() == 0:
-        out["books_seen"] = out["books"]
+    return working_df.reset_index(drop=True)
 
-    if "books" not in out.columns or out["books"].sum() == 0:
-        out["books"] = out["books_seen"]
+def recalculate_play_metrics(df: pd.DataFrame):
+    if df is None or df.empty:
+        return pd.DataFrame() if df is None else df
 
-    if "best_price" not in out.columns:
-        out["best_price"] = out.get("odds", "")
-    if "best_book" not in out.columns:
-        out["best_book"] = ""
-    if "price_edge" not in out.columns:
-        out["price_edge"] = out["edge"]
+    working_df = df.copy()
 
-    if "consensus" not in out.columns:
-        out["consensus"] = out["consensus_pct"].apply(lambda x: f"{round(float(x), 1)}%")
+    if "books_seen" not in working_df.columns and "books" in working_df.columns:
+        working_df["books_seen"] = working_df["books"]
 
-    if "score" not in out.columns:
-        out["score"] = (
-            out["true_confidence"] * 0.55
-            + out["edge"] * 4.0
-            + out["books_seen"] * 2.5
-            + out["context_score"] * 0.35
-        ).round(1)
+    if "price_edge" not in working_df.columns and "edge" in working_df.columns:
+        working_df["price_edge"] = working_df["edge"]
 
-    if "rank_score" not in out.columns:
-        out["rank_score"] = out["score"]
+    if "score" not in working_df.columns:
+        working_df["score"] = pd.to_numeric(working_df.get("model_score", 0), errors="coerce").fillna(0.0)
 
-    def _tier_from_row(r):
-        tc = safe_float(r.get("true_confidence", 0), 0.0)
-        edge = safe_float(r.get("edge", 0), 0.0)
+    if "rank_score" not in working_df.columns:
+        working_df["rank_score"] = 0.0
+
+    working_df["true_confidence"] = pd.to_numeric(working_df.get("true_confidence", 0), errors="coerce").fillna(0.0)
+    working_df["edge"] = pd.to_numeric(working_df.get("edge", 0), errors="coerce").fillna(0.0)
+    working_df["books_seen"] = pd.to_numeric(working_df.get("books_seen", working_df.get("books", 0)), errors="coerce").fillna(0.0)
+    working_df["model_score"] = pd.to_numeric(working_df.get("model_score", 0), errors="coerce").fillna(0.0)
+    working_df["context_score"] = pd.to_numeric(working_df.get("context_score", 0), errors="coerce").fillna(0.0)
+
+    working_df["rank_score"] = (
+        (working_df["true_confidence"] * 0.55)
+        + (working_df["edge"] * 4.0)
+        + (working_df["books_seen"] * 2.0)
+        + (working_df["model_score"] * 0.15)
+        + (working_df["context_score"] * 1.5)
+    ).round(2)
+
+    working_df["score"] = working_df["rank_score"]
+
+    def _tier_from_row(row):
+        tc = safe_float(row.get("true_confidence", 0), 0)
+        edge = safe_float(row.get("edge", 0), 0)
+
         if tc >= 74 and edge >= 4.5:
             return "A"
-        if tc >= 68 and edge >= 3.0:
+        if tc >= 66 and edge >= 3.0:
             return "B"
         return "C"
 
-    out["tier"] = out.apply(_tier_from_row, axis=1)
-    out["quality_label"] = out["tier"].apply(quality_label_from_tier)
+    working_df["tier"] = working_df.apply(_tier_from_row, axis=1)
+    working_df["quality_label"] = working_df["tier"].apply(quality_label_from_tier)
 
-    if "watch_tier" not in out.columns:
-        out["watch_tier"] = ""
+    if "watch_tier" not in working_df.columns:
+        working_df["watch_tier"] = ""
 
-    watch_mask = out["status"].astype(str).str.strip().isin(["Watch", "Watchlist"])
-    out.loc[watch_mask, "watch_tier"] = out[watch_mask].apply(classify_watch_tier, axis=1)
+    if "ai_tags" not in working_df.columns:
+        working_df["ai_tags"] = ""
 
-    def _build_tags(r):
-        tags = []
-        if safe_float(r.get("edge", 0), 0.0) >= 4.5:
-            tags.append("High Edge")
-        if safe_float(r.get("true_confidence", 0), 0.0) >= 72:
-            tags.append("High Confidence")
-        if safe_float(r.get("books_seen", 0), 0.0) >= 3:
-            tags.append("Multi-Book")
-        if str(r.get("sportsdata_note", "")).strip():
-            tags.append("SportsData")
-        return tags
+    working_df["ai_tags"] = working_df.apply(
+        lambda r: [
+            tag for tag in [
+                f"Conf {safe_float(r.get('true_confidence', 0), 0):.1f}",
+                f"Edge {safe_float(r.get('edge', 0), 0):.2f}%",
+                f"Books {safe_int(r.get('books_seen', r.get('books', 0)), 0)}",
+            ] if str(tag).strip()
+        ],
+        axis=1,
+    )
 
-    out["ai_tags"] = out.apply(_build_tags, axis=1)
+    return working_df.reset_index(drop=True)
 
-    return out
+# =========================================================
+# TEAM NORMALIZATION
+# =========================================================
+def normalize_team_name(abbrev: str):
+    raw = str(abbrev).strip()
+    key = raw.upper()
+
+    mapping = {
+        # NBA
+        "ATL": "Hawks", "ATLANTA HAWKS": "Hawks", "HAWKS": "Hawks",
+        "BOS": "Celtics", "BOSTON CELTICS": "Celtics", "CELTICS": "Celtics",
+        "BKN": "Nets", "BROOKLYN NETS": "Nets", "NETS": "Nets",
+        "CHA": "Hornets", "CHARLOTTE HORNETS": "Hornets", "HORNETS": "Hornets",
+        "CHI": "Bulls", "CHICAGO BULLS": "Bulls", "BULLS": "Bulls",
+        "CLE": "Cavaliers", "CLEVELAND CAVALIERS": "Cavaliers", "CAVALIERS": "Cavaliers",
+        "DAL": "Mavericks", "DALLAS MAVERICKS": "Mavericks", "MAVERICKS": "Mavericks",
+        "DEN": "Nuggets", "DENVER NUGGETS": "Nuggets", "NUGGETS": "Nuggets",
+        "DET": "Pistons", "DETROIT PISTONS": "Pistons", "PISTONS": "Pistons",
+        "GSW": "Warriors", "GOLDEN STATE WARRIORS": "Warriors", "WARRIORS": "Warriors",
+        "HOU": "Rockets", "HOUSTON ROCKETS": "Rockets", "ROCKETS": "Rockets",
+        "IND": "Pacers", "INDIANA PACERS": "Pacers", "PACERS": "Pacers",
+        "LAC": "Clippers", "LOS ANGELES CLIPPERS": "Clippers", "CLIPPERS": "Clippers",
+        "LAL": "Lakers", "LOS ANGELES LAKERS": "Lakers", "LAKERS": "Lakers",
+        "MEM": "Grizzlies", "MEMPHIS GRIZZLIES": "Grizzlies", "GRIZZLIES": "Grizzlies",
+        "MIA": "Heat", "MIAMI HEAT": "Heat", "HEAT": "Heat",
+        "MIL": "Bucks", "MILWAUKEE BUCKS": "Bucks", "BUCKS": "Bucks",
+        "MIN": "Timberwolves", "MINNESOTA TIMBERWOLVES": "Timberwolves", "TIMBERWOLVES": "Timberwolves", "WOLVES": "Timberwolves",
+        "NOP": "Pelicans", "NEW ORLEANS PELICANS": "Pelicans", "PELICANS": "Pelicans",
+        "NYK": "Knicks", "NEW YORK KNICKS": "Knicks", "KNICKS": "Knicks",
+        "OKC": "Thunder", "OKLAHOMA CITY THUNDER": "Thunder", "THUNDER": "Thunder",
+        "ORL": "Magic", "ORLANDO MAGIC": "Magic", "MAGIC": "Magic",
+        "PHI": "76ers", "PHILADELPHIA 76ERS": "76ers", "76ERS": "76ers", "SIXERS": "76ers",
+        "PHX": "Suns", "PHOENIX SUNS": "Suns", "SUNS": "Suns",
+        "POR": "Trail Blazers", "PORTLAND TRAIL BLAZERS": "Trail Blazers", "BLAZERS": "Trail Blazers", "TRAIL BLAZERS": "Trail Blazers",
+        "SAC": "Kings", "SACRAMENTO KINGS": "Kings", "KINGS": "Kings",
+        "SAS": "Spurs", "SAN ANTONIO SPURS": "Spurs", "SPURS": "Spurs",
+        "TOR": "Raptors", "TORONTO RAPTORS": "Raptors", "RAPTORS": "Raptors",
+        "UTA": "Jazz", "UTAH JAZZ": "Jazz", "JAZZ": "Jazz",
+        "WAS": "Wizards", "WASHINGTON WIZARDS": "Wizards", "WIZARDS": "Wizards",
+
+        # NHL
+        "BOS BRUINS": "Bruins", "BRUINS": "Bruins",
+        "RANGERS": "Rangers", "NY RANGERS": "Rangers", "NEW YORK RANGERS": "Rangers",
+        "MAPLE LEAFS": "Maple Leafs", "TORONTO MAPLE LEAFS": "Maple Leafs",
+        "LIGHTNING": "Lightning", "TAMPA BAY LIGHTNING": "Lightning",
+        "PANTHERS": "Panthers", "FLORIDA PANTHERS": "Panthers",
+        "HURRICANES": "Hurricanes", "CAROLINA HURRICANES": "Hurricanes",
+        "OILERS": "Oilers", "EDMONTON OILERS": "Oilers",
+        "AVALANCHE": "Avalanche", "COLORADO AVALANCHE": "Avalanche",
+        "GOLDEN KNIGHTS": "Golden Knights", "VEGAS GOLDEN KNIGHTS": "Golden Knights",
+
+        # MLB
+        "YANKEES": "Yankees", "NEW YORK YANKEES": "Yankees",
+        "METS": "Mets", "NEW YORK METS": "Mets",
+        "DODGERS": "Dodgers", "LOS ANGELES DODGERS": "Dodgers",
+        "PADRES": "Padres", "SAN DIEGO PADRES": "Padres",
+        "BRAVES": "Braves", "ATLANTA BRAVES": "Braves",
+        "PHILLIES": "Phillies", "PHILADELPHIA PHILLIES": "Phillies",
+        "ASTROS": "Astros", "HOUSTON ASTROS": "Astros",
+        "RANGERS MLB": "Rangers", "TEXAS RANGERS": "Rangers",
+        "RED SOX": "Red Sox", "BOSTON RED SOX": "Red Sox",
+        "CUBS": "Cubs", "CHICAGO CUBS": "Cubs",
+    }
+
+    return mapping.get(key, raw.title())
+
+# =========================================================
+# LIVE SLATE INPUT (CLEAN)
+# =========================================================
+def parse_today_games(games_text: str):
+    games = []
+
+    for line in str(games_text).splitlines():
+        cleaned = line.strip()
+        if not cleaned:
+            continue
+
+        parts = re.split(r"\s+vs\s+|\s+v\s+|\s+@\s+", cleaned, flags=re.IGNORECASE)
+        if len(parts) != 2:
+            continue
+
+        away = normalize_team_name(parts[0].strip())
+        home = normalize_team_name(parts[1].strip())
+
+        if away and home:
+            games.append(f"{away} vs {home}")
+
+    return games
+
+# =========================================================
+# SIDEBAR CONTROLS
+# =========================================================
+st.sidebar.markdown("### 🏟️ Sport")
+selected_sidebar_sport = st.sidebar.selectbox(
+    "Select Sport",
+    options=["NBA", "NHL", "MLB"],
+    index=["NBA", "NHL", "MLB"].index(get_selected_sport()) if get_selected_sport() in ["NBA", "NHL", "MLB"] else 0,
+    key="selected_sport_sidebar",
+)
+set_selected_sport(selected_sidebar_sport)
+
+st.sidebar.markdown("### 🗓️ Today's Slate")
+today_games_text = st.sidebar.text_area(
+    "Optional: Filter today's slate",
+    key="today_games_text",
+    height=180,
+    placeholder="Examples:\nSAS vs CHA\nLAL vs BOS\nNYY vs BOS\nEDM vs COL\n\nLeave blank to use all live games",
+)
+
+st.sidebar.caption(
+    "Supports abbreviations, full names, nicknames, and either VS or @."
+)
+
+today_games = parse_today_games(str(today_games_text))
+selected_sport = get_selected_sport()
+
+st.sidebar.markdown("### 📡 SportsDataIO Controls")
+st.session_state["sportsdata_enabled"] = st.sidebar.toggle(
+    "Enable SportsDataIO Context",
+    value=st.session_state.get("sportsdata_enabled", True),
+)
+
+st.sidebar.caption(f"Current SportData mode: {get_current_sportsdata_slug().upper()}")
+
+sportsdata_game_date = st.sidebar.text_input(
+    "SportsData Game Date (YYYY-MM-DD)",
+    value=today_str(),
+)
+
+if SPORTSDATA_API_KEY:
+    st.sidebar.success("SportsDataIO key loaded")
+else:
+    st.sidebar.warning("Missing SportsDataIO API key in Streamlit secrets")
+
+if st.sidebar.button("🔄 Refresh Live Odds", use_container_width=True):
+    st.session_state["manual_refresh_triggered"] = True
+else:
+    st.session_state["manual_refresh_triggered"] = False
+
+# =========================================================
+# ODDS CACHE HELPERS
+# =========================================================
+def get_odds_games_for_sport(sport_name):
+    sport = str(sport_name).strip().upper()
+    mapping = st.session_state.get("odds_api_games_by_sport", {})
+    if not isinstance(mapping, dict):
+        return []
+    value = mapping.get(sport, [])
+    return value if isinstance(value, list) else []
+
+def set_odds_games_for_sport(games, sport_name):
+    sport = str(sport_name).strip().upper()
+    mapping = dict(st.session_state.get("odds_api_games_by_sport", {}))
+    mapping[sport] = games if isinstance(games, list) else []
+    st.session_state["odds_api_games_by_sport"] = mapping
+
+def get_cached_games_for_sport(sport_name):
+    sport = str(sport_name).strip().upper()
+    mapping = st.session_state.get("last_successful_odds_games_by_sport", {})
+    if not isinstance(mapping, dict):
+        return []
+    value = mapping.get(sport, [])
+    return value if isinstance(value, list) else []
+
+def set_cached_games_for_sport(games, sport_name):
+    sport = str(sport_name).strip().upper()
+    mapping = dict(st.session_state.get("last_successful_odds_games_by_sport", {}))
+    mapping[sport] = games if isinstance(games, list) else []
+    st.session_state["last_successful_odds_games_by_sport"] = mapping
 
 # =========================================================
 # LIVE ODDS FETCH + EFFECTIVE DATA HELPERS

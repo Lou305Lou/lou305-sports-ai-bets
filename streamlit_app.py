@@ -4821,8 +4821,34 @@ elif nav == "Watchlist":
 
     if snapshot_watchlist_df.empty and not persisted_plays_df.empty:
         try:
-            persist_generated_play_snapshots(persisted_plays_df)
-            snapshot_watchlist_df = st.session_state.get("snapshot_watchlist_df", pd.DataFrame())
+            restored_df = persisted_plays_df.copy()
+            restored_df = normalize_dataframe_for_selected_sport(restored_df, get_selected_sport())
+            restored_df = recalculate_play_metrics(restored_df)
+
+            if "status" not in restored_df.columns:
+                restored_df["status"] = ""
+            if "log_category" not in restored_df.columns:
+                restored_df["log_category"] = ""
+
+            restored_df["status"] = restored_df["status"].fillna("").astype(str).str.strip()
+            restored_df["log_category"] = restored_df["log_category"].fillna("").astype(str).str.strip()
+
+            snapshot_watchlist_df = restored_df[
+                restored_df["status"].isin(["Watchlist", "Watch"])
+            ].copy()
+
+            if snapshot_watchlist_df.empty:
+                remaining_df = restored_df.copy()
+                snapshot_watchlist_df = remaining_df.sort_values(
+                    by=["true_confidence", "edge", "books_seen"],
+                    ascending=[False, False, False],
+                ).head(WATCHLIST_LIMIT).copy()
+
+                if not snapshot_watchlist_df.empty:
+                    snapshot_watchlist_df["status"] = "Watchlist"
+                    snapshot_watchlist_df["log_category"] = "Watchlist"
+
+            st.session_state["snapshot_watchlist_df"] = snapshot_watchlist_df.copy()
             snapshot_last_updated = str(st.session_state.get("snapshot_last_updated", "")).strip()
         except Exception:
             pass
@@ -4845,31 +4871,31 @@ elif nav == "Watchlist":
     else:
         watch_df = snapshot_watchlist_df.copy().reset_index(drop=True)
 
-        for col, default_val in {
-            "true_confidence": 0.0,
-            "edge": 0.0,
-            "units": 0.0,
-            "status": "Watch",
+        defaults_map = {
+            "game": "",
+            "selection": "",
+            "market": "",
             "best_book": "",
-            "best_price": "",
+            "odds": "",
+            "edge": 0.0,
+            "true_confidence": 0.0,
+            "units": 0.0,
+            "status": "Watchlist",
             "books_seen": 0,
-            "consensus": "",
-            "tier": "C",
-            "quality_label": "Watch",
-            "watch_tier": "",
-            "ai_tags": [[] for _ in range(len(watch_df))] if len(watch_df) > 0 else [],
-            "sportsdata_note": "",
-            "injury_flag": "",
-            "lineup_flag": "",
             "context_score": 0.0,
             "score": 0.0,
             "rank_score": 0.0,
-        }.items():
+            "implied_prob": 0.0,
+            "true_prob": 0.0,
+            "sportsdata_note": "",
+            "injury_flag": "",
+            "lineup_flag": "",
+            "log_category": "Watchlist",
+        }
+
+        for col, default_val in defaults_map.items():
             if col not in watch_df.columns:
-                if col == "ai_tags":
-                    watch_df[col] = [[] for _ in range(len(watch_df))]
-                else:
-                    watch_df[col] = default_val
+                watch_df[col] = default_val
 
         numeric_cols = [
             "true_confidence",
@@ -4883,8 +4909,15 @@ elif nav == "Watchlist":
             "true_prob",
         ]
         for col in numeric_cols:
-            if col in watch_df.columns:
-                watch_df[col] = pd.to_numeric(watch_df[col], errors="coerce").fillna(0.0)
+            watch_df[col] = pd.to_numeric(watch_df[col], errors="coerce").fillna(0.0)
+
+        watch_df["status"] = watch_df["status"].fillna("Watchlist").astype(str).str.strip()
+        watch_df["log_category"] = watch_df["log_category"].fillna("Watchlist").astype(str).str.strip()
+
+        watch_df = watch_df.sort_values(
+            by=["true_confidence", "edge", "books_seen"],
+            ascending=[False, False, False],
+        ).reset_index(drop=True)
 
         if snapshot_last_updated:
             st.caption(f"Last saved play snapshot: {snapshot_last_updated}")
@@ -4900,7 +4933,33 @@ elif nav == "Watchlist":
             st.metric("Avg True Confidence", avg_conf)
 
         st.markdown("---")
-        render_mobile_or_table(watch_df, best_first=False)
+
+        for _, row in watch_df.iterrows():
+            game = str(row.get("game", "")).strip() or "Unknown Matchup"
+            selection = str(row.get("selection", "")).strip() or "N/A"
+            market = str(row.get("market", "")).strip() or "N/A"
+            best_book = str(row.get("best_book", "")).strip() or "N/A"
+            odds = row.get("odds", "")
+            edge = float(safe_float(row.get("edge", 0.0), 0.0))
+            true_conf = float(safe_float(row.get("true_confidence", 0.0), 0.0))
+            units = float(safe_float(row.get("units", 0.0), 0.0))
+
+            st.markdown(
+                f"""
+<div style="background:#111827;border:1px solid #374151;border-radius:16px;padding:16px 18px;margin-bottom:14px;">
+    <div style="font-size:1.15rem;font-weight:700;color:#f9fafb;margin-bottom:10px;">{game}</div>
+    <div style="font-size:1rem;color:#e5e7eb;margin-bottom:8px;"><strong>Pick:</strong> {selection}</div>
+    <div style="font-size:1rem;color:#e5e7eb;margin-bottom:8px;"><strong>Market:</strong> {market}</div>
+    <div style="font-size:1rem;color:#e5e7eb;margin-bottom:8px;"><strong>Book:</strong> {best_book} | <strong>Odds:</strong> {odds}</div>
+    <div style="font-size:1rem;color:#e5e7eb;">
+        <strong>Edge:</strong> {edge:.2f}% |
+        <strong>True Confidence:</strong> {true_conf:.1f}% |
+        <strong>Units:</strong> {units:.2f}
+    </div>
+</div>
+                """,
+                unsafe_allow_html=True,
+            )
 
 # =========================================================
 # AI SLIP

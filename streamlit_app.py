@@ -1088,6 +1088,16 @@ refresh_clicked = st.sidebar.button(
     key=refresh_button_key,
 )
 
+# Show latest refresh note directly in sidebar
+last_sidebar_note = str(st.session_state.get("api_status_note", "")).strip()
+last_sidebar_error = str(st.session_state.get("last_refresh_error", "")).strip()
+
+if last_sidebar_note:
+    st.sidebar.caption(f"Status: {last_sidebar_note}")
+
+if last_sidebar_error:
+    st.sidebar.error(f"Last refresh error: {last_sidebar_error}")
+
 # =========================================================
 # ODDS CACHE HELPERS
 # =========================================================
@@ -1123,6 +1133,7 @@ def set_cached_games_for_sport(games, sport_name):
 # LIVE ODDS FETCH + EFFECTIVE DATA HELPERS
 # =========================================================
 def fetch_odds_for_sport(sport_name: str):
+    sport_name = str(sport_name).strip().upper()
     sport_cfg = get_sport_config(sport_name)
     api_key = get_odds_api_key()
 
@@ -1144,7 +1155,6 @@ def fetch_odds_for_sport(sport_name: str):
         st.session_state["last_odds_refresh_ok"] = False
         st.session_state["api_status_note"] = f"{sport_name}: Daily Odds API call cap reached."
         set_api_status("waiting_reset", "Daily Odds API call cap reached.")
-
         fallback_games = get_cached_games_for_sport(sport_name)
         return fallback_games if isinstance(fallback_games, list) else []
 
@@ -1177,11 +1187,12 @@ def fetch_odds_for_sport(sport_name: str):
         st.session_state["last_refresh_count"] = len(data)
         st.session_state["last_refresh_time"] = pd.Timestamp.now().strftime("%Y-%m-%d %I:%M:%S %p")
         st.session_state["last_api_pull_epoch"] = pull_time
+        set_last_pull_epoch_for_sport(pull_time, sport_name)
+
         st.session_state["api_status_note"] = (
             f"{sport_name}: loaded {len(data)} game(s). "
             f"Calls used today: {get_daily_api_calls_used()} / {DAILY_API_CALL_LIMIT}"
         )
-        set_last_pull_epoch_for_sport(pull_time, sport_name)
 
         if len(data) > 0:
             set_api_status(
@@ -1204,9 +1215,7 @@ def fetch_odds_for_sport(sport_name: str):
 
         fallback = get_cached_games_for_sport(sport_name)
         if isinstance(fallback, list) and len(fallback) > 0:
-            st.session_state["api_status_note"] = (
-                f"{sport_name}: live pull failed, using {len(fallback)} cached game(s)."
-            )
+            st.session_state["api_status_note"] = f"{sport_name}: live pull failed, using cached odds."
             set_api_status("cached", f"{sport_name} live pull failed. Using cached odds.")
             return fallback
 
@@ -1214,18 +1223,15 @@ def fetch_odds_for_sport(sport_name: str):
         set_api_status("error", f"{sport_name} live pull failed.")
         return []
 
+def refresh_live_odds(selected_only=True):
+    selected_sport = str(get_selected_sport()).strip().upper()
 
-def refresh_live_odds():
-    requested_sports = []
-
-    if isinstance(globals().get("ACTIVE_REFRESH_SPORTS", None), list) and len(ACTIVE_REFRESH_SPORTS) > 0:
-        requested_sports = [str(s).strip().upper() for s in ACTIVE_REFRESH_SPORTS if str(s).strip()]
+    if selected_only:
+        requested_sports = [selected_sport]
     else:
-        requested_sports = [str(get_selected_sport()).strip().upper()]
-
-    requested_sports = [s for s in requested_sports if s in SUPPORTED_SPORTS]
-    if not requested_sports:
-        requested_sports = [str(DEFAULT_SPORT).strip().upper()]
+        requested_sports = [str(s).strip().upper() for s in ACTIVE_REFRESH_SPORTS if str(s).strip().upper() in SUPPORTED_SPORTS]
+        if not requested_sports:
+            requested_sports = [selected_sport]
 
     if not api_cooldown_ready():
         st.session_state["last_odds_refresh_ok"] = False
@@ -1233,11 +1239,10 @@ def refresh_live_odds():
             f"Cooldown active. Wait about {API_COOLDOWN_SECONDS} seconds between pulls."
         )
         set_api_status("cooldown", f"Cooldown active. Wait about {API_COOLDOWN_SECONDS} seconds between pulls.")
-        return
+        return False
 
     total_loaded = 0
     combined_note_parts = []
-    selected_sport = str(get_selected_sport()).strip().upper()
 
     for sport_name in requested_sports:
         games = fetch_odds_for_sport(sport_name)
@@ -1269,7 +1274,7 @@ def refresh_live_odds():
         set_api_status("error", f"{selected_sport} refresh returned 0 games.")
 
     finalize_selected_sport_context()
-
+    return True
 
 def get_effective_odds_games_for_sport(sport_name: str):
     live_games = get_odds_games_for_sport(sport_name)
@@ -1281,10 +1286,8 @@ def get_effective_odds_games_for_sport(sport_name: str):
         return cached_games
     return []
 
-
 def get_effective_odds_games():
     return get_effective_odds_games_for_sport(get_selected_sport())
-
 
 def get_today_games_filter():
     raw = str(st.session_state.get("today_games_text", "")).strip()
@@ -1298,7 +1301,6 @@ def get_today_games_filter():
             cleaned.append(text.lower())
 
     return cleaned
-
 
 def game_matches_filter(home_team: str, away_team: str, filters: list):
     if not filters:
@@ -1323,14 +1325,27 @@ def game_matches_filter(home_team: str, away_team: str, filters: list):
 # =========================================================
 if refresh_clicked:
     try:
-        refresh_live_odds()
+        refresh_ok = refresh_live_odds(selected_only=True)
+
+        if refresh_ok:
+            selected_sport = get_selected_sport()
+            live_count = len(get_odds_games_for_sport(selected_sport))
+            cached_count = len(get_cached_games_for_sport(selected_sport))
+
+            if live_count > 0:
+                st.sidebar.success(f"{selected_sport} refresh loaded {live_count} game(s).")
+            elif cached_count > 0:
+                st.sidebar.warning(f"{selected_sport} live refresh failed. Using {cached_count} cached game(s).")
+            else:
+                last_err = str(st.session_state.get("last_refresh_error", "")).strip()
+                if last_err:
+                    st.sidebar.error(last_err)
+                else:
+                    st.sidebar.warning(f"{selected_sport} refresh completed but returned 0 games.")
     except Exception as e:
         st.session_state["last_refresh_error"] = str(e)
-        try:
-            set_api_status("error", f"Refresh failed: {e}")
-        except Exception:
-            pass
-    st.rerun()
+        set_api_status("error", f"Refresh failed: {e}")
+        st.sidebar.error(f"Refresh failed: {e}")
 # =========================================================
 # CONSENSUS + SCORING HELPERS
 # =========================================================

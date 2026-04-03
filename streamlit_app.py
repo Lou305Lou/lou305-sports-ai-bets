@@ -1082,8 +1082,11 @@ else:
     st.sidebar.warning("Missing SportsDataIO API key in Streamlit secrets")
 
 refresh_button_key = f"refresh_live_odds_btn_{get_selected_sport()}"
-if st.sidebar.button("🔄 Refresh Live Odds", use_container_width=True, key=refresh_button_key):
-    st.session_state["manual_refresh_triggered"] = True
+refresh_clicked = st.sidebar.button(
+    "🔄 Refresh Live Odds",
+    use_container_width=True,
+    key=refresh_button_key,
+)
 
 # =========================================================
 # ODDS CACHE HELPERS
@@ -1314,10 +1317,11 @@ def game_matches_filter(home_team: str, away_team: str, filters: list):
             return True
 
     return False
+
 # =========================================================
 # EXECUTE MANUAL REFRESH REQUEST
 # =========================================================
-if st.session_state.pop("manual_refresh_triggered", False):
+if refresh_clicked:
     try:
         refresh_live_odds()
     except Exception as e:

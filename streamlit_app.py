@@ -4808,52 +4808,17 @@ if nav == "Top Plays":
             st.info("No qualified plays yet. Try refreshing odds.")
 
 # =========================================================
-# WATCHLIST
+# WATCHLIST (CLEAN + SAFE RENDER)
 # =========================================================
 elif nav == "Watchlist":
     st.header("👀 Watchlist")
     st.caption("Near-qualified plays worth monitoring.")
 
     current_api_mode = st.session_state.get("api_mode", "idle")
-    persisted_plays_df = get_persisted_plays_df()
     snapshot_watchlist_df = st.session_state.get("snapshot_watchlist_df", pd.DataFrame())
     snapshot_last_updated = str(st.session_state.get("snapshot_last_updated", "")).strip()
 
-    if snapshot_watchlist_df.empty and not persisted_plays_df.empty:
-        try:
-            restored_df = persisted_plays_df.copy()
-            restored_df = normalize_dataframe_for_selected_sport(restored_df, get_selected_sport())
-            restored_df = recalculate_play_metrics(restored_df)
-
-            if "status" not in restored_df.columns:
-                restored_df["status"] = ""
-            if "log_category" not in restored_df.columns:
-                restored_df["log_category"] = ""
-
-            restored_df["status"] = restored_df["status"].fillna("").astype(str).str.strip()
-            restored_df["log_category"] = restored_df["log_category"].fillna("").astype(str).str.strip()
-
-            snapshot_watchlist_df = restored_df[
-                restored_df["status"].isin(["Watchlist", "Watch"])
-            ].copy()
-
-            if snapshot_watchlist_df.empty:
-                remaining_df = restored_df.copy()
-                snapshot_watchlist_df = remaining_df.sort_values(
-                    by=["true_confidence", "edge", "books_seen"],
-                    ascending=[False, False, False],
-                ).head(WATCHLIST_LIMIT).copy()
-
-                if not snapshot_watchlist_df.empty:
-                    snapshot_watchlist_df["status"] = "Watchlist"
-                    snapshot_watchlist_df["log_category"] = "Watchlist"
-
-            st.session_state["snapshot_watchlist_df"] = snapshot_watchlist_df.copy()
-            snapshot_last_updated = str(st.session_state.get("snapshot_last_updated", "")).strip()
-        except Exception:
-            pass
-
-    if len(get_effective_odds_games()) == 0 and persisted_plays_df.empty and snapshot_watchlist_df.empty:
+    if len(get_effective_odds_games()) == 0 and snapshot_watchlist_df.empty:
         if current_api_mode == "waiting_reset":
             reset_expected = str(st.session_state.get("odds_api_reset_expected", "")).strip()
             if reset_expected:
@@ -4871,94 +4836,92 @@ elif nav == "Watchlist":
     else:
         watch_df = snapshot_watchlist_df.copy().reset_index(drop=True)
 
-        defaults_map = {
-            "game": "",
-            "selection": "",
-            "market": "",
-            "best_book": "",
-            "odds": "",
-            "edge": 0.0,
-            "true_confidence": 0.0,
-            "units": 0.0,
-            "status": "Watchlist",
-            "books_seen": 0,
-            "context_score": 0.0,
-            "score": 0.0,
-            "rank_score": 0.0,
-            "implied_prob": 0.0,
-            "true_prob": 0.0,
-            "sportsdata_note": "",
-            "injury_flag": "",
-            "lineup_flag": "",
-            "log_category": "Watchlist",
-        }
-
-        for col, default_val in defaults_map.items():
+        # =========================
+        # SAFE DEFAULTS
+        # =========================
+        for col in ["game","selection","market","best_book","odds"]:
             if col not in watch_df.columns:
-                watch_df[col] = default_val
+                watch_df[col] = ""
 
-        numeric_cols = [
-            "true_confidence",
-            "edge",
-            "units",
-            "books_seen",
-            "context_score",
-            "score",
-            "rank_score",
-            "implied_prob",
-            "true_prob",
-        ]
-        for col in numeric_cols:
-            watch_df[col] = pd.to_numeric(watch_df[col], errors="coerce").fillna(0.0)
+        for col in ["edge","true_confidence","units"]:
+            if col not in watch_df.columns:
+                watch_df[col] = 0.0
 
-        watch_df["status"] = watch_df["status"].fillna("Watchlist").astype(str).str.strip()
-        watch_df["log_category"] = watch_df["log_category"].fillna("Watchlist").astype(str).str.strip()
+        watch_df["edge"] = pd.to_numeric(watch_df["edge"], errors="coerce").fillna(0.0)
+        watch_df["true_confidence"] = pd.to_numeric(watch_df["true_confidence"], errors="coerce").fillna(0.0)
+        watch_df["units"] = pd.to_numeric(watch_df["units"], errors="coerce").fillna(0.0)
 
-        watch_df = watch_df.sort_values(
-            by=["true_confidence", "edge", "books_seen"],
-            ascending=[False, False, False],
-        ).reset_index(drop=True)
-
+        # =========================
+        # HEADER INFO
+        # =========================
         if snapshot_last_updated:
             st.caption(f"Last saved play snapshot: {snapshot_last_updated}")
 
-        metric_col_1, metric_col_2, metric_col_3 = st.columns(3)
-        with metric_col_1:
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
             st.metric("Watchlist Plays", len(watch_df))
-        with metric_col_2:
-            avg_edge = round(float(watch_df["edge"].mean()), 2) if not watch_df.empty else 0.0
+
+        with col2:
+            avg_edge = round(float(watch_df["edge"].mean()), 2) if not watch_df.empty else 0
             st.metric("Avg Edge", avg_edge)
-        with metric_col_3:
-            avg_conf = round(float(watch_df["true_confidence"].mean()), 1) if not watch_df.empty else 0.0
+
+        with col3:
+            avg_conf = round(float(watch_df["true_confidence"].mean()), 1) if not watch_df.empty else 0
             st.metric("Avg True Confidence", avg_conf)
 
         st.markdown("---")
 
+        # =========================
+        # SAFE CARD RENDER
+        # =========================
         for _, row in watch_df.iterrows():
+
             game = str(row.get("game", "")).strip() or "Unknown Matchup"
-            selection = str(row.get("selection", "")).strip() or "N/A"
+            pick = str(row.get("selection", "")).strip() or "N/A"
             market = str(row.get("market", "")).strip() or "N/A"
-            best_book = str(row.get("best_book", "")).strip() or "N/A"
-            odds = row.get("odds", "")
-            edge = float(safe_float(row.get("edge", 0.0), 0.0))
-            true_conf = float(safe_float(row.get("true_confidence", 0.0), 0.0))
-            units = float(safe_float(row.get("units", 0.0), 0.0))
+            book = str(row.get("best_book", "")).strip() or "N/A"
+            odds = str(row.get("odds", "N/A"))
+
+            try:
+                edge = "{:.2f}".format(float(row.get("edge", 0.0)))
+            except:
+                edge = "0.00"
+
+            try:
+                conf = "{:.1f}".format(float(row.get("true_confidence", 0.0)))
+            except:
+                conf = "0.0"
+
+            try:
+                units = "{:.2f}".format(float(row.get("units", 0.0)))
+            except:
+                units = "0.00"
 
             st.markdown(
-                f"""
-<div style="background:#111827;border:1px solid #374151;border-radius:16px;padding:16px 18px;margin-bottom:14px;">
-    <div style="font-size:1.15rem;font-weight:700;color:#f9fafb;margin-bottom:10px;">{game}</div>
-    <div style="font-size:1rem;color:#e5e7eb;margin-bottom:8px;"><strong>Pick:</strong> {selection}</div>
-    <div style="font-size:1rem;color:#e5e7eb;margin-bottom:8px;"><strong>Market:</strong> {market}</div>
-    <div style="font-size:1rem;color:#e5e7eb;margin-bottom:8px;"><strong>Book:</strong> {best_book} | <strong>Odds:</strong> {odds}</div>
-    <div style="font-size:1rem;color:#e5e7eb;">
-        <strong>Edge:</strong> {edge:.2f}% |
-        <strong>True Confidence:</strong> {true_conf:.1f}% |
-        <strong>Units:</strong> {units:.2f}
+                f'''
+<div style="
+    background:#111827;
+    border:1px solid #374151;
+    border-radius:16px;
+    padding:16px;
+    margin-bottom:14px;
+    color:#f9fafb;
+">
+    <div style="font-weight:600;font-size:15px;margin-bottom:6px;">
+        {game}
+    </div>
+
+    <div><b>Pick:</b> {pick}</div>
+    <div><b>Market:</b> {market}</div>
+    <div><b>Book:</b> {book} | <b>Odds:</b> {odds}</div>
+
+    <div style="margin-top:6px;color:#d1d5db;">
+        Edge: {edge}% | True Conf: {conf}% | Units: {units}
     </div>
 </div>
-                """,
-                unsafe_allow_html=True,
+                ''',
+                unsafe_allow_html=True
             )
 
 # =========================================================

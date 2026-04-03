@@ -2305,6 +2305,8 @@ def generate_ai_plays():
         "best_book",
         "implied_prob",
         "true_prob",
+        "implied_probability",
+        "true_probability",
         "edge",
         "price_edge",
         "books",
@@ -2438,6 +2440,9 @@ def generate_ai_plays():
                 historical_score,
             )
 
+            sharp_score = round(clamp((books * 10.0) + (edge * 5.0), 0.0, 100.0), 1)
+            model_score = round(calculate_model_score(true_prob, edge, books), 1)
+
             status = ""
             log_category = ""
 
@@ -2445,14 +2450,15 @@ def generate_ai_plays():
                 status = "Active"
                 log_category = "Top Plays"
             elif books >= MIN_WATCH_BOOKS and edge >= MIN_WATCH_EDGE and true_confidence >= MIN_WATCH_TRUE_CONF:
-                status = "Watch"
+                status = "Watchlist"
+                log_category = "Watchlist"
+            elif books >= 2 and edge >= max(1.00, MIN_WATCH_EDGE - 1.50) and true_confidence >= max(52.0, MIN_WATCH_TRUE_CONF - 8.0):
+                status = "Watchlist"
                 log_category = "Watchlist"
             else:
                 continue
 
-            sharp_score = round(clamp((books * 10.0) + (edge * 5.0), 0.0, 100.0), 1)
-            units = calculate_units(true_confidence, status)
-            model_score = round(calculate_model_score(true_prob, edge, books), 1)
+            units = calculate_units(true_confidence, "Active" if status == "Active" else "Watchlist")
 
             row = {
                 "sport": selected_sport,
@@ -2468,6 +2474,8 @@ def generate_ai_plays():
                 "best_book": best_book,
                 "implied_prob": round(implied_prob * 100.0, 2),
                 "true_prob": round(true_prob * 100.0, 2),
+                "implied_probability": round(implied_prob * 100.0, 2),
+                "true_probability": round(true_prob * 100.0, 2),
                 "edge": edge,
                 "price_edge": edge,
                 "books": books,
@@ -2481,28 +2489,44 @@ def generate_ai_plays():
                 "true_confidence": true_confidence,
                 "status": status,
                 "units": units,
-                "play_id": build_play_id(selected_sport, data["game"], data["market"], data["selection"], data["line"]),
+                "play_id": build_play_id(
+                    selected_sport,
+                    data["game"],
+                    data["market"],
+                    data["selection"],
+                    data["line"],
+                ),
                 "log_category": log_category,
                 "sportsdata_note": "",
                 "injury_flag": "",
                 "lineup_flag": "",
                 "model_score": model_score,
+                "score": model_score,
+                "rank_score": model_score,
+                "tier": "C",
+                "quality_label": "Watch",
+                "watch_tier": "",
+                "ai_tags": "",
                 "context_score": 0.0,
             }
 
             rows.append(row)
 
         # -------------------------------------------------
-        # Mock prop layer for NBA / NHL / MLB
+        # PROP LAYER
         # -------------------------------------------------
         if ENABLE_PLAYER_PROPS:
-            prop_rows = generate_mock_prop_rows_for_game(
-                game_label=game_label,
-                selected_sport=selected_sport,
-                home_team=home_team,
-                away_team=away_team,
-            )
-            rows.extend(prop_rows)
+            try:
+                prop_rows = generate_mock_prop_rows_for_game(
+                    game_label=game_label,
+                    selected_sport=selected_sport,
+                    home_team=home_team,
+                    away_team=away_team,
+                )
+                if isinstance(prop_rows, list) and prop_rows:
+                    rows.extend(prop_rows)
+            except Exception:
+                pass
 
     plays_df = pd.DataFrame(rows)
     if plays_df.empty:
@@ -2511,12 +2535,127 @@ def generate_ai_plays():
     plays_df = normalize_dataframe_for_selected_sport(plays_df, selected_sport)
     plays_df = recalculate_play_metrics(plays_df)
 
+    if "status" not in plays_df.columns:
+        plays_df["status"] = ""
+
+    plays_df["status"] = plays_df["status"].fillna("").astype(str).str.strip()
+
+    status_rank_map = {
+        "Active": 0,
+        "Watchlist": 1,
+        "Watch": 1,
+    }
+    plays_df["status_rank"] = plays_df["status"].map(status_rank_map).fillna(9)
+
     plays_df = plays_df.sort_values(
-        by=["status", "rank_score", "true_confidence", "edge", "books_seen"],
+        by=["status_rank", "rank_score", "true_confidence", "edge", "books_seen"],
         ascending=[True, False, False, False, False],
     ).reset_index(drop=True)
 
+    plays_df = plays_df.drop(columns=["status_rank"], errors="ignore")
+
+    if "play_id" in plays_df.columns:
+        plays_df["play_id"] = plays_df["play_id"].fillna("").astype(str).str.strip()
+        plays_df = plays_df[plays_df["play_id"] != ""].copy()
+        plays_df = plays_df.drop_duplicates(subset=["play_id"], keep="first").reset_index(drop=True)
+
     return plays_df
+
+
+plays_df = generate_ai_plays()
+
+selected_sport = get_selected_sport()
+
+if plays_df is None or not isinstance(plays_df, pd.DataFrame):
+    plays_df = pd.DataFrame()
+
+if plays_df.empty:
+    st.session_state["plays_df"] = pd.DataFrame()
+    st.session_state["snapshot_plays_df"] = pd.DataFrame()
+    st.session_state["snapshot_all_plays_df"] = pd.DataFrame()
+    st.session_state["snapshot_active_df"] = pd.DataFrame()
+    st.session_state["snapshot_top_plays_df"] = pd.DataFrame()
+    st.session_state["snapshot_watchlist_df"] = pd.DataFrame()
+    st.session_state["snapshot_ai_slip_df"] = pd.DataFrame()
+    st.session_state["snapshot_parlay_df"] = pd.DataFrame()
+    st.session_state["snapshot_best_row"] = {}
+else:
+    plays_df = normalize_dataframe_for_selected_sport(plays_df, selected_sport)
+    plays_df = recalculate_play_metrics(plays_df)
+
+    if "status" not in plays_df.columns:
+        plays_df["status"] = ""
+
+    if "log_category" not in plays_df.columns:
+        plays_df["log_category"] = ""
+
+    plays_df["status"] = plays_df["status"].fillna("").astype(str).str.strip()
+    plays_df["log_category"] = plays_df["log_category"].fillna("").astype(str).str.strip()
+
+    active_df = plays_df[
+        plays_df["status"].isin(["Active"])
+    ].copy()
+
+    watchlist_df = plays_df[
+        plays_df["status"].isin(["Watchlist", "Watch"])
+    ].copy()
+
+    if active_df.empty and not plays_df.empty:
+        fallback_active_df = plays_df.sort_values(
+            by=["true_confidence", "edge", "books_seen"],
+            ascending=[False, False, False],
+        ).head(TOP_PLAYS_LIMIT).copy()
+
+        if not fallback_active_df.empty:
+            fallback_active_df["status"] = "Active"
+            fallback_active_df["log_category"] = "Top Plays"
+            active_df = fallback_active_df.copy()
+
+    top_plays_df = active_df.sort_values(
+        by=["true_confidence", "edge", "books_seen"],
+        ascending=[False, False, False],
+    ).head(TOP_PLAYS_LIMIT).copy()
+
+    if watchlist_df.empty and not plays_df.empty:
+        watch_candidates_df = plays_df[
+            ~plays_df["play_id"].isin(top_plays_df["play_id"]) if "play_id" in plays_df.columns and "play_id" in top_plays_df.columns else [True] * len(plays_df)
+        ].copy()
+
+        if not watch_candidates_df.empty:
+            watch_candidates_df = watch_candidates_df.sort_values(
+                by=["true_confidence", "edge", "books_seen"],
+                ascending=[False, False, False],
+            ).head(WATCHLIST_LIMIT).copy()
+            watch_candidates_df["status"] = "Watchlist"
+            watch_candidates_df["log_category"] = "Watchlist"
+            watchlist_df = watch_candidates_df.copy()
+
+    ai_slip_df = top_plays_df.head(5).copy()
+
+    st.session_state["plays_df"] = plays_df.copy()
+    st.session_state["snapshot_plays_df"] = plays_df.copy()
+    st.session_state["snapshot_all_plays_df"] = plays_df.copy()
+    st.session_state["snapshot_active_df"] = active_df.copy()
+    st.session_state["snapshot_top_plays_df"] = top_plays_df.copy()
+    st.session_state["snapshot_watchlist_df"] = watchlist_df.copy()
+    st.session_state["snapshot_ai_slip_df"] = ai_slip_df.copy()
+    st.session_state["snapshot_parlay_df"] = pd.DataFrame()
+    st.session_state["snapshot_best_row"] = ai_slip_df.iloc[0].to_dict() if not ai_slip_df.empty else {}
+
+    timestamp_now = pd.Timestamp.now().strftime("%Y-%m-%d %I:%M:%S %p")
+    st.session_state["snapshot_generated_at"] = timestamp_now
+    st.session_state["snapshot_last_updated"] = timestamp_now
+    st.session_state["snapshot_refresh_id"] = safe_int(st.session_state.get("snapshot_refresh_id", 0), 0) + 1
+
+    try:
+        persist_generated_play_snapshots(plays_df.copy())
+    except Exception:
+        pass
+
+    try:
+        save_tab_snapshots_to_disk()
+    except Exception:
+        pass
 
 # =========================================================
 # FORCE SESSION STATE PERSISTENCE (CRITICAL FIX)

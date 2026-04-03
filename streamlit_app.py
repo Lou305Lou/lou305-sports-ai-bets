@@ -6332,19 +6332,33 @@ st.dataframe(weight_df, use_container_width=True, hide_index=True)
 # =========================================================
 st.markdown("#### 📊 Adaptive Category Thresholds")
 
+def _safe_threshold_status(current_threshold, base_threshold):
+    try:
+        current_val = float(current_threshold)
+    except Exception:
+        current_val = 0.03
+
+    try:
+        base_val = float(base_threshold)
+    except Exception:
+        base_val = 0.03
+
+    if current_val < base_val:
+        return "Looser"
+    if current_val > base_val:
+        return "Tighter"
+    return "Base"
+
 threshold_rows = []
 for category_name in ["Top Plays", "AI Picks", "AI Parlays", "Watchlist"]:
+    current_threshold = float(adjusted_category_thresholds.get(category_name, 0.03))
+    base_threshold = float(base_thresholds.get(category_name, 0.03))
+
     threshold_rows.append(
         {
             "Category": category_name,
-            "Threshold": round(
-                float(adjusted_category_thresholds.get(category_name, 0.03)),
-                4,
-            ),
-            "Status": _status_from_threshold(
-                adjusted_category_thresholds.get(category_name, 0.03),
-                base_thresholds.get(category_name, 0.03),
-            ),
+            "Threshold": round(current_threshold, 4),
+            "Status": _safe_threshold_status(current_threshold, base_threshold),
         }
     )
 
@@ -6354,104 +6368,6 @@ st.dataframe(threshold_df, use_container_width=True, hide_index=True)
 # =========================================================
 # PLAY TYPE PERFORMANCE TABLE
 # =========================================================
-st.markdown("#### 🧠 Play Type Performance")
-
-if play_type_stats:
-    play_type_stats_df = pd.DataFrame(
-        [
-            {
-                "Play Type": play_type_name,
-                "Bets": stats.get("sample_size", 0),
-                "Wins": stats.get("wins", 0),
-                "Losses": stats.get("losses", 0),
-                "Pushes": stats.get("pushes", 0),
-                "Win Rate %": stats.get("win_rate", 0.0),
-                "Profit": stats.get("profit", 0.0),
-                "ROI/Bet": stats.get("roi_per_bet", 0.0),
-                "Avg True Conf": stats.get("avg_true_conf", 0.0),
-                "Avg Edge": stats.get("avg_edge", 0.0),
-                "Filtered": (
-                    "Yes"
-                    if learning_state.get("bad_play_type_flags", {})
-                    .get(play_type_name, {})
-                    .get("is_filtered", False)
-                    else "No"
-                ),
-            }
-            for play_type_name, stats in play_type_stats.items()
-        ]
-    ).sort_values(by=["Profit", "Win Rate %"], ascending=[False, False])
-
-    st.dataframe(play_type_stats_df, use_container_width=True, hide_index=True)
-else:
-    st.info("No settled play-type data yet for this sport.")
-
-# =========================================================
-# CATEGORY PERFORMANCE TABLE
-# =========================================================
-st.markdown("#### 📚 Category Performance")
-
-if category_stats:
-    category_stats_df = pd.DataFrame(
-        [
-            {
-                "Category": category_name,
-                "Bets": stats.get("sample_size", 0),
-                "Wins": stats.get("wins", 0),
-                "Losses": stats.get("losses", 0),
-                "Pushes": stats.get("pushes", 0),
-                "Win Rate %": stats.get("win_rate", 0.0),
-                "Profit": stats.get("profit", 0.0),
-                "ROI/Bet": stats.get("roi_per_bet", 0.0),
-                "Avg True Conf": stats.get("avg_true_conf", 0.0),
-                "Avg Edge": stats.get("avg_edge", 0.0),
-                "Stage": stats.get("stage", "Collecting"),
-            }
-            for category_name, stats in category_stats.items()
-        ]
-    ).sort_values(by=["Profit", "Win Rate %"], ascending=[False, False])
-
-    st.dataframe(category_stats_df, use_container_width=True, hide_index=True)
-else:
-    st.info("No settled category data yet for this sport.")
-
-# =========================================================
-# LEARNING NOTES
-# =========================================================
-st.markdown("#### 📝 Learning Notes")
-
-if learning_state.get("learning_notes"):
-    for note in learning_state.get("learning_notes", []):
-        st.caption(f"• {note}")
-else:
-    st.caption(
-        "• Learning engine is active, but more settled samples are needed before stronger adjustments are made."
-    )
-
-st.caption(
-    f"Last learning refresh: {learning_state.get('last_learning_refresh', 'Not available')}"
-)
-
-# =========================================================
-# LEARNING WEIGHTS DISPLAY
-# =========================================================
-st.markdown("### Learning Weights")
-
-weights = safe_weights
-
-c1, c2 = st.columns(2)
-with c1:
-    st.metric("True Prob", f"{float(weights.get('true_probability', 0.30)) * 100:.1f}%")
-    st.metric("Price Edge", f"{float(weights.get('price_edge', 0.25)) * 100:.1f}%")
-    st.metric("Market Signal", f"{float(weights.get('market_signal', 0.15)) * 100:.1f}%")
-with c2:
-    st.metric("Matchup Quality", f"{float(weights.get('matchup_quality', 0.15)) * 100:.1f}%")
-    st.metric("History", f"{float(weights.get('historical_performance', 0.15)) * 100:.1f}%")
-    st.metric("Min Samples", str(min_samples))
-
-last_update = learning_state.get("last_update")
-st.caption(f"Last learning update: {last_update if last_update else 'None'}")
-st.caption(f"Learning scope: {selected_sport}")
 
 # =========================================================
 # PLAY TYPE PERFORMANCE / AUTO-FILTER STATUS

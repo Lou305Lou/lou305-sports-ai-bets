@@ -1122,7 +1122,13 @@ def fetch_odds_for_sport(sport_name: str):
     sport_cfg = get_sport_config(sport_name)
     api_key = get_odds_api_key()
 
+    st.session_state["last_refresh_requested_sport"] = sport_name
+
     if not api_key:
+        st.session_state["last_refresh_error"] = "No Odds API key found in secrets."
+        st.session_state["last_odds_refresh_ok"] = False
+        st.session_state["last_refresh_count"] = 0
+        st.session_state["api_status_note"] = f"{sport_name}: Odds API key missing."
         set_api_status("no_key", "No Odds API key found in secrets.")
         return []
 
@@ -1130,7 +1136,11 @@ def fetch_odds_for_sport(sport_name: str):
         reset_guess = (pd.Timestamp.now() + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
         st.session_state["odds_api_reset_expected"] = reset_guess
         set_api_reset_expected_for_sport(reset_guess, sport_name)
+        st.session_state["last_refresh_error"] = ""
+        st.session_state["last_odds_refresh_ok"] = False
+        st.session_state["api_status_note"] = f"{sport_name}: Daily Odds API call cap reached."
         set_api_status("waiting_reset", "Daily Odds API call cap reached.")
+
         fallback_games = get_cached_games_for_sport(sport_name)
         return fallback_games if isinstance(fallback_games, list) else []
 
@@ -1157,17 +1167,28 @@ def fetch_odds_for_sport(sport_name: str):
         set_odds_games_for_sport(data, sport_name)
         set_cached_games_for_sport(data, sport_name)
 
+        pull_time = time.time()
         st.session_state["last_odds_refresh_ok"] = True
         st.session_state["last_refresh_error"] = ""
         st.session_state["last_refresh_count"] = len(data)
         st.session_state["last_refresh_time"] = pd.Timestamp.now().strftime("%Y-%m-%d %I:%M:%S %p")
-        st.session_state["last_api_pull_epoch"] = time.time()
-        set_last_pull_epoch_for_sport(time.time(), sport_name)
-
-        set_api_status(
-            "live",
-            f"{sport_name} live odds loaded. Calls used today: {get_daily_api_calls_used()} / {DAILY_API_CALL_LIMIT}",
+        st.session_state["last_api_pull_epoch"] = pull_time
+        st.session_state["api_status_note"] = (
+            f"{sport_name}: loaded {len(data)} game(s). "
+            f"Calls used today: {get_daily_api_calls_used()} / {DAILY_API_CALL_LIMIT}"
         )
+        set_last_pull_epoch_for_sport(pull_time, sport_name)
+
+        if len(data) > 0:
+            set_api_status(
+                "live",
+                f"{sport_name} live odds loaded. Calls used today: {get_daily_api_calls_used()} / {DAILY_API_CALL_LIMIT}",
+            )
+        else:
+            set_api_status(
+                "live",
+                f"{sport_name} refresh completed but returned 0 games.",
+            )
 
         return data
 
@@ -1175,33 +1196,76 @@ def fetch_odds_for_sport(sport_name: str):
         err = str(e)
         st.session_state["last_refresh_error"] = err
         st.session_state["last_odds_refresh_ok"] = False
+        st.session_state["last_refresh_count"] = 0
 
         fallback = get_cached_games_for_sport(sport_name)
-        if fallback:
+        if isinstance(fallback, list) and len(fallback) > 0:
+            st.session_state["api_status_note"] = (
+                f"{sport_name}: live pull failed, using {len(fallback)} cached game(s)."
+            )
             set_api_status("cached", f"{sport_name} live pull failed. Using cached odds.")
             return fallback
 
+        st.session_state["api_status_note"] = f"{sport_name}: live pull failed. {err}"
         set_api_status("error", f"{sport_name} live pull failed.")
         return []
 
+
 def refresh_live_odds():
+    requested_sports = []
+
+    if isinstance(globals().get("ACTIVE_REFRESH_SPORTS", None), list) and len(ACTIVE_REFRESH_SPORTS) > 0:
+        requested_sports = [str(s).strip().upper() for s in ACTIVE_REFRESH_SPORTS if str(s).strip()]
+    else:
+        requested_sports = [str(get_selected_sport()).strip().upper()]
+
+    requested_sports = [s for s in requested_sports if s in SUPPORTED_SPORTS]
+    if not requested_sports:
+        requested_sports = [str(DEFAULT_SPORT).strip().upper()]
+
     if not api_cooldown_ready():
+        st.session_state["last_odds_refresh_ok"] = False
+        st.session_state["api_status_note"] = (
+            f"Cooldown active. Wait about {API_COOLDOWN_SECONDS} seconds between pulls."
+        )
         set_api_status("cooldown", f"Cooldown active. Wait about {API_COOLDOWN_SECONDS} seconds between pulls.")
         return
 
     total_loaded = 0
     combined_note_parts = []
+    selected_sport = str(get_selected_sport()).strip().upper()
 
-    for sport_name in ACTIVE_REFRESH_SPORTS:
+    for sport_name in requested_sports:
         games = fetch_odds_for_sport(sport_name)
-        total_loaded += len(games)
-        combined_note_parts.append(f"{sport_name}: {len(games)}")
+        games_count = len(games) if isinstance(games, list) else 0
+        total_loaded += games_count
+        combined_note_parts.append(f"{sport_name}: {games_count}")
 
     st.session_state["last_refresh_count"] = total_loaded
     st.session_state["last_refresh_time"] = pd.Timestamp.now().strftime("%Y-%m-%d %I:%M:%S %p")
-    st.session_state["api_status_note"] = " | ".join(combined_note_parts)
+    st.session_state["api_status_note"] = " | ".join(combined_note_parts) if combined_note_parts else "No refresh results."
+
+    selected_live = get_odds_games_for_sport(selected_sport)
+    selected_cached = get_cached_games_for_sport(selected_sport)
+
+    selected_live_count = len(selected_live) if isinstance(selected_live, list) else 0
+    selected_cached_count = len(selected_cached) if isinstance(selected_cached, list) else 0
+
+    if selected_live_count > 0:
+        st.session_state["last_odds_refresh_ok"] = True
+        set_api_status("live", f"{selected_sport} refresh complete. Loaded {selected_live_count} game(s).")
+    elif selected_cached_count > 0:
+        st.session_state["last_odds_refresh_ok"] = False
+        set_api_status("cached", f"{selected_sport} using cached odds ({selected_cached_count} game(s)).")
+    elif not get_odds_api_key():
+        st.session_state["last_odds_refresh_ok"] = False
+        set_api_status("no_key", "No Odds API key found in secrets.")
+    else:
+        st.session_state["last_odds_refresh_ok"] = False
+        set_api_status("error", f"{selected_sport} refresh returned 0 games.")
 
     finalize_selected_sport_context()
+
 
 def get_effective_odds_games_for_sport(sport_name: str):
     live_games = get_odds_games_for_sport(sport_name)
@@ -1213,8 +1277,10 @@ def get_effective_odds_games_for_sport(sport_name: str):
         return cached_games
     return []
 
+
 def get_effective_odds_games():
     return get_effective_odds_games_for_sport(get_selected_sport())
+
 
 def get_today_games_filter():
     raw = str(st.session_state.get("today_games_text", "")).strip()
@@ -1228,6 +1294,7 @@ def get_today_games_filter():
             cleaned.append(text.lower())
 
     return cleaned
+
 
 def game_matches_filter(home_team: str, away_team: str, filters: list):
     if not filters:

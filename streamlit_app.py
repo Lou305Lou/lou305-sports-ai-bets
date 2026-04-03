@@ -4989,78 +4989,47 @@ elif nav == "Bet Log":
         log_df = log_df[log_df["sport"] == selected_sport].copy()
 
         if log_df.empty:
-            st.info(f"No bets logged yet for {selected_sport}.")
+            st.info("No bets logged yet for " + str(selected_sport) + ".")
         else:
             numeric_cols = [
-                "units",
-                "profit",
-                "implied_prob",
-                "true_prob",
-                "implied_probability",
-                "true_probability",
-                "true_confidence",
-                "edge",
-                "clv_diff",
-                "stake",
+                "units", "profit", "stake", "implied_prob", "true_prob",
+                "implied_probability", "true_probability", "true_confidence",
+                "edge", "clv_diff"
             ]
             for col in numeric_cols:
                 if col in log_df.columns:
                     log_df[col] = pd.to_numeric(log_df[col], errors="coerce").fillna(0.0)
 
             text_cols = [
-                "market",
-                "log_category",
-                "timestamp",
-                "result",
-                "odds",
-                "selection",
-                "game",
-                "play_id",
-                "consensus",
-                "clv_result",
+                "market", "log_category", "timestamp", "result", "odds",
+                "selection", "game", "play_id", "consensus", "clv_result"
             ]
             for col in text_cols:
                 if col in log_df.columns:
                     log_df[col] = log_df[col].fillna("").astype(str).str.strip()
 
-            st.subheader(f"📊 ROI Dashboard ({selected_sport})")
+            st.subheader("ROI Dashboard (" + str(selected_sport) + ")")
             try:
                 roi_df = build_roi_dashboard(log_df)
-                if roi_df is not None and not roi_df.empty:
+                if isinstance(roi_df, pd.DataFrame) and not roi_df.empty:
                     st.dataframe(roi_df, use_container_width=True, hide_index=True)
                 else:
                     st.info("No settled bets yet.")
             except Exception:
                 st.info("No settled bets yet.")
 
-            st.subheader(f"📋 Full Bet Log ({selected_sport})")
+            st.subheader("Full Bet Log (" + str(selected_sport) + ")")
             display_cols = [
                 c for c in [
-                    "sport",
-                    "timestamp",
-                    "game",
-                    "market",
-                    "selection",
-                    "odds",
-                    "units",
-                    "stake",
-                    "profit",
-                    "implied_prob",
-                    "true_prob",
-                    "true_confidence",
-                    "edge",
-                    "books_seen",
-                    "consensus",
-                    "result",
-                    "log_category",
-                    "clv_diff",
-                    "clv_result",
-                    "play_id",
+                    "sport", "timestamp", "game", "market", "selection", "odds",
+                    "units", "stake", "profit", "implied_prob", "true_prob",
+                    "true_confidence", "edge", "books_seen", "consensus",
+                    "result", "log_category", "clv_diff", "clv_result", "play_id"
                 ] if c in log_df.columns
             ]
             st.dataframe(log_df[display_cols].copy(), use_container_width=True, hide_index=True)
 
-            st.subheader("✍️ Update Results")
+            st.subheader("Update Results")
 
             selectable_labels = []
             selectable_map = {}
@@ -5075,13 +5044,13 @@ elif nav == "Bet Log":
                     continue
 
                 short_pid = pid[:8]
-                market_label = f" [{market}]" if market else ""
-                label = f"{selection}{market_label} • {game} • ID {short_pid}"
+                market_label = " [" + market + "]" if market else ""
+                label = selection + market_label + " • " + game + " • ID " + short_pid
 
                 suffix = 2
                 base_label = label
                 while label in selectable_map:
-                    label = f"{base_label} ({suffix})"
+                    label = base_label + " (" + str(suffix) + ")"
                     suffix += 1
 
                 selectable_labels.append(label)
@@ -5091,7 +5060,7 @@ elif nav == "Bet Log":
                 selected_label = st.selectbox(
                     "Select Bet",
                     selectable_labels,
-                    key=f"update_result_select_{selected_sport}",
+                    key="update_result_select_" + str(selected_sport),
                 )
                 selected_id = selectable_map[selected_label]
                 selected_base_id = get_base_play_id(selected_id)
@@ -5103,7 +5072,7 @@ elif nav == "Bet Log":
                     if not pid:
                         continue
 
-                        bet_sport = str(bet.get("sport", "")).strip().upper()
+                    bet_sport = str(bet.get("sport", "")).strip().upper()
                     if bet_sport and bet_sport != selected_sport:
                         continue
 
@@ -5119,10 +5088,10 @@ elif nav == "Bet Log":
                     "Result",
                     result_options,
                     index=result_options.index(existing_result),
-                    key=f"bet_result_choice_{selected_sport}",
+                    key="bet_result_choice_" + str(selected_sport),
                 )
 
-                if st.button("Save Result", key=f"save_result_button_{selected_sport}"):
+                if st.button("Save Result", key="save_result_button_" + str(selected_sport)):
                     normalized_choice = normalize_result_value(result_choice)
                     updated_any = False
 
@@ -5152,7 +5121,12 @@ elif nav == "Bet Log":
                                     odds_val = None
 
                                 try:
-                                    stake_units = float(refreshed_bet_log[idx].get("stake", refreshed_bet_log[idx].get("units", 1.0)))
+                                    stake_units = float(
+                                        refreshed_bet_log[idx].get(
+                                            "stake",
+                                            refreshed_bet_log[idx].get("units", 1.0)
+                                        )
+                                    )
                                 except Exception:
                                     stake_units = 1.0
 
@@ -5198,7 +5172,7 @@ elif nav == "Bet Log":
             else:
                 st.info("No selectable bets found.")
 
-    st.subheader("➕ Add Manual Bet")
+    st.subheader("Add Manual Bet")
 
     with st.expander("Add Manual Bet Entry", expanded=False):
         col1, col2 = st.columns(2)
@@ -5241,8 +5215,8 @@ elif nav == "Bet Log":
             market_clean = str(market_input).strip().lower()
             selection_clean = str(selection_input).strip()
             odds_clean = str(odds_input).strip()
-            units = float(units_input)
-            confidence = str(confidence_input).strip()
+            units_val = float(units_input)
+            confidence_val = str(confidence_input).strip()
 
             odds_int = american_to_int(odds_clean)
 
@@ -5252,7 +5226,7 @@ elif nav == "Bet Log":
                 st.warning("Odds must be valid American odds like -110 or +150.")
             else:
                 new_play_id = hashlib.md5(
-                    f"{selected_sport}|{game_clean}|{market_clean}|{selection_clean}|{odds_clean}|{time.time()}".encode()
+                    (str(selected_sport) + "|" + game_clean + "|" + market_clean + "|" + selection_clean + "|" + odds_clean + "|" + str(time.time())).encode()
                 ).hexdigest()
 
                 open_line_val = extract_line_from_selection(selection_clean)
@@ -5266,7 +5240,7 @@ elif nav == "Bet Log":
                 except Exception:
                     implied_prob_val = None
 
-                new = {
+                new_row = {
                     "play_id": new_play_id,
                     "sport": selected_sport,
                     "game": game_clean,
@@ -5278,18 +5252,12 @@ elif nav == "Bet Log":
                     "implied_probability": implied_prob_val,
                     "true_probability": None,
                     "edge": None,
-                    "play_type": classify_play_type(
-                        {
-                            "market": market_clean,
-                            "selection": selection_clean,
-                            "category": "Manual",
-                        }
-                    ) if "classify_play_type" in globals() else market_clean,
+                    "play_type": market_clean,
                     "primary_category": "Manual",
                     "category": "Manual",
-                    "units": round(float(units), 2),
-                    "stake": round(float(units), 2),
-                    "confidence": confidence,
+                    "units": round(float(units_val), 2),
+                    "stake": round(float(units_val), 2),
+                    "confidence": confidence_val,
                     "true_confidence": None,
                     "books_seen": None,
                     "consensus": None,
@@ -5307,17 +5275,9 @@ elif nav == "Bet Log":
                 }
 
                 st.session_state.setdefault("bet_log", [])
-                st.session_state["bet_log"].append(new)
+                st.session_state["bet_log"].append(new_row)
                 save_bet_log()
-
-                try:
-                    reloaded = load_bet_log()
-                    if isinstance(reloaded, list):
-                        st.session_state["bet_log"] = reloaded
-                except Exception:
-                    pass
-
-                st.success(f"Manual {selected_sport} bet added successfully.")
+                st.success("Manual " + str(selected_sport) + " bet added successfully.")
                 st.rerun()
 
     # =========================================================

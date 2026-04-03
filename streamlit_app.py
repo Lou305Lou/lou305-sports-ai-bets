@@ -3370,6 +3370,7 @@ loaded_bet_log = load_bet_log()
 
 SAFE_BET_LOG_COLUMNS = [
     "play_id",
+    "sport",
     "game",
     "market",
     "selection",
@@ -3378,9 +3379,14 @@ SAFE_BET_LOG_COLUMNS = [
     "opponent",
     "line",
     "odds",
+    "best_price",
+    "best_book",
     "implied_prob",
     "true_prob",
+    "implied_probability",
+    "true_probability",
     "edge",
+    "price_edge",
     "books",
     "books_seen",
     "consensus",
@@ -3396,7 +3402,6 @@ SAFE_BET_LOG_COLUMNS = [
     "result",
     "profit",
     "timestamp",
-    "sport",
     "confidence",
     "category",
     "primary_category",
@@ -3407,6 +3412,13 @@ SAFE_BET_LOG_COLUMNS = [
     "injury_flag",
     "lineup_flag",
     "model_score",
+    "score",
+    "rank_score",
+    "tier",
+    "quality_label",
+    "watch_tier",
+    "ai_tags",
+    "context_score",
     "open_odds",
     "open_line",
     "closing_odds",
@@ -3480,7 +3492,7 @@ if plays_df is not None and not plays_df.empty:
     ].copy().reset_index(drop=True)
 
     watch_source_df = plays_df[
-        plays_df["status"].astype(str).str.strip() == "Watch"
+        plays_df["status"].astype(str).str.strip().isin(["Watch", "Watchlist"])
     ].copy().reset_index(drop=True)
 
     if "apply_learning_engine_to_df" in globals() and callable(globals().get("apply_learning_engine_to_df")):
@@ -3497,6 +3509,36 @@ else:
 top_plays_df = active_df.copy()
 watchlist_df = watch_df.copy()
 
+# =========================================================
+# RECALCULATE TOP/WATCH SNAPSHOTS AFTER LEARNING FILTERS
+# =========================================================
+try:
+    selected_sport = get_selected_sport()
+
+    snapshot_source_frames = []
+    if isinstance(active_df, pd.DataFrame) and not active_df.empty:
+        snapshot_source_frames.append(active_df.copy())
+    if isinstance(watch_df, pd.DataFrame) and not watch_df.empty:
+        snapshot_source_frames.append(watch_df.copy())
+
+    if snapshot_source_frames:
+        filtered_snapshot_df = pd.concat(snapshot_source_frames, ignore_index=True)
+        filtered_snapshot_df = normalize_dataframe_for_selected_sport(filtered_snapshot_df, selected_sport)
+        filtered_snapshot_df = recalculate_play_metrics(filtered_snapshot_df)
+
+        rebuilt_top_df = build_top_plays_df(filtered_snapshot_df)
+        rebuilt_watch_df = build_watchlist_df(filtered_snapshot_df, rebuilt_top_df)
+
+        if not rebuilt_top_df.empty:
+            active_df = rebuilt_top_df.copy()
+            top_plays_df = rebuilt_top_df.copy()
+
+        if not rebuilt_watch_df.empty:
+            watch_df = rebuilt_watch_df.copy()
+            watchlist_df = rebuilt_watch_df.copy()
+except Exception:
+    pass
+
 # ================================
 # AUTO LOG TOP PLAYS
 # ================================
@@ -3510,18 +3552,18 @@ except Exception:
 # BEST SINGLE
 # ================================
 best_row = None
-if not active_df.empty:
+if isinstance(active_df, pd.DataFrame) and not active_df.empty:
     if "rank_score" in active_df.columns:
         best_row = active_df.sort_values(
             ["rank_score", "true_confidence"],
-            ascending=False
+            ascending=False,
         ).iloc[0]
     else:
         sort_cols = [c for c in ["true_confidence", "edge"] if c in active_df.columns]
         if sort_cols:
             best_row = active_df.sort_values(
                 sort_cols,
-                ascending=[False] * len(sort_cols)
+                ascending=[False] * len(sort_cols),
             ).iloc[0]
         else:
             best_row = active_df.iloc[0]
@@ -3536,29 +3578,31 @@ try:
     parlay_rows = []
 
     if best_parlay is not None:
-        parlay_rows.append({
-            "sport": get_selected_sport(),
-            "approval_type": best_parlay.get("approval_type", ""),
-            "leg_count": best_parlay.get("leg_count", 0),
-            "combined_odds": best_parlay.get("combined_odds", ""),
-            "combined_odds_int": best_parlay.get("combined_odds_int", 0),
-            "avg_true_conf": best_parlay.get("avg_true_conf", 0.0),
-            "avg_edge": best_parlay.get("avg_edge", 0.0),
-            "avg_books": best_parlay.get("avg_books", 0.0),
-            "total_penalty": best_parlay.get("total_penalty", 0.0),
-            "cross_game": best_parlay.get("cross_game", False),
-            "correlation_score": best_parlay.get("correlation_score", 0.0),
-            "score": best_parlay.get("score", 0.0),
-            "display_score": best_parlay.get("display_score", 0.0),
-            "risk_label": best_parlay.get("risk_label", ""),
-            "reasons": " | ".join(best_parlay.get("reasons", [])),
-            "legs_text": " | ".join(
-                [str(leg.get("selection", "")).strip() for leg in best_parlay.get("legs", [])]
-            ),
-            "games_text": " | ".join(
-                [str(leg.get("game", "")).strip() for leg in best_parlay.get("legs", [])]
-            ),
-        })
+        parlay_rows.append(
+            {
+                "sport": get_selected_sport(),
+                "approval_type": best_parlay.get("approval_type", ""),
+                "leg_count": best_parlay.get("leg_count", 0),
+                "combined_odds": best_parlay.get("combined_odds", ""),
+                "combined_odds_int": best_parlay.get("combined_odds_int", 0),
+                "avg_true_conf": best_parlay.get("avg_true_conf", 0.0),
+                "avg_edge": best_parlay.get("avg_edge", 0.0),
+                "avg_books": best_parlay.get("avg_books", 0.0),
+                "total_penalty": best_parlay.get("total_penalty", 0.0),
+                "cross_game": best_parlay.get("cross_game", False),
+                "correlation_score": best_parlay.get("correlation_score", 0.0),
+                "score": best_parlay.get("score", 0.0),
+                "display_score": best_parlay.get("display_score", 0.0),
+                "risk_label": best_parlay.get("risk_label", ""),
+                "reasons": " | ".join(best_parlay.get("reasons", [])),
+                "legs_text": " | ".join(
+                    [str(leg.get("selection", "")).strip() for leg in best_parlay.get("legs", [])]
+                ),
+                "games_text": " | ".join(
+                    [str(leg.get("game", "")).strip() for leg in best_parlay.get("legs", [])]
+                ),
+            }
+        )
 
     if parlay_rows:
         parlay_df = pd.DataFrame(parlay_rows)
@@ -3609,6 +3653,8 @@ try:
     )
 
     if isinstance(snapshot_source_df, pd.DataFrame) and not snapshot_source_df.empty:
+        snapshot_source_df = recalculate_play_metrics(snapshot_source_df)
+
         snapshot_top_df, snapshot_watch_df, ai_slip_df = save_generated_play_snapshots(snapshot_source_df)
 
         top_plays_df = (
@@ -3697,6 +3743,460 @@ total_units = (
 )
 
 # =========================================================
+# PAGE STYLES
+# =========================================================
+st.markdown(
+    """
+<style>
+html, body, [class*="css"] {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+.stApp {
+    background-color: #f6f7fb;
+}
+.block-container {
+    max-width: 880px;
+    padding-top: 0.85rem;
+    padding-bottom: 1.8rem;
+}
+h1, h2, h3 {
+    letter-spacing: -0.02em;
+    color: #202533;
+}
+.metric-panel {
+    background: #ffffff;
+    border: 1px solid #e7ebf2;
+    border-radius: 18px;
+    padding: 10px 12px;
+    margin-bottom: 10px;
+}
+.metric-panel-title {
+    color: #1f2937;
+    font-weight: 800;
+    font-size: 0.94rem;
+    margin-bottom: 6px;
+}
+.metric-mini-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px 12px;
+}
+.metric-mini-label {
+    font-size: 0.75rem;
+    color: #6b7280;
+}
+.metric-mini-value {
+    font-size: 0.98rem;
+    font-weight: 800;
+    color: #111827;
+}
+.nav-wrap {
+    background: #ffffff;
+    border: 1px solid #e6eaf2;
+    border-radius: 18px;
+    padding: 10px 12px 7px 12px;
+    margin-bottom: 12px;
+}
+.section-title {
+    font-size: 0.98rem;
+    font-weight: 800;
+    margin-bottom: 0.25rem;
+    color: #1e2430;
+}
+.slip-card {
+    background: linear-gradient(180deg, #151b29 0%, #0e1422 100%);
+    border: 1px solid #243047;
+    border-radius: 22px;
+    padding: 13px;
+    margin-bottom: 10px;
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.14);
+}
+.slip-kicker {
+    color: #fbbf24;
+    font-size: 0.82rem;
+    font-weight: 800;
+    margin-bottom: 5px;
+}
+.slip-title {
+    color: #ffffff;
+    font-size: 1.35rem;
+    font-weight: 800;
+    margin-bottom: 5px;
+    letter-spacing: -0.03em;
+}
+.slip-meta {
+    color: #d6deea;
+    font-size: 0.86rem;
+    margin-bottom: 3px;
+}
+.bet-form-wrap {
+    background: #ffffff;
+    border: 1px solid #e7ebf2;
+    border-radius: 20px;
+    padding: 14px;
+    margin-bottom: 14px;
+}
+.notice-box {
+    background: #ecfdf5;
+    border: 1px solid #a7f3d0;
+    color: #065f46;
+    border-radius: 16px;
+    padding: 10px 12px;
+    margin-bottom: 10px;
+    font-weight: 700;
+}
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
+# =========================================================
+# HEADER
+# =========================================================
+current_api_mode = str(st.session_state.get("api_mode", "idle")).strip().lower()
+current_api_error = str(st.session_state.get("last_refresh_error", "")).strip().lower()
+
+if current_api_mode == "live":
+    status_text, status_dot, status_bg, status_fg = "LIVE", "#10b981", "#ecfdf5", "#065f46"
+elif current_api_mode == "cached":
+    status_text, status_dot, status_bg, status_fg = "CACHED", "#0ea5e9", "#eff6ff", "#075985"
+elif current_api_mode in ["daily_limit", "limit_hit"]:
+    status_text, status_dot, status_bg, status_fg = "DAILY LIMIT", "#7c3aed", "#f5f3ff", "#5b21b6"
+elif current_api_mode == "waiting_reset":
+    status_text, status_dot, status_bg, status_fg = "WAITING RESET", "#f97316", "#fff7ed", "#9a3412"
+elif current_api_mode == "no_key":
+    status_text, status_dot, status_bg, status_fg = "NO KEY", "#f59e0b", "#fffbeb", "#92400e"
+elif "401" in current_api_error or "unauthorized" in current_api_error:
+    status_text, status_dot, status_bg, status_fg = "KEY ERROR", "#ef4444", "#fef2f2", "#991b1b"
+elif current_api_mode in ["error", "fallback"]:
+    status_text, status_dot, status_bg, status_fg = "OFFLINE", "#64748b", "#f8fafc", "#334155"
+else:
+    status_text, status_dot, status_bg, status_fg = "IDLE", "#64748b", "#f8fafc", "#334155"
+
+st.title("🔥 Sports Betting AI Dashboard V34")
+st.caption("Manual Live Odds Refresh • SportsDataIO Context • Cached Fallback • True Probability + True Confidence Engine")
+
+st.markdown(
+    f"""
+    <div style="
+        display:inline-flex;
+        align-items:center;
+        gap:8px;
+        background:{status_bg};
+        color:{status_fg};
+        border:1px solid #e5e7eb;
+        border-radius:999px;
+        padding:6px 12px;
+        font-weight:800;
+        margin-bottom:10px;">
+        <span style="
+            width:10px;
+            height:10px;
+            border-radius:999px;
+            background:{status_dot};
+            display:inline-block;"></span>
+        API {status_text}
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+reset_expected = str(st.session_state.get("odds_api_reset_expected", "")).strip()
+
+if status_text == "WAITING RESET":
+    st.warning(
+        f"The Odds API appears to be waiting for quota reset."
+        + (f" Expected reset around {reset_expected}." if reset_expected else "")
+    )
+    st.info(
+        "Cached odds will be used when available. "
+        "If no cached odds exist yet, no live market plays can be generated."
+    )
+
+elif status_text in ["CACHED", "DAILY LIMIT", "OFFLINE", "KEY ERROR", "NO KEY"]:
+    st.info(
+        "Fallback mode is active. Cached odds will be used when available. "
+        "If no cached odds exist yet, no live market plays can be generated."
+    )
+
+if auto_logged_count > 0:
+    st.markdown(
+        f'<div class="notice-box">Auto-logged {auto_logged_count} new active play(s).</div>',
+        unsafe_allow_html=True,
+    )
+
+# =========================================================
+# SNAPSHOT
+# =========================================================
+st.markdown('<div class="metric-panel">', unsafe_allow_html=True)
+st.markdown('<div class="metric-panel-title">Market Snapshot</div>', unsafe_allow_html=True)
+st.markdown(
+    f"""
+    <div class="metric-mini-grid">
+        <div><div class="metric-mini-label">Active Plays</div><div class="metric-mini-value">{len(active_df)}</div></div>
+        <div><div class="metric-mini-label">Watchlist</div><div class="metric-mini-value">{len(watch_df)}</div></div>
+        <div><div class="metric-mini-label">Best Score</div><div class="metric-mini-value">{best_score}</div></div>
+        <div><div class="metric-mini-label">Avg Value Edge</div><div class="metric-mini-value">{avg_active_edge:.2f}%</div></div>
+        <div><div class="metric-mini-label">Avg True Prob</div><div class="metric-mini-value">{avg_true_prob:.1f}%</div></div>
+        <div><div class="metric-mini-label">Avg True Conf</div><div class="metric-mini-value">{avg_true_conf:.1f}</div></div>
+        <div><div class="metric-mini-label">Total Active Units</div><div class="metric-mini-value">{total_units:.2f}u</div></div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+st.markdown("</div>", unsafe_allow_html=True)
+
+# =========================================================
+# BET LOG HELPERS
+# =========================================================
+def update_logged_bet_result(play_id, result_value):
+    result_value = normalize_result_value(result_value)
+    updated = False
+    target_base_id = get_base_play_id(play_id)
+
+    for i, bet in enumerate(st.session_state.get("bet_log", [])):
+        current_play_id = str(bet.get("play_id", "")).strip()
+        current_base_id = get_base_play_id(current_play_id)
+
+        if current_play_id != str(play_id).strip() and current_base_id != target_base_id:
+            continue
+
+        units = safe_float(bet.get("units", bet.get("stake", 0)), 0.0)
+        odds = bet.get("odds", "")
+
+        st.session_state["bet_log"][i]["result"] = result_value
+        st.session_state["bet_log"][i]["profit"] = settle_result_pnl(odds, units, result_value)
+        st.session_state["bet_log"][i]["stake"] = units
+
+        if "open_odds" not in st.session_state["bet_log"][i]:
+            st.session_state["bet_log"][i]["open_odds"] = bet.get("odds")
+        if "open_line" not in st.session_state["bet_log"][i]:
+            st.session_state["bet_log"][i]["open_line"] = extract_line_from_selection(bet.get("selection", ""))
+        if "closing_odds" not in st.session_state["bet_log"][i]:
+            st.session_state["bet_log"][i]["closing_odds"] = None
+        if "closing_line" not in st.session_state["bet_log"][i]:
+            st.session_state["bet_log"][i]["closing_line"] = None
+        if "clv_diff" not in st.session_state["bet_log"][i]:
+            st.session_state["bet_log"][i]["clv_diff"] = None
+        if "clv_result" not in st.session_state["bet_log"][i]:
+            st.session_state["bet_log"][i]["clv_result"] = None
+
+        open_line = st.session_state["bet_log"][i].get("open_line")
+        closing_line = st.session_state["bet_log"][i].get("closing_line")
+
+        clv_diff = None
+        clv_result = None
+
+        if open_line not in [None, ""] and closing_line not in [None, ""]:
+            clv_diff, clv_result = calculate_clv_diff(
+                open_line=open_line,
+                closing_line=closing_line,
+                market=st.session_state["bet_log"][i].get("market", ""),
+                selection=st.session_state["bet_log"][i].get("selection", ""),
+            )
+
+        st.session_state["bet_log"][i]["clv_diff"] = clv_diff
+        st.session_state["bet_log"][i]["clv_result"] = clv_result
+
+        updated = True
+
+    if updated:
+        save_bet_log()
+        update_learning_from_results()
+
+    return updated
+
+def sync_manual_results_into_bet_log():
+    manual_results = st.session_state.get("manual_results", {})
+    if not manual_results:
+        return
+
+    changed = False
+
+    for selected_pid, selected_result in manual_results.items():
+        target_base_id = get_base_play_id(selected_pid)
+        normalized_result = normalize_result_value(selected_result)
+
+        for i, bet in enumerate(st.session_state.get("bet_log", [])):
+            pid = str(bet.get("play_id", "")).strip()
+            if not pid:
+                continue
+
+            if get_base_play_id(pid) != target_base_id and pid != str(selected_pid).strip():
+                continue
+
+            current_result = normalize_result_value(bet.get("result", "Pending"))
+            current_profit = safe_float(bet.get("profit", 0.0), 0.0)
+            units = safe_float(bet.get("units", bet.get("stake", 0)), 0.0)
+
+            new_profit = settle_result_pnl(
+                bet.get("odds", ""),
+                units,
+                normalized_result,
+            )
+
+            if "open_odds" not in st.session_state["bet_log"][i]:
+                st.session_state["bet_log"][i]["open_odds"] = bet.get("odds")
+            if "open_line" not in st.session_state["bet_log"][i]:
+                st.session_state["bet_log"][i]["open_line"] = extract_line_from_selection(bet.get("selection", ""))
+            if "closing_odds" not in st.session_state["bet_log"][i]:
+                st.session_state["bet_log"][i]["closing_odds"] = None
+            if "closing_line" not in st.session_state["bet_log"][i]:
+                st.session_state["bet_log"][i]["closing_line"] = None
+            if "clv_diff" not in st.session_state["bet_log"][i]:
+                st.session_state["bet_log"][i]["clv_diff"] = None
+            if "clv_result" not in st.session_state["bet_log"][i]:
+                st.session_state["bet_log"][i]["clv_result"] = None
+
+            open_line = st.session_state["bet_log"][i].get("open_line")
+            closing_line = st.session_state["bet_log"][i].get("closing_line")
+
+            clv_diff = None
+            clv_result = None
+
+            if open_line not in [None, ""] and closing_line not in [None, ""]:
+                clv_diff, clv_result = calculate_clv_diff(
+                    open_line=open_line,
+                    closing_line=closing_line,
+                    market=bet.get("market", ""),
+                    selection=bet.get("selection", ""),
+                )
+
+            if (
+                current_result != normalized_result
+                or round(current_profit, 2) != round(new_profit, 2)
+                or st.session_state["bet_log"][i].get("clv_diff") != clv_diff
+                or st.session_state["bet_log"][i].get("clv_result") != clv_result
+            ):
+                st.session_state["bet_log"][i]["result"] = normalized_result
+                st.session_state["bet_log"][i]["profit"] = new_profit
+                st.session_state["bet_log"][i]["stake"] = units
+                st.session_state["bet_log"][i]["clv_diff"] = clv_diff
+                st.session_state["bet_log"][i]["clv_result"] = clv_result
+                changed = True
+
+    if changed:
+        save_bet_log()
+        update_learning_from_results()
+
+# =========================================================
+# NAVIGATION
+# =========================================================
+st.markdown('<div class="nav-wrap">', unsafe_allow_html=True)
+st.markdown('<div class="section-title">🚀 Navigation</div>', unsafe_allow_html=True)
+
+nav = st.radio(
+    "Navigation",
+    ["Top Plays", "Watchlist", "AI Slip", "Bet Log"],
+    horizontal=True,
+    label_visibility="collapsed",
+    key="nav_choice_native",
+)
+
+st.session_state["nav_choice"] = nav
+st.markdown("</div>", unsafe_allow_html=True)
+
+# =========================================================
+# AUTO-LOG TOP PLAYS
+# =========================================================
+# Duplicate auto-log block intentionally disabled.
+# Active plays are already auto-logged earlier with:
+# auto_logged_count = auto_log_active_plays(active_df)
+
+# =========================================================
+# SNAPSHOT SAVE (LOCK TAB DATA UNTIL NEXT REFRESH)
+# =========================================================
+try:
+    snapshot_saved = False
+
+    snapshot_top_df = pd.DataFrame()
+    snapshot_active_df = pd.DataFrame()
+    snapshot_watch_df = pd.DataFrame()
+    snapshot_ai_df = pd.DataFrame()
+    snapshot_parlay_df = pd.DataFrame()
+    snapshot_best_row = None
+
+    if "top_plays_df" in locals() and isinstance(top_plays_df, pd.DataFrame) and not top_plays_df.empty:
+        snapshot_top_df = top_plays_df.copy()
+    elif "active_df" in locals() and isinstance(active_df, pd.DataFrame) and not active_df.empty:
+        snapshot_top_df = active_df.copy()
+        sort_cols = [c for c in ["rank_score", "true_confidence"] if c in snapshot_top_df.columns]
+        if sort_cols:
+            snapshot_top_df = (
+                snapshot_top_df
+                .sort_values(by=sort_cols, ascending=[False] * len(sort_cols))
+                .head(TOP_PLAYS_LIMIT)
+                .reset_index(drop=True)
+                .copy()
+            )
+        else:
+            snapshot_top_df = snapshot_top_df.head(TOP_PLAYS_LIMIT).reset_index(drop=True).copy()
+
+    if "active_df" in locals() and isinstance(active_df, pd.DataFrame) and not active_df.empty:
+        snapshot_active_df = active_df.copy()
+
+    if "watch_df" in locals() and isinstance(watch_df, pd.DataFrame) and not watch_df.empty:
+        snapshot_watch_df = watch_df.copy()
+    elif "watchlist_df" in locals() and isinstance(watchlist_df, pd.DataFrame) and not watchlist_df.empty:
+        snapshot_watch_df = watchlist_df.copy()
+
+    if "ai_slip_df" in locals() and isinstance(ai_slip_df, pd.DataFrame) and not ai_slip_df.empty:
+        snapshot_ai_df = ai_slip_df.copy()
+    elif "active_df" in locals() and isinstance(active_df, pd.DataFrame) and not active_df.empty:
+        snapshot_ai_df = active_df.head(5).copy()
+
+    if "parlay_df" in locals() and isinstance(parlay_df, pd.DataFrame) and not parlay_df.empty:
+        snapshot_parlay_df = parlay_df.copy()
+
+    if "best_row" in locals():
+        if isinstance(best_row, pd.Series):
+            snapshot_best_row = best_row.to_dict()
+        elif isinstance(best_row, dict):
+            snapshot_best_row = best_row.copy()
+
+    has_any_snapshot_data = any(
+        [
+            isinstance(snapshot_top_df, pd.DataFrame) and not snapshot_top_df.empty,
+            isinstance(snapshot_active_df, pd.DataFrame) and not snapshot_active_df.empty,
+            isinstance(snapshot_watch_df, pd.DataFrame) and not snapshot_watch_df.empty,
+            isinstance(snapshot_ai_df, pd.DataFrame) and not snapshot_ai_df.empty,
+            isinstance(snapshot_parlay_df, pd.DataFrame) and not snapshot_parlay_df.empty,
+            isinstance(snapshot_best_row, dict) and len(snapshot_best_row) > 0,
+        ]
+    )
+
+    if has_any_snapshot_data:
+        if isinstance(snapshot_top_df, pd.DataFrame) and not snapshot_top_df.empty:
+            st.session_state["snapshot_top_plays_df"] = snapshot_top_df.copy()
+
+        if isinstance(snapshot_active_df, pd.DataFrame) and not snapshot_active_df.empty:
+            st.session_state["snapshot_active_df"] = snapshot_active_df.copy()
+            st.session_state["snapshot_plays_df"] = snapshot_active_df.copy()
+
+        if isinstance(snapshot_watch_df, pd.DataFrame) and not snapshot_watch_df.empty:
+            st.session_state["snapshot_watchlist_df"] = snapshot_watch_df.copy()
+
+        if isinstance(snapshot_ai_df, pd.DataFrame) and not snapshot_ai_df.empty:
+            st.session_state["snapshot_ai_slip_df"] = snapshot_ai_df.copy()
+
+        if isinstance(snapshot_parlay_df, pd.DataFrame) and not snapshot_parlay_df.empty:
+            st.session_state["snapshot_parlay_df"] = snapshot_parlay_df.copy()
+
+        if isinstance(snapshot_best_row, dict) and snapshot_best_row:
+            st.session_state["snapshot_best_row"] = snapshot_best_row.copy()
+
+        st.session_state["snapshot_generated_at"] = pd.Timestamp.now().strftime(
+            "%Y-%m-%d %I:%M:%S %p"
+        )
+        st.session_state["snapshot_refresh_id"] = int(st.session_state.get("snapshot_refresh_id", 0)) + 1
+
+        save_tab_snapshots_to_disk()
+        snapshot_saved = True
+
+except Exception as e:
+    st.warning(f"Snapshot save error: {e}")
+
+# =========================================================
 # SAVE GENERATED PLAY SNAPSHOTS
 # =========================================================
 try:
@@ -3713,7 +4213,6 @@ try:
             clear_generated_play_snapshots()
 except Exception as e:
     st.session_state["snapshot_save_error"] = str(e)
-
 
 # =========================================================
 # TOP PLAYS
@@ -3752,10 +4251,14 @@ if nav == "Top Plays":
             working_active_df["edge"], errors="coerce"
         ).fillna(0.0)
 
-        snapshot_top_df = working_active_df.sort_values(
-            by=["true_confidence", "edge"],
-            ascending=[False, False],
-        ).head(int(globals().get("TOP_PLAYS_LIMIT", 10))).copy()
+        sort_cols = [c for c in ["rank_score", "true_confidence", "edge"] if c in working_active_df.columns]
+        if sort_cols:
+            snapshot_top_df = working_active_df.sort_values(
+                by=sort_cols,
+                ascending=[False] * len(sort_cols),
+            ).head(int(globals().get("TOP_PLAYS_LIMIT", 10))).copy()
+        else:
+            snapshot_top_df = working_active_df.head(int(globals().get("TOP_PLAYS_LIMIT", 10))).copy()
 
     if len(get_effective_odds_games()) == 0 and persisted_plays_df.empty and snapshot_top_df.empty:
         if current_api_mode == "waiting_reset":
@@ -3775,24 +4278,46 @@ if nav == "Top Plays":
     else:
         top_df = snapshot_top_df.copy().reset_index(drop=True)
 
-        if "true_confidence" not in top_df.columns:
-            top_df["true_confidence"] = 0.0
-        if "edge" not in top_df.columns:
-            top_df["edge"] = 0.0
-        if "units" not in top_df.columns:
-            top_df["units"] = 0.0
-        if "status" not in top_df.columns:
-            top_df["status"] = "Active"
+        for col, default_val in {
+            "true_confidence": 0.0,
+            "edge": 0.0,
+            "units": 0.0,
+            "status": "Active",
+            "best_book": "",
+            "best_price": "",
+            "books_seen": 0,
+            "consensus": "",
+            "tier": "C",
+            "quality_label": "Watch",
+            "watch_tier": "",
+            "ai_tags": [[] for _ in range(len(top_df))] if len(top_df) > 0 else [],
+            "sportsdata_note": "",
+            "injury_flag": "",
+            "lineup_flag": "",
+            "context_score": 0.0,
+            "score": 0.0,
+            "rank_score": 0.0,
+        }.items():
+            if col not in top_df.columns:
+                if col == "ai_tags":
+                    top_df[col] = [[] for _ in range(len(top_df))]
+                else:
+                    top_df[col] = default_val
 
-        top_df["true_confidence"] = pd.to_numeric(
-            top_df["true_confidence"], errors="coerce"
-        ).fillna(0.0)
-        top_df["edge"] = pd.to_numeric(
-            top_df["edge"], errors="coerce"
-        ).fillna(0.0)
-        top_df["units"] = pd.to_numeric(
-            top_df["units"], errors="coerce"
-        ).fillna(0.0)
+        numeric_cols = [
+            "true_confidence",
+            "edge",
+            "units",
+            "books_seen",
+            "context_score",
+            "score",
+            "rank_score",
+            "implied_prob",
+            "true_prob",
+        ]
+        for col in numeric_cols:
+            if col in top_df.columns:
+                top_df[col] = pd.to_numeric(top_df[col], errors="coerce").fillna(0.0)
 
         if snapshot_last_updated:
             st.caption(f"Last saved play snapshot: {snapshot_last_updated}")
@@ -3808,101 +4333,7 @@ if nav == "Top Plays":
             st.metric("Avg True Confidence", avg_conf)
 
         st.markdown("---")
-
-        for _, row in top_df.iterrows():
-            matchup = ""
-            for col in ["matchup", "game", "event_name", "display_name", "teams"]:
-                if col in top_df.columns:
-                    value = str(row.get(col, "")).strip()
-                    if value:
-                        matchup = value
-                        break
-
-            if not matchup:
-                home_team = str(row.get("home_team", "")).strip() if "home_team" in top_df.columns else ""
-                away_team = str(row.get("away_team", "")).strip() if "away_team" in top_df.columns else ""
-                if away_team and home_team:
-                    matchup = f"{away_team} @ {home_team}"
-
-            pick_text = ""
-            for col in ["selection", "pick", "bet_name", "play_name", "side"]:
-                if col in top_df.columns:
-                    value = str(row.get(col, "")).strip()
-                    if value:
-                        pick_text = value
-                        break
-
-            market_text = ""
-            for col in ["market", "market_type", "bet_type"]:
-                if col in top_df.columns:
-                    value = str(row.get(col, "")).strip()
-                    if value:
-                        market_text = value
-                        break
-
-            sportsbook_text = ""
-            for col in ["sportsbook", "book", "bookmaker", "best_book"]:
-                if col in top_df.columns:
-                    value = str(row.get(col, "")).strip()
-                    if value:
-                        sportsbook_text = value
-                        break
-
-            odds_text = ""
-            for col in ["odds", "best_price", "price", "american_odds"]:
-                if col in top_df.columns:
-                    value = row.get(col, "")
-                    if pd.notna(value) and str(value).strip() != "":
-                        odds_text = str(value).strip()
-                        break
-
-            note_text = ""
-            for col in ["reason", "sportsdata_note", "context_note", "ai_note", "note"]:
-                if col in top_df.columns:
-                    value = str(row.get(col, "")).strip()
-                    if value:
-                        note_text = value
-                        break
-
-            true_conf = float(row.get("true_confidence", 0.0))
-            edge_val = float(row.get("edge", 0.0))
-            units_val = float(row.get("units", 0.0))
-            status_text = str(row.get("status", "Active")).strip()
-
-            with st.container():
-                st.markdown(
-                    f"""
-                    <div style="
-                        border:1px solid rgba(255,255,255,0.12);
-                        border-radius:14px;
-                        padding:14px;
-                        margin-bottom:12px;
-                    ">
-                        <div style="font-size:1.02rem; font-weight:700; margin-bottom:6px;">
-                            {matchup if matchup else "Matchup not available"}
-                        </div>
-                        <div style="font-size:0.95rem; margin-bottom:4px;">
-                            <b>Pick:</b> {pick_text if pick_text else "N/A"}
-                        </div>
-                        <div style="font-size:0.92rem; margin-bottom:4px;">
-                            <b>Market:</b> {market_text if market_text else "N/A"}
-                        </div>
-                        <div style="font-size:0.92rem; margin-bottom:4px;">
-                            <b>Book:</b> {sportsbook_text if sportsbook_text else "N/A"} &nbsp;&nbsp; <b>Odds:</b> {odds_text if odds_text else "N/A"}
-                        </div>
-                        <div style="font-size:0.92rem; margin-bottom:4px;">
-                            <b>Edge:</b> {edge_val:.2f}% &nbsp;&nbsp; <b>True Confidence:</b> {true_conf:.1f}% &nbsp;&nbsp; <b>Units:</b> {units_val:.2f}
-                        </div>
-                        <div style="font-size:0.92rem; margin-bottom:4px;">
-                            <b>Status:</b> {status_text}
-                        </div>
-                        <div style="font-size:0.88rem; opacity:0.9;">
-                            <b>Note:</b> {note_text if note_text else "No additional note available."}
-                        </div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
+        render_mobile_or_table(top_df, best_first=True)
 
 # =========================================================
 # WATCHLIST
@@ -3942,24 +4373,46 @@ elif nav == "Watchlist":
     else:
         watch_df = snapshot_watchlist_df.copy().reset_index(drop=True)
 
-        if "true_confidence" not in watch_df.columns:
-            watch_df["true_confidence"] = 0.0
-        if "edge" not in watch_df.columns:
-            watch_df["edge"] = 0.0
-        if "units" not in watch_df.columns:
-            watch_df["units"] = 0.0
-        if "status" not in watch_df.columns:
-            watch_df["status"] = "Watchlist"
+        for col, default_val in {
+            "true_confidence": 0.0,
+            "edge": 0.0,
+            "units": 0.0,
+            "status": "Watch",
+            "best_book": "",
+            "best_price": "",
+            "books_seen": 0,
+            "consensus": "",
+            "tier": "C",
+            "quality_label": "Watch",
+            "watch_tier": "",
+            "ai_tags": [[] for _ in range(len(watch_df))] if len(watch_df) > 0 else [],
+            "sportsdata_note": "",
+            "injury_flag": "",
+            "lineup_flag": "",
+            "context_score": 0.0,
+            "score": 0.0,
+            "rank_score": 0.0,
+        }.items():
+            if col not in watch_df.columns:
+                if col == "ai_tags":
+                    watch_df[col] = [[] for _ in range(len(watch_df))]
+                else:
+                    watch_df[col] = default_val
 
-        watch_df["true_confidence"] = pd.to_numeric(
-            watch_df["true_confidence"], errors="coerce"
-        ).fillna(0.0)
-        watch_df["edge"] = pd.to_numeric(
-            watch_df["edge"], errors="coerce"
-        ).fillna(0.0)
-        watch_df["units"] = pd.to_numeric(
-            watch_df["units"], errors="coerce"
-        ).fillna(0.0)
+        numeric_cols = [
+            "true_confidence",
+            "edge",
+            "units",
+            "books_seen",
+            "context_score",
+            "score",
+            "rank_score",
+            "implied_prob",
+            "true_prob",
+        ]
+        for col in numeric_cols:
+            if col in watch_df.columns:
+                watch_df[col] = pd.to_numeric(watch_df[col], errors="coerce").fillna(0.0)
 
         if snapshot_last_updated:
             st.caption(f"Last saved play snapshot: {snapshot_last_updated}")
@@ -3975,102 +4428,7 @@ elif nav == "Watchlist":
             st.metric("Avg True Confidence", avg_conf)
 
         st.markdown("---")
-
-        for _, row in watch_df.iterrows():
-            matchup = ""
-            for col in ["matchup", "game", "event_name", "display_name", "teams"]:
-                if col in watch_df.columns:
-                    value = str(row.get(col, "")).strip()
-                    if value:
-                        matchup = value
-                        break
-
-            if not matchup:
-                home_team = str(row.get("home_team", "")).strip() if "home_team" in watch_df.columns else ""
-                away_team = str(row.get("away_team", "")).strip() if "away_team" in watch_df.columns else ""
-                if away_team and home_team:
-                    matchup = f"{away_team} @ {home_team}"
-
-            pick_text = ""
-            for col in ["selection", "pick", "bet_name", "play_name", "side"]:
-                if col in watch_df.columns:
-                    value = str(row.get(col, "")).strip()
-                    if value:
-                        pick_text = value
-                        break
-
-            market_text = ""
-            for col in ["market", "market_type", "bet_type"]:
-                if col in watch_df.columns:
-                    value = str(row.get(col, "")).strip()
-                    if value:
-                        market_text = value
-                        break
-
-            sportsbook_text = ""
-            for col in ["sportsbook", "book", "bookmaker", "best_book"]:
-                if col in watch_df.columns:
-                    value = str(row.get(col, "")).strip()
-                    if value:
-                        sportsbook_text = value
-                        break
-
-            odds_text = ""
-            for col in ["odds", "best_price", "price", "american_odds"]:
-                if col in watch_df.columns:
-                    value = row.get(col, "")
-                    if pd.notna(value) and str(value).strip() != "":
-                        odds_text = str(value).strip()
-                        break
-
-            note_text = ""
-            for col in ["reason", "sportsdata_note", "context_note", "ai_note", "note"]:
-                if col in watch_df.columns:
-                    value = str(row.get(col, "")).strip()
-                    if value:
-                        note_text = value
-                        break
-
-            true_conf = float(row.get("true_confidence", 0.0))
-            edge_val = float(row.get("edge", 0.0))
-            units_val = float(row.get("units", 0.0))
-            status_text = str(row.get("status", "Watchlist")).strip()
-
-            with st.container():
-                st.markdown(
-                    f"""
-                    <div style="
-                        border:1px solid rgba(255,255,255,0.12);
-                        border-radius:14px;
-                        padding:14px;
-                        margin-bottom:12px;
-                    ">
-                        <div style="font-size:1.02rem; font-weight:700; margin-bottom:6px;">
-                            {matchup if matchup else "Matchup not available"}
-                        </div>
-                        <div style="font-size:0.95rem; margin-bottom:4px;">
-                            <b>Pick:</b> {pick_text if pick_text else "N/A"}
-                        </div>
-                        <div style="font-size:0.92rem; margin-bottom:4px;">
-                            <b>Market:</b> {market_text if market_text else "N/A"}
-                        </div>
-                        <div style="font-size:0.92rem; margin-bottom:4px;">
-                            <b>Book:</b> {sportsbook_text if sportsbook_text else "N/A"} &nbsp;&nbsp; <b>Odds:</b> {odds_text if odds_text else "N/A"}
-                        </div>
-                        <div style="font-size:0.92rem; margin-bottom:4px;">
-                            <b>Edge:</b> {edge_val:.2f}% &nbsp;&nbsp; <b>True Confidence:</b> {true_conf:.1f}% &nbsp;&nbsp; <b>Units:</b> {units_val:.2f}
-                        </div>
-                        <div style="font-size:0.92rem; margin-bottom:4px;">
-                            <b>Status:</b> {status_text}
-                        </div>
-                        <div style="font-size:0.88rem; opacity:0.9;">
-                            <b>Note:</b> {note_text if note_text else "No additional note available."}
-                        </div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-
+        render_mobile_or_table(watch_df, best_first=False)
 
 # =========================================================
 # AI SLIP
@@ -4087,6 +4445,8 @@ elif nav == "AI Slip":
     persisted_plays_df = get_persisted_plays_df()
     snapshot_active_df = st.session_state.get("snapshot_active_df", pd.DataFrame())
     snapshot_top_df = st.session_state.get("snapshot_top_plays_df", pd.DataFrame())
+    snapshot_ai_slip_df = st.session_state.get("snapshot_ai_slip_df", pd.DataFrame())
+    snapshot_parlay_df = st.session_state.get("snapshot_parlay_df", pd.DataFrame())
     snapshot_last_updated = str(st.session_state.get("snapshot_last_updated", "")).strip()
 
     if snapshot_top_df.empty and not persisted_plays_df.empty:
@@ -4094,6 +4454,8 @@ elif nav == "AI Slip":
             persist_generated_play_snapshots(persisted_plays_df)
             snapshot_active_df = st.session_state.get("snapshot_active_df", pd.DataFrame())
             snapshot_top_df = st.session_state.get("snapshot_top_plays_df", pd.DataFrame())
+            snapshot_ai_slip_df = st.session_state.get("snapshot_ai_slip_df", pd.DataFrame())
+            snapshot_parlay_df = st.session_state.get("snapshot_parlay_df", pd.DataFrame())
             snapshot_last_updated = str(st.session_state.get("snapshot_last_updated", "")).strip()
         except Exception:
             pass
@@ -4113,10 +4475,14 @@ elif nav == "AI Slip":
             working_active_df["edge"], errors="coerce"
         ).fillna(0.0)
 
-        snapshot_top_df = working_active_df.sort_values(
-            by=["true_confidence", "edge"],
-            ascending=[False, False],
-        ).head(int(globals().get("TOP_PLAYS_LIMIT", 10))).copy()
+        sort_cols = [c for c in ["rank_score", "true_confidence", "edge"] if c in working_active_df.columns]
+        if sort_cols:
+            snapshot_top_df = working_active_df.sort_values(
+                by=sort_cols,
+                ascending=[False] * len(sort_cols),
+            ).head(int(globals().get("TOP_PLAYS_LIMIT", 10))).copy()
+        else:
+            snapshot_top_df = working_active_df.head(int(globals().get("TOP_PLAYS_LIMIT", 10))).copy()
 
     if len(get_effective_odds_games()) == 0 and persisted_plays_df.empty and snapshot_top_df.empty:
         if current_api_mode == "waiting_reset":
@@ -4143,6 +4509,9 @@ elif nav == "AI Slip":
             "status": "Active",
             "best_book": "",
             "best_price": "",
+            "books_seen": 0,
+            "consensus": "",
+            "sportsdata_note": "",
         }.items():
             if col not in top_df.columns:
                 top_df[col] = default_val
@@ -4314,6 +4683,42 @@ elif nav == "AI Slip":
                 unsafe_allow_html=True,
             )
 
+        st.markdown("---")
+        st.subheader("Best Available AI Parlay")
+
+        parlay_obj = None
+        if isinstance(best_parlay, dict) and best_parlay:
+            parlay_obj = best_parlay
+        elif isinstance(snapshot_parlay_df, pd.DataFrame) and not snapshot_parlay_df.empty:
+            try:
+                first_parlay = snapshot_parlay_df.iloc[0].to_dict()
+                parlay_obj = {
+                    "approval_type": first_parlay.get("approval_type", ""),
+                    "combined_odds": first_parlay.get("combined_odds", ""),
+                    "combined_odds_int": first_parlay.get("combined_odds_int", 0),
+                    "avg_true_conf": first_parlay.get("avg_true_conf", 0.0),
+                    "avg_edge": first_parlay.get("avg_edge", 0.0),
+                    "avg_books": first_parlay.get("avg_books", 0.0),
+                    "total_penalty": first_parlay.get("total_penalty", 0.0),
+                    "cross_game": first_parlay.get("cross_game", False),
+                    "correlation_score": first_parlay.get("correlation_score", 0.0),
+                    "score": first_parlay.get("score", 0.0),
+                    "display_score": first_parlay.get("display_score", 0.0),
+                    "risk_label": first_parlay.get("risk_label", ""),
+                    "reasons": str(first_parlay.get("reasons", "")).split(" | ") if str(first_parlay.get("reasons", "")).strip() else [],
+                    "legs": [
+                        {"selection": leg.strip(), "game": ""}
+                        for leg in str(first_parlay.get("legs_text", "")).split(" | ")
+                        if leg.strip()
+                    ],
+                }
+            except Exception:
+                parlay_obj = None
+
+        render_parlay_card(parlay_obj)
+        render_parlay_table(sharp_candidates, "Sharp Approved Candidates")
+        render_parlay_table(fallback_candidates, "Balanced Fallback Candidates")
+
 # =========================================================
 # BET LOG
 # =========================================================
@@ -4322,9 +4727,6 @@ if nav == "Bet Log":
 
     sync_manual_results_into_bet_log()
 
-    # =========================================================
-    # LOCAL HELPERS
-    # =========================================================
     def _safe_num(series_or_value, default=0.0):
         try:
             if isinstance(series_or_value, pd.Series):
@@ -4337,18 +4739,18 @@ if nav == "Bet Log":
         raw = str(value).strip().title()
         if raw in ["Win", "Loss", "Push", "Pending"]:
             return raw
-        if raw in ["Won"]:
+        if raw == "Won":
             return "Win"
-        if raw in ["Lost"]:
+        if raw == "Lost":
             return "Loss"
         return "Pending"
 
     def _normalize_bet_type(value):
         raw = str(value).strip().lower()
 
-        if raw in ["moneyline", "ml"]:
+        if raw in ["moneyline", "ml", "h2h"]:
             return "Moneyline"
-        if raw == "spread":
+        if raw in ["spread", "spreads"]:
             return "Spread"
         if raw in ["total", "totals"]:
             return "Total"
@@ -4468,9 +4870,6 @@ if nav == "Bet Log":
 
         return out.reset_index(drop=True)
 
-    # =========================================================
-    # LOAD + CLEAN LOG DATA
-    # =========================================================
     selected_sport = get_selected_sport()
 
     latest_bet_log = st.session_state.get("bet_log", [])
@@ -4493,7 +4892,6 @@ if nav == "Bet Log":
 
         log_df["sport"] = log_df["sport"].fillna("").astype(str).str.strip().str.upper()
         log_df["sport"] = log_df["sport"].replace("", selected_sport)
-
         log_df = log_df[log_df["sport"] == selected_sport].copy()
 
         if log_df.empty:
@@ -4573,9 +4971,6 @@ if nav == "Bet Log":
             log_df["category_clean"] = log_df["log_category"].apply(_normalize_category)
             log_df["date_only"] = log_df["timestamp"].apply(_extract_date_only)
 
-            # =========================================================
-            # ROI DASHBOARD
-            # =========================================================
             st.subheader(f"📊 ROI Dashboard ({selected_sport})")
             roi_df = build_roi_dashboard(log_df)
 
@@ -4584,9 +4979,6 @@ if nav == "Bet Log":
             else:
                 st.dataframe(roi_df, use_container_width=True, hide_index=True)
 
-            # =========================================================
-            # STAKE SIMULATOR
-            # =========================================================
             st.subheader("💵 Stake Simulator")
 
             sim_col1, sim_col2 = st.columns([1.2, 1.4])
@@ -4658,14 +5050,8 @@ if nav == "Bet Log":
             sum_col5.metric("Simulated $ P&L", f"${total_sim_profit:+,.2f}")
             sum_col6.metric("Simulated ROI", f"{overall_roi:.2f}%")
 
-            # =========================================================
-            # PERFORMANCE BREAKDOWNS
-            # =========================================================
             st.subheader("📈 Performance Breakdowns")
 
-            # =========================================================
-            # DASHBOARD FILTERS
-            # =========================================================
             filter_col1, filter_col2, filter_col3 = st.columns(3)
 
             all_bet_types = ["All"] + sorted(
@@ -4739,9 +5125,6 @@ if nav == "Bet Log":
                 ].copy()
                 filtered_dashboard_df = filtered_dashboard_df.drop(columns=["timestamp_dt_tmp"], errors="ignore")
 
-            # =========================================================
-            # FILTERED SUMMARY CARDS
-            # =========================================================
             f_total_picks = int(len(filtered_dashboard_df))
             f_wins = int((filtered_dashboard_df["result_clean"] == "Win").sum()) if not filtered_dashboard_df.empty else 0
             f_losses = int((filtered_dashboard_df["result_clean"] == "Loss").sum()) if not filtered_dashboard_df.empty else 0
@@ -4765,9 +5148,6 @@ if nav == "Bet Log":
             card_col6.metric("Wins / Losses", f"{f_wins}-{f_losses}")
             card_col7.metric("Pushes", f_pushes)
 
-            # =========================================================
-            # FILTERED BREAKDOWNS
-            # =========================================================
             filtered_by_type_df = _build_group_summary(filtered_dashboard_df, "bet_type")
             filtered_by_category_df = _build_group_summary(filtered_dashboard_df, "category_clean")
             filtered_by_date_df = _build_group_summary(filtered_dashboard_df, "date_only")
@@ -4824,9 +5204,6 @@ if nav == "Bet Log":
                         st.markdown("**By Date**")
                         st.dataframe(filtered_by_date_df, use_container_width=True, hide_index=True)
 
-            # =========================================================
-            # BANKROLL SIMULATOR (MULTI-STAKE VIEW)
-            # =========================================================
             st.subheader("💰 Bankroll Simulator")
 
             if filtered_dashboard_df.empty:
@@ -4922,24 +5299,22 @@ if nav == "Bet Log":
                     st.pyplot(plt)
 
                 with st.expander("View Simulation Data"):
+                    show_cols = [
+                        c for c in [
+                            "selection",
+                            "game",
+                            "odds",
+                            "result_clean",
+                            "sim_profit_recalc",
+                            "bankroll_curve",
+                        ] if c in sim_df.columns
+                    ]
                     st.dataframe(
-                        sim_df[
-                            [
-                                "selection",
-                                "game",
-                                "odds",
-                                "result_clean",
-                                "sim_profit_recalc",
-                                "bankroll_curve",
-                            ]
-                        ],
+                        sim_df[show_cols],
                         use_container_width=True,
                         hide_index=True,
                     )
 
-            # =========================================================
-            # FULL LOG TABLE
-            # =========================================================
             st.subheader(f"📋 Full Bet Log ({selected_sport})")
 
             display_cols = [
@@ -4971,10 +5346,7 @@ if nav == "Bet Log":
 
             display_df = log_df[display_cols].copy()
             st.dataframe(display_df, use_container_width=True, hide_index=True)
-            
-            # =========================================================
-            # UPDATE RESULTS
-            # =========================================================
+
             st.subheader("✍️ Update Results")
 
             selectable_labels = []
@@ -5071,7 +5443,12 @@ if nav == "Bet Log":
                                     odds_val = None
 
                                 try:
-                                    stake_units = float(refreshed_bet_log[idx].get("stake", refreshed_bet_log[idx].get("units", 1.0)))
+                                    stake_units = float(
+                                        refreshed_bet_log[idx].get(
+                                            "stake",
+                                            refreshed_bet_log[idx].get("units", 1.0),
+                                        )
+                                    )
                                 except Exception:
                                     stake_units = 1.0
 
@@ -5117,9 +5494,6 @@ if nav == "Bet Log":
             else:
                 st.info("No selectable bets found.")
 
-    # =========================================================
-    # MANUAL BET ENTRY (CLV READY)
-    # =========================================================
     st.subheader("➕ Add Manual Bet")
 
     with st.expander("Add Manual Bet Entry", expanded=False):
@@ -5220,10 +5594,6 @@ if nav == "Bet Log":
                     "mode": TEST_MODE,
                     "log_category": "Manual",
                     "timestamp": datetime.now().isoformat(),
-
-                    # -----------------------------
-                    # CLV / MARKET TRACKING FIELDS
-                    # -----------------------------
                     "open_odds": odds_int,
                     "open_line": open_line_val,
                     "closing_odds": None,
@@ -5251,9 +5621,6 @@ if nav == "Bet Log":
 # =========================================================
 with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded=False):
 
-    # =========================================================
-    # SAFE SETTLED DATA INIT
-    # =========================================================
     selected_sport = get_selected_sport()
     settled_df = pd.DataFrame()
 
@@ -5298,6 +5665,539 @@ with st.expander("⚙️ Adaptive Settings + V33 Self-Learning Engine", expanded
             settled_df = _df[_df["result_clean"].isin(["win", "loss", "push"])].copy()
     except Exception:
         settled_df = pd.DataFrame()
+
+    learning_state = get_learning_state_for_sport(selected_sport)
+
+    default_learning_state = {
+        "weights": {
+            "true_probability": 0.30,
+            "price_edge": 0.25,
+            "market_signal": 0.15,
+            "matchup_quality": 0.15,
+            "historical_performance": 0.15,
+        },
+        "category_thresholds": {
+            "Top Plays": 0.030,
+            "AI Picks": 0.035,
+            "AI Parlays": 0.050,
+            "Watchlist": 0.020,
+        },
+        "category_min_samples": 8,
+        "play_type_stats": {},
+        "category_stats": {},
+        "bad_play_type_flags": {},
+        "last_learning_refresh": "",
+        "learning_notes": [],
+        "accelerated_learning_mode": False,
+    }
+
+    for key, value in default_learning_state.items():
+        if key not in learning_state:
+            learning_state[key] = value
+
+    if not isinstance(learning_state.get("weights"), dict):
+        learning_state["weights"] = default_learning_state["weights"].copy()
+
+    if not isinstance(learning_state.get("category_thresholds"), dict):
+        learning_state["category_thresholds"] = default_learning_state["category_thresholds"].copy()
+
+    if not isinstance(learning_state.get("play_type_stats"), dict):
+        learning_state["play_type_stats"] = {}
+
+    if not isinstance(learning_state.get("category_stats"), dict):
+        learning_state["category_stats"] = {}
+
+    if not isinstance(learning_state.get("bad_play_type_flags"), dict):
+        learning_state["bad_play_type_flags"] = {}
+
+    if not isinstance(learning_state.get("learning_notes"), list):
+        learning_state["learning_notes"] = []
+
+    def _clamp(v, low, high):
+        return max(low, min(high, v))
+
+    def _safe_pct_threshold(raw_value, fallback_decimal):
+        try:
+            raw = float(raw_value)
+        except Exception:
+            raw = float(fallback_decimal)
+
+        if raw > 1:
+            raw = raw / 100.0
+
+        return raw
+
+    def _status_from_threshold(current_decimal, base_decimal):
+        if current_decimal > base_decimal + 0.0001:
+            return "Tightened"
+        if current_decimal < base_decimal - 0.0001:
+            return "Loosened"
+        return "Base"
+
+    def _learning_stage(sample_size):
+        if sample_size >= 8:
+            return "Trusted"
+        if sample_size >= 5:
+            return "Active"
+        if sample_size >= 3:
+            return "Probation"
+        return "Collecting"
+
+    learning_col1, learning_col2, learning_col3 = st.columns(3)
+
+    with learning_col1:
+        learning_enabled = st.toggle(
+            "Enable Controlled Learning",
+            value=True,
+            key=f"learning_enabled_{selected_sport}",
+        )
+
+    with learning_col2:
+        auto_filter_bad_types = st.toggle(
+            "Auto-Filter Bad Play Types",
+            value=True,
+            key=f"auto_filter_bad_types_{selected_sport}",
+        )
+
+    with learning_col3:
+        min_sample_size = st.number_input(
+            "Minimum Samples Before Learning Applies",
+            min_value=3,
+            max_value=50,
+            value=int(learning_state.get("category_min_samples", 8)),
+            step=1,
+            key=f"learning_min_samples_{selected_sport}",
+        )
+
+    learning_state["category_min_samples"] = int(min_sample_size)
+    min_samples = int(learning_state.get("category_min_samples", 8) or 8)
+
+    st.caption(
+        "Controlled learning adjusts filtering logic and play-type confidence only. "
+        "It does not auto-increase bet sizing."
+    )
+
+    total_settled_bets = int(len(settled_df))
+    total_wins = int((settled_df["result_clean"] == "win").sum()) if not settled_df.empty else 0
+    total_losses = int((settled_df["result_clean"] == "loss").sum()) if not settled_df.empty else 0
+    total_pushes = int((settled_df["result_clean"] == "push").sum()) if not settled_df.empty else 0
+    total_profit = float(settled_df["profit_num"].sum()) if not settled_df.empty else 0.0
+    decision_bets = total_wins + total_losses
+    overall_win_rate = (total_wins / decision_bets * 100.0) if decision_bets > 0 else 0.0
+
+    summary_col1, summary_col2, summary_col3, summary_col4 = st.columns(4)
+    summary_col1.metric("Settled Bets", total_settled_bets)
+    summary_col2.metric("Wins / Losses / Pushes", f"{total_wins} / {total_losses} / {total_pushes}")
+    summary_col3.metric("Win Rate", f"{overall_win_rate:.1f}%")
+    summary_col4.metric("Profit", f"{total_profit:.2f}u")
+
+    play_type_stats = {}
+    category_stats = {}
+    learning_notes = []
+    bad_play_type_flags = {}
+
+    if not settled_df.empty:
+        play_type_grouped = (
+            settled_df.groupby("play_type_clean", dropna=False)
+            .agg(
+                bets=("result_clean", "count"),
+                wins=("result_clean", lambda s: (s == "win").sum()),
+                losses=("result_clean", lambda s: (s == "loss").sum()),
+                pushes=("result_clean", lambda s: (s == "push").sum()),
+                profit=("profit_num", "sum"),
+                avg_true_conf=("true_conf_num", "mean"),
+                avg_edge=("edge_num", "mean"),
+            )
+            .reset_index()
+        )
+
+        for _, row in play_type_grouped.iterrows():
+            play_type_name = str(row["play_type_clean"]).strip()
+            if not play_type_name:
+                play_type_name = "unknown"
+
+            bets = int(row["bets"])
+            wins = int(row["wins"])
+            losses = int(row["losses"])
+            pushes = int(row["pushes"])
+            profit = float(row["profit"])
+            avg_true_conf = float(row["avg_true_conf"]) if pd.notna(row["avg_true_conf"]) else 0.0
+            avg_edge = float(row["avg_edge"]) if pd.notna(row["avg_edge"]) else 0.0
+            decision_count = wins + losses
+            win_rate = (wins / decision_count * 100.0) if decision_count > 0 else 0.0
+            roi_per_bet = (profit / bets) if bets > 0 else 0.0
+            stage = _learning_stage(bets)
+
+            play_type_stats[play_type_name] = {
+                "sample_size": bets,
+                "wins": wins,
+                "losses": losses,
+                "pushes": pushes,
+                "profit": round(profit, 4),
+                "win_rate": round(win_rate, 2),
+                "roi_per_bet": round(roi_per_bet, 4),
+                "avg_true_conf": round(avg_true_conf, 2),
+                "avg_edge": round(avg_edge, 2),
+                "stage": stage,
+            }
+
+            if auto_filter_bad_types:
+                if bets >= 8:
+                    if profit <= -2 and win_rate < 45:
+                        bad_play_type_flags[play_type_name] = {
+                            "is_filtered": True,
+                            "reason": f"Trusted filter: poor results ({wins}-{losses}-{pushes}, profit {round(profit, 2)})",
+                        }
+                    elif profit >= 2 and win_rate >= 55:
+                        bad_play_type_flags[play_type_name] = {
+                            "is_filtered": False,
+                            "reason": f"Trusted positive results ({wins}-{losses}-{pushes}, profit {round(profit, 2)})",
+                        }
+                    else:
+                        bad_play_type_flags[play_type_name] = {
+                            "is_filtered": False,
+                            "reason": "Trusted but neutral",
+                        }
+
+                elif bets >= 5:
+                    if profit <= -1.5 and win_rate < 45:
+                        bad_play_type_flags[play_type_name] = {
+                            "is_filtered": True,
+                            "reason": f"Active filter: weak results ({wins}-{losses}-{pushes}, profit {round(profit, 2)})",
+                        }
+                    elif profit >= 1.5 and win_rate >= 55:
+                        bad_play_type_flags[play_type_name] = {
+                            "is_filtered": False,
+                            "reason": f"Active positive results ({wins}-{losses}-{pushes}, profit {round(profit, 2)})",
+                        }
+                    else:
+                        bad_play_type_flags[play_type_name] = {
+                            "is_filtered": False,
+                            "reason": "Active review",
+                        }
+
+                elif bets >= min_samples:
+                    if profit <= -1 and win_rate < 40:
+                        bad_play_type_flags[play_type_name] = {
+                            "is_filtered": True,
+                            "reason": f"Probation filter: very weak start ({wins}-{losses}-{pushes}, profit {round(profit, 2)})",
+                        }
+                    elif profit >= 1 and win_rate >= 60:
+                        bad_play_type_flags[play_type_name] = {
+                            "is_filtered": False,
+                            "reason": f"Probation positive start ({wins}-{losses}-{pushes}, profit {round(profit, 2)})",
+                        }
+                    else:
+                        bad_play_type_flags[play_type_name] = {
+                            "is_filtered": False,
+                            "reason": "Probation / still evaluating",
+                        }
+                else:
+                    bad_play_type_flags[play_type_name] = {
+                        "is_filtered": False,
+                        "reason": f"Collecting data ({bets}/{min_samples})",
+                    }
+
+        category_grouped = (
+            settled_df.groupby("category_clean", dropna=False)
+            .agg(
+                bets=("result_clean", "count"),
+                wins=("result_clean", lambda s: (s == "win").sum()),
+                losses=("result_clean", lambda s: (s == "loss").sum()),
+                pushes=("result_clean", lambda s: (s == "push").sum()),
+                profit=("profit_num", "sum"),
+                avg_true_conf=("true_conf_num", "mean"),
+                avg_edge=("edge_num", "mean"),
+            )
+            .reset_index()
+        )
+
+        for _, row in category_grouped.iterrows():
+            category_name = str(row["category_clean"]).strip()
+            if not category_name:
+                continue
+
+            bets = int(row["bets"])
+            wins = int(row["wins"])
+            losses = int(row["losses"])
+            pushes = int(row["pushes"])
+            profit = float(row["profit"])
+            avg_true_conf = float(row["avg_true_conf"]) if pd.notna(row["avg_true_conf"]) else 0.0
+            avg_edge = float(row["avg_edge"]) if pd.notna(row["avg_edge"]) else 0.0
+            decision_count = wins + losses
+            win_rate = (wins / decision_count * 100.0) if decision_count > 0 else 0.0
+            roi_per_bet = (profit / bets) if bets > 0 else 0.0
+            stage = _learning_stage(bets)
+
+            category_stats[category_name] = {
+                "sample_size": bets,
+                "wins": wins,
+                "losses": losses,
+                "pushes": pushes,
+                "profit": round(profit, 4),
+                "win_rate": round(win_rate, 2),
+                "roi_per_bet": round(roi_per_bet, 4),
+                "avg_true_conf": round(avg_true_conf, 2),
+                "avg_edge": round(avg_edge, 2),
+                "stage": stage,
+            }
+
+    adjusted_category_thresholds = learning_state.get("category_thresholds", {}).copy()
+    base_thresholds = default_learning_state["category_thresholds"].copy()
+
+    for cat_name, fallback_val in base_thresholds.items():
+        adjusted_category_thresholds[cat_name] = _safe_pct_threshold(
+            adjusted_category_thresholds.get(cat_name, fallback_val),
+            fallback_val,
+        )
+
+    if learning_enabled:
+        for category_name, stats in category_stats.items():
+            if category_name not in adjusted_category_thresholds:
+                continue
+
+            current_threshold = float(adjusted_category_thresholds.get(category_name, 0.03))
+            bets = int(stats.get("sample_size", 0))
+            profit = float(stats.get("profit", 0.0))
+            win_rate = float(stats.get("win_rate", 0.0))
+            avg_true_conf = float(stats.get("avg_true_conf", 0.0))
+
+            if bets >= min_samples:
+                if bets >= 8:
+                    if profit <= -2 and win_rate < 45:
+                        current_threshold += 0.0030
+                    elif profit >= 2 and win_rate >= 55 and avg_true_conf >= 65:
+                        current_threshold -= 0.0030
+
+                elif bets >= 5:
+                    if profit <= -1.5 and win_rate < 45:
+                        current_threshold += 0.0025
+                    elif profit >= 1.5 and win_rate >= 55 and avg_true_conf >= 65:
+                        current_threshold -= 0.0025
+
+                elif bets >= 3:
+                    if profit <= -1 and win_rate < 40:
+                        current_threshold += 0.0015
+                    elif profit >= 1 and win_rate >= 60 and avg_true_conf >= 68:
+                        current_threshold -= 0.0015
+
+                adjusted_category_thresholds[category_name] = _clamp(current_threshold, 0.015, 0.075)
+
+        if total_settled_bets >= int(min_sample_size):
+            if overall_win_rate >= 55.0 and total_profit > 0:
+                learning_notes.append(
+                    "Recent settled performance is positive. Slightly loosening qualified category thresholds."
+                )
+            elif overall_win_rate < 45.0 or total_profit < 0:
+                learning_notes.append(
+                    "Recent settled performance is weak. Tightening category thresholds for better selectivity."
+                )
+
+    learning_state["play_type_stats"] = play_type_stats
+    learning_state["category_stats"] = category_stats
+    learning_state["bad_play_type_flags"] = bad_play_type_flags if auto_filter_bad_types else {}
+    learning_state["category_thresholds"] = adjusted_category_thresholds
+    learning_state["learning_notes"] = learning_notes
+    learning_state["last_learning_refresh"] = pd.Timestamp.now().strftime("%Y-%m-%d %I:%M:%S %p")
+    learning_state["last_update"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    learning_state["category_min_samples"] = min_samples
+    learning_state["accelerated_learning_mode"] = min_samples <= 3
+
+    save_learning_state_for_sport(learning_state, selected_sport)
+
+    st.markdown("#### 🎯 True Probability Emphasis")
+    st.caption(
+        "True probability remains the largest learning weight so the engine does not overreact "
+        "to short-term variance from weaker play types or categories."
+    )
+
+    weight_df = pd.DataFrame(
+        [
+            {"Factor": "True Probability", "Weight": float(learning_state["weights"].get("true_probability", 0.30))},
+            {"Factor": "Price Edge", "Weight": float(learning_state["weights"].get("price_edge", 0.25))},
+            {"Factor": "Market Signal", "Weight": float(learning_state["weights"].get("market_signal", 0.15))},
+            {"Factor": "Matchup Quality", "Weight": float(learning_state["weights"].get("matchup_quality", 0.15))},
+            {"Factor": "Historical Performance", "Weight": float(learning_state["weights"].get("historical_performance", 0.15))},
+        ]
+    )
+
+    st.dataframe(weight_df, use_container_width=True, hide_index=True)
+
+    st.markdown("#### 📊 Adaptive Category Thresholds")
+
+    threshold_rows = []
+    for category_name in ["Top Plays", "AI Picks", "AI Parlays", "Watchlist"]:
+        threshold_rows.append(
+            {
+                "Category": category_name,
+                "Threshold": round(float(adjusted_category_thresholds.get(category_name, 0.03)), 4),
+                "Status": _status_from_threshold(
+                    adjusted_category_thresholds.get(category_name, 0.03),
+                    base_thresholds.get(category_name, 0.03),
+                ),
+            }
+        )
+
+    threshold_df = pd.DataFrame(threshold_rows)
+    st.dataframe(threshold_df, use_container_width=True, hide_index=True)
+
+    st.markdown("#### 🧠 Play Type Performance")
+
+    if play_type_stats:
+        play_type_stats_df = pd.DataFrame(
+            [
+                {
+                    "Play Type": play_type_name,
+                    "Bets": stats["sample_size"],
+                    "Wins": stats["wins"],
+                    "Losses": stats["losses"],
+                    "Pushes": stats.get("pushes", 0),
+                    "Win Rate %": stats["win_rate"],
+                    "Profit": stats["profit"],
+                    "ROI/Bet": stats["roi_per_bet"],
+                    "Avg True Conf": stats["avg_true_conf"],
+                    "Avg Edge": stats["avg_edge"],
+                    "Filtered": "Yes" if learning_state.get("bad_play_type_flags", {}).get(play_type_name, {}).get("is_filtered", False) else "No",
+                }
+                for play_type_name, stats in play_type_stats.items()
+            ]
+        ).sort_values(by=["Profit", "Win Rate %"], ascending=[False, False])
+
+        st.dataframe(play_type_stats_df, use_container_width=True, hide_index=True)
+    else:
+        st.info("No settled play-type data yet for this sport.")
+
+    st.markdown("#### 📚 Category Performance")
+
+    if category_stats:
+        category_stats_df = pd.DataFrame(
+            [
+                {
+                    "Category": category_name,
+                    "Bets": stats["sample_size"],
+                    "Wins": stats["wins"],
+                    "Losses": stats["losses"],
+                    "Pushes": stats.get("pushes", 0),
+                    "Win Rate %": stats["win_rate"],
+                    "Profit": stats["profit"],
+                    "ROI/Bet": stats["roi_per_bet"],
+                    "Avg True Conf": stats["avg_true_conf"],
+                    "Avg Edge": stats["avg_edge"],
+                    "Stage": stats["stage"],
+                }
+                for category_name, stats in category_stats.items()
+            ]
+        ).sort_values(by=["Profit", "Win Rate %"], ascending=[False, False])
+
+        st.dataframe(category_stats_df, use_container_width=True, hide_index=True)
+    else:
+        st.info("No settled category data yet for this sport.")
+
+    st.markdown("#### 📝 Learning Notes")
+
+    if learning_state.get("learning_notes"):
+        for note in learning_state["learning_notes"]:
+            st.caption(f"• {note}")
+    else:
+        st.caption("• Learning engine is active, but more settled samples are needed before stronger adjustments are made.")
+
+    st.caption(
+        f"Last learning refresh: {learning_state.get('last_learning_refresh', 'Not available')}"
+    )
+
+    st.markdown("### Learning Weights")
+
+    weights = learning_state.get("weights", {})
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.metric("True Prob", f"{weights.get('true_probability', 0) * 100:.1f}%")
+        st.metric("Price Edge", f"{weights.get('price_edge', 0) * 100:.1f}%")
+        st.metric("Market Signal", f"{weights.get('market_signal', 0) * 100:.1f}%")
+    with c2:
+        st.metric("Matchup Quality", f"{weights.get('matchup_quality', 0) * 100:.1f}%")
+        st.metric("History", f"{weights.get('historical_performance', 0) * 100:.1f}%")
+        st.metric("Min Samples", str(min_samples))
+
+    last_update = learning_state.get("last_update")
+    st.caption(f"Last learning update: {last_update if last_update else 'None'}")
+    st.caption(f"Learning scope: {selected_sport}")
+
+    st.markdown("### Play Type Performance / Auto-Filter Status")
+
+    if play_type_stats:
+        pt_rows = []
+        for play_type_name, stats in play_type_stats.items():
+            flag_info = learning_state.get("bad_play_type_flags", {}).get(play_type_name, {})
+            pt_rows.append(
+                {
+                    "Play Type": play_type_name if play_type_name else "Unknown",
+                    "Stage": stats.get("stage", "Collecting"),
+                    "Bets": stats.get("sample_size", 0),
+                    "Wins": stats.get("wins", 0),
+                    "Losses": stats.get("losses", 0),
+                    "Pushes": stats.get("pushes", 0),
+                    "Profit": stats.get("profit", 0.0),
+                    "Win Rate %": stats.get("win_rate", 0.0),
+                    "Avg True Conf": stats.get("avg_true_conf", 0.0),
+                    "Avg Edge %": stats.get("avg_edge", 0.0),
+                    "Filtered": "Yes" if flag_info.get("is_filtered", False) else "No",
+                    "Reason": flag_info.get("reason", ""),
+                }
+            )
+
+        pt_df = pd.DataFrame(pt_rows).sort_values(
+            by=["Filtered", "Profit", "Win Rate %"],
+            ascending=[False, False, False],
+        )
+        st.dataframe(pt_df, use_container_width=True, hide_index=True)
+    else:
+        st.info(f"No graded {selected_sport} bet history yet. The self-learning engine will activate after enough settled bets.")
+
+    st.markdown("### Category Performance Snapshot")
+
+    if category_stats:
+        cat_rows = []
+        for category_name, stats in category_stats.items():
+            cat_rows.append(
+                {
+                    "Category": category_name if category_name else "Unknown",
+                    "Stage": stats.get("stage", "Collecting"),
+                    "Bets": stats.get("sample_size", 0),
+                    "Wins": stats.get("wins", 0),
+                    "Losses": stats.get("losses", 0),
+                    "Pushes": stats.get("pushes", 0),
+                    "Profit": stats.get("profit", 0.0),
+                    "Win Rate %": stats.get("win_rate", 0.0),
+                    "Avg True Conf": stats.get("avg_true_conf", 0.0),
+                    "Avg Edge %": stats.get("avg_edge", 0.0),
+                }
+            )
+
+        cat_df = pd.DataFrame(cat_rows).sort_values(
+            by=["Profit", "Win Rate %"],
+            ascending=[False, False],
+        )
+        st.dataframe(cat_df, use_container_width=True, hide_index=True)
+    else:
+        st.info(f"No settled {selected_sport} category data yet.")
+
+    st.markdown("### CLV Learning Notes")
+    st.caption(
+        f"Accelerated Learning Mode for {selected_sport} starts with probation-stage learning after 3 settled bets, "
+        "becomes active around 5, and trusted around 8. Early adjustments stay small to reduce overreaction."
+    )
+
+    st.markdown("### Engine Readiness")
+
+    if len(settled_df) < min_samples:
+        st.warning(f"{selected_sport} learning engine is collecting data (need {min_samples}+ settled bets).")
+    elif len(settled_df) < 5:
+        st.info(f"{selected_sport} Accelerated Learning Mode is in probation stage.")
+    elif len(settled_df) < 8:
+        st.info(f"{selected_sport} Accelerated Learning Mode is active.")
+    else:
+        st.success(f"{selected_sport} Accelerated Learning Mode is fully active.")
 
     # =========================================================
     # DEFAULT LEARNING STATE

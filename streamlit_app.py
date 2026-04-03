@@ -3661,8 +3661,184 @@ if "update_learning_from_results" not in globals() or not callable(globals().get
     def update_learning_from_results(sport=None):
         return None
 
+
+# =========================================================
+# BUILD + PERSIST GENERATED PLAYS
+# =========================================================
 plays_df = generate_ai_plays()
 
+if not isinstance(plays_df, pd.DataFrame):
+    plays_df = pd.DataFrame()
+
+selected_sport = get_selected_sport()
+plays_df = normalize_dataframe_for_selected_sport(plays_df, selected_sport)
+
+if not plays_df.empty:
+    plays_df = recalculate_play_metrics(plays_df)
+
+    # -----------------------------------------------------
+    # ENSURE REQUIRED COLUMNS EXIST
+    # -----------------------------------------------------
+    for col, default_val in {
+        "sport": selected_sport,
+        "status": "",
+        "edge": 0.0,
+        "true_confidence": 0.0,
+        "books_seen": 0,
+        "books": 0,
+        "units": 0.0,
+        "best_price": None,
+        "best_book": "",
+        "selection": "",
+        "market": "",
+        "game": "",
+        "log_category": "",
+    }.items():
+        if col not in plays_df.columns:
+            plays_df[col] = default_val
+
+    plays_df["sport"] = plays_df["sport"].fillna(selected_sport).astype(str).str.upper()
+    plays_df["edge"] = pd.to_numeric(plays_df["edge"], errors="coerce").fillna(0.0)
+    plays_df["true_confidence"] = pd.to_numeric(plays_df["true_confidence"], errors="coerce").fillna(0.0)
+
+    if "books_seen" in plays_df.columns:
+        plays_df["books_seen"] = pd.to_numeric(plays_df["books_seen"], errors="coerce").fillna(0)
+    else:
+        plays_df["books_seen"] = pd.to_numeric(plays_df.get("books", 0), errors="coerce").fillna(0)
+
+    plays_df["units"] = pd.to_numeric(plays_df["units"], errors="coerce").fillna(0.0)
+
+    # -----------------------------------------------------
+    # IF STATUS IS MISSING, BUILD IT HERE
+    # -----------------------------------------------------
+    def _derive_status(row):
+        existing = str(row.get("status", "")).strip()
+        if existing in ["Active", "Watchlist", "Fallback"]:
+            return existing
+
+        edge_val = float(row.get("edge", 0.0))
+        conf_val = float(row.get("true_confidence", 0.0))
+        books_val = float(row.get("books_seen", row.get("books", 0)))
+
+        if (
+            edge_val >= MIN_ACTIVE_EDGE
+            and conf_val >= MIN_ACTIVE_TRUE_CONF
+            and books_val >= MIN_ACTIVE_BOOKS
+        ):
+            return "Active"
+
+        if (
+            edge_val >= MIN_WATCH_EDGE
+            and conf_val >= MIN_WATCH_TRUE_CONF
+            and books_val >= MIN_WATCH_BOOKS
+        ):
+            return "Watchlist"
+
+        return ""
+
+    plays_df["status"] = plays_df.apply(_derive_status, axis=1)
+
+    # -----------------------------------------------------
+    # FAILSAFE: if nothing qualified, keep best rows visible
+    # -----------------------------------------------------
+    if plays_df["status"].astype(str).str.strip().eq("").all():
+        fallback_df = plays_df.copy()
+
+        fallback_df = fallback_df.sort_values(
+            by=["true_confidence", "edge", "books_seen"],
+            ascending=[False, False, False],
+        ).head(TOP_PLAYS_LIMIT)
+
+        fallback_df["status"] = "Fallback"
+        fallback_df["log_category"] = fallback_df["log_category"].replace("", "Top Plays")
+        plays_df = fallback_df.copy()
+
+    # -----------------------------------------------------
+    # UNITS + CATEGORY
+    # -----------------------------------------------------
+    def _derive_units(row):
+        current_units = float(row.get("units", 0.0))
+        if current_units > 0:
+            return round(current_units, 2)
+        return calculate_units(row.get("true_confidence", 0.0), row.get("status", ""))
+
+    plays_df["units"] = plays_df.apply(_derive_units, axis=1)
+
+    def _derive_log_category(row):
+        existing = str(row.get("log_category", "")).strip()
+        if existing:
+            return existing
+        status_val = str(row.get("status", "")).strip()
+        if status_val in ["Active", "Fallback"]:
+            return "Top Plays"
+        if status_val == "Watchlist":
+            return "Watchlist"
+        return ""
+
+    plays_df["log_category"] = plays_df.apply(_derive_log_category, axis=1)
+
+    # -----------------------------------------------------
+    # BUILD TAB DATAFRAMES
+    # -----------------------------------------------------
+    active_df = plays_df[
+        plays_df["status"].astype(str).isin(["Active", "Fallback"])
+    ].copy()
+
+    watchlist_df = plays_df[
+        plays_df["status"].astype(str) == "Watchlist"
+    ].copy()
+
+    top_plays_df = active_df.sort_values(
+        by=["true_confidence", "edge", "books_seen"],
+        ascending=[False, False, False],
+    ).head(TOP_PLAYS_LIMIT).copy()
+
+    ai_slip_df = top_plays_df.head(5).copy()
+
+    best_row = {}
+    if not top_plays_df.empty:
+        best_row = top_plays_df.iloc[0].to_dict()
+
+    # -----------------------------------------------------
+    # SAVE INTO SESSION STATE
+    # -----------------------------------------------------
+    st.session_state["plays_df"] = plays_df.copy()
+    st.session_state["snapshot_plays_df"] = plays_df.copy()
+    st.session_state["snapshot_all_plays_df"] = plays_df.copy()
+    st.session_state["snapshot_active_df"] = active_df.copy()
+    st.session_state["snapshot_top_plays_df"] = top_plays_df.copy()
+    st.session_state["snapshot_watchlist_df"] = watchlist_df.copy()
+    st.session_state["snapshot_ai_slip_df"] = ai_slip_df.copy()
+    st.session_state["ai_slip_df"] = ai_slip_df.copy()
+    st.session_state["snapshot_best_row"] = best_row
+    st.session_state["snapshot_generated_at"] = pd.Timestamp.now().strftime("%Y-%m-%d %I:%M:%S %p")
+    st.session_state["snapshot_last_updated"] = pd.Timestamp.now().strftime("%Y-%m-%d %I:%M:%S %p")
+    st.session_state["snapshot_refresh_id"] = int(st.session_state.get("snapshot_refresh_id", 0)) + 1
+
+    # -----------------------------------------------------
+    # SAVE TO DISK
+    # -----------------------------------------------------
+    persist_generated_play_snapshots(plays_df)
+    save_tab_snapshots_to_disk()
+
+else:
+    # -----------------------------------------------------
+    # CLEAR EMPTY SNAPSHOTS CLEANLY
+    # -----------------------------------------------------
+    st.session_state["plays_df"] = pd.DataFrame()
+    st.session_state["snapshot_plays_df"] = pd.DataFrame()
+    st.session_state["snapshot_all_plays_df"] = pd.DataFrame()
+    st.session_state["snapshot_active_df"] = pd.DataFrame()
+    st.session_state["snapshot_top_plays_df"] = pd.DataFrame()
+    st.session_state["snapshot_watchlist_df"] = pd.DataFrame()
+    st.session_state["snapshot_ai_slip_df"] = pd.DataFrame()
+    st.session_state["ai_slip_df"] = pd.DataFrame()
+    st.session_state["snapshot_best_row"] = {}
+    st.session_state["snapshot_generated_at"] = pd.Timestamp.now().strftime("%Y-%m-%d %I:%M:%S %p")
+    st.session_state["snapshot_last_updated"] = pd.Timestamp.now().strftime("%Y-%m-%d %I:%M:%S %p")
+
+    persist_generated_play_snapshots(pd.DataFrame())
+    save_tab_snapshots_to_disk()
 # =========================================================
 # APPLY SPORTSDATA ENRICHMENT
 # =========================================================

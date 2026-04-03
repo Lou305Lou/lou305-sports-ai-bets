@@ -4658,6 +4658,56 @@ def render_parlay_card(parlay_obj):
 
     st.markdown("</div>", unsafe_allow_html=True)
 # =========================================================
+# UI RENDER HELPERS (TOP PLAYS / WATCHLIST / AI SLIP SAFE)
+# =========================================================
+def _safe_display_odds(value):
+    try:
+        if value is None or str(value).strip() == "":
+            return "N/A"
+        val = int(float(value))
+        return f"+{val}" if val > 0 else str(val)
+    except Exception:
+        return str(value) if value is not None else "N/A"
+
+
+def _safe_display_pct(value, decimals=1):
+    try:
+        return f"{float(value):.{decimals}f}%"
+    except Exception:
+        return "0.0%"
+
+
+def _safe_display_num(value, decimals=2):
+    try:
+        return f"{float(value):.{decimals}f}"
+    except Exception:
+        return f"{0:.{decimals}f}"
+
+
+def render_pick_card(row_dict):
+    matchup = str(row_dict.get("game", "Unknown Matchup"))
+    pick = str(row_dict.get("selection", "N/A"))
+    market = str(row_dict.get("market", "N/A"))
+    book = str(row_dict.get("best_book", "N/A"))
+    odds = _safe_display_odds(row_dict.get("best_price", row_dict.get("odds", "N/A")))
+    edge = _safe_display_pct(row_dict.get("edge", 0), 2)
+    true_conf = _safe_display_pct(row_dict.get("true_confidence", 0), 1)
+    units = _safe_display_num(row_dict.get("units", 0), 2)
+    note = str(row_dict.get("sportsdata_note", "")).strip() or "No additional note available."
+
+    st.markdown(
+        f"""
+        <div style="
+            background: white;
+            border: 1px solid rgba(0,0,0,0.08);
+            border-radius: 18px;
+            padding: 18px 18px 14px 18px;
+            margin-bottom: 14px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        ">
+            <div style="font-size: 1.05rem; font-weight: 700; margin-bottom: 10
+
+# =========================================================
 # TOP PLAYS
 # =========================================================
 if nav == "Top Plays":

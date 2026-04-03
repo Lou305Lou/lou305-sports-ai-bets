@@ -6332,42 +6332,37 @@ st.dataframe(weight_df, use_container_width=True, hide_index=True)
 # =========================================================
 st.markdown("#### 📊 Adaptive Category Thresholds")
 
-def _safe_threshold_status(current_threshold, base_threshold):
-    try:
-        current_val = float(current_threshold)
-    except Exception:
-        current_val = 0.03
-
-    try:
-        base_val = float(base_threshold)
-    except Exception:
-        base_val = 0.03
-
-    if current_val < base_val:
-        return "Looser"
-    if current_val > base_val:
-        return "Tighter"
-    return "Base"
-
 threshold_rows = []
+default_threshold_map = {
+    "Top Plays": 0.03,
+    "AI Picks": 0.035,
+    "AI Parlays": 0.05,
+    "Watchlist": 0.02,
+}
+
 for category_name in ["Top Plays", "AI Picks", "AI Parlays", "Watchlist"]:
-    current_threshold = float(adjusted_category_thresholds.get(category_name, 0.03))
-    base_threshold = float(base_thresholds.get(category_name, 0.03))
+    current_threshold = float(adjusted_category_thresholds.get(category_name, default_threshold_map.get(category_name, 0.03)))
+    base_threshold = float(default_threshold_map.get(category_name, 0.03))
+
+    if current_threshold < base_threshold:
+        status_label = "Looser"
+    elif current_threshold > base_threshold:
+        status_label = "Tighter"
+    else:
+        status_label = "Base"
 
     threshold_rows.append(
         {
             "Category": category_name,
             "Threshold": round(current_threshold, 4),
-            "Status": _safe_threshold_status(current_threshold, base_threshold),
+            "Status": status_label,
         }
     )
 
 threshold_df = pd.DataFrame(threshold_rows)
 st.dataframe(threshold_df, use_container_width=True, hide_index=True)
 
-# =========================================================
-# PLAY TYPE PERFORMANCE TABLE
-# =========================================================
+
 
 # =========================================================
 # PLAY TYPE PERFORMANCE / AUTO-FILTER STATUS

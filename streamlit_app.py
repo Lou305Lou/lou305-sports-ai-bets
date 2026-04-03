@@ -2335,13 +2335,32 @@ def generate_ai_plays():
         "context_score",
     ]
 
-    if not odds_games:
+    debug_counts = {
+        "games_loaded": 0,
+        "games_after_filter": 0,
+        "bookmakers_seen": 0,
+        "markets_seen": 0,
+        "outcomes_seen": 0,
+        "market_groups_built": 0,
+        "candidate_rows": 0,
+        "qualified_rows": 0,
+        "fallback_rows": 0,
+        "prop_rows": 0,
+    }
+
+    if not isinstance(odds_games, list) or not odds_games:
+        st.session_state["last_build_debug"] = debug_counts
         return pd.DataFrame(columns=empty_cols)
+
+    debug_counts["games_loaded"] = len(odds_games)
 
     qualified_rows = []
     fallback_rows = []
 
     for game in odds_games:
+        if not isinstance(game, dict):
+            continue
+
         home_team = str(game.get("home_team", "")).strip()
         away_team = str(game.get("away_team", "")).strip()
 
@@ -2351,41 +2370,56 @@ def generate_ai_plays():
         if not game_matches_filter(home_team, away_team, slate_filters):
             continue
 
+        debug_counts["games_after_filter"] += 1
+
         game_label = f"{away_team} @ {home_team}"
         bookmakers = game.get("bookmakers", [])
 
-        if not isinstance(bookmakers, list) or not bookmakers:
-            continue
+        if not isinstance(bookmakers, list):
+            bookmakers = []
+
+        debug_counts["bookmakers_seen"] += len(bookmakers)
 
         market_price_map = {}
 
         for book in bookmakers:
+            if not isinstance(book, dict):
+                continue
+
             book_title = str(book.get("title", "")).strip()
             markets = book.get("markets", [])
 
             if not isinstance(markets, list):
-                continue
+                markets = []
+
+            debug_counts["markets_seen"] += len(markets)
 
             for market in markets:
+                if not isinstance(market, dict):
+                    continue
+
                 market_key = str(market.get("key", "")).strip().lower()
                 outcomes = market.get("outcomes", [])
 
                 if market_key not in ["h2h", "spreads", "totals"]:
                     continue
 
-                if not isinstance(outcomes, list) or not outcomes:
-                    continue
+                if not isinstance(outcomes, list):
+                    outcomes = []
+
+                debug_counts["outcomes_seen"] += len(outcomes)
 
                 normalized_market = normalize_market_name_by_sport(market_key, selected_sport)
 
                 for outcome in outcomes:
-                    name = str(outcome.get("name", "")).strip()
-                    if not name:
+                    if not isinstance(outcome, dict):
                         continue
 
+                    name = str(outcome.get("name", "")).strip()
                     raw_price = outcome.get("price", None)
-                    price = safe_float(raw_price, None)
-                    if price is None:
+
+                    odds_int = american_to_int(raw_price)
+                    if not name or odds_int is None:
                         continue
 
                     point = outcome.get("point", None)
@@ -2421,8 +2455,10 @@ def generate_ai_plays():
                             "book_names": [],
                         }
 
-                    market_price_map[key]["prices"].append(price)
+                    market_price_map[key]["prices"].append(int(odds_int))
                     market_price_map[key]["book_names"].append(book_title)
+
+        debug_counts["market_groups_built"] += len(market_price_map)
 
         game_candidates = []
 
@@ -2431,7 +2467,7 @@ def generate_ai_plays():
             book_names = data.get("book_names", [])
             books = len(prices)
 
-            if books == 0:
+            if books <= 0:
                 continue
 
             best_odds = max(prices)
@@ -2514,23 +2550,24 @@ def generate_ai_plays():
                 "context_score": 0.0,
             }
 
+            debug_counts["candidate_rows"] += 1
+
             if books >= MIN_ACTIVE_BOOKS and edge >= MIN_ACTIVE_EDGE and true_confidence >= MIN_ACTIVE_TRUE_CONF:
                 candidate["status"] = "Active"
                 candidate["log_category"] = "Top Plays"
                 candidate["units"] = calculate_units(true_confidence, "Active")
                 qualified_rows.append(candidate.copy())
+                debug_counts["qualified_rows"] += 1
 
             elif books >= MIN_WATCH_BOOKS and edge >= MIN_WATCH_EDGE and true_confidence >= MIN_WATCH_TRUE_CONF:
                 candidate["status"] = "Watchlist"
                 candidate["log_category"] = "Watchlist"
                 candidate["units"] = calculate_units(true_confidence, "Watchlist")
                 qualified_rows.append(candidate.copy())
+                debug_counts["qualified_rows"] += 1
 
             game_candidates.append(candidate.copy())
 
-        # -------------------------------------------------
-        # SOFT FALLBACK FOR GAME-LEVEL CARDS
-        # -------------------------------------------------
         if game_candidates:
             game_candidates_df = pd.DataFrame(game_candidates)
             game_candidates_df["true_confidence"] = pd.to_numeric(
@@ -2554,15 +2591,13 @@ def generate_ai_plays():
                 best_game_row["status"] = "Watchlist"
                 best_game_row["log_category"] = "Watchlist"
                 best_game_row["units"] = calculate_units(
-                    safe_float(best_game_row.get("true_confidence", 0), 0),
+                    safe_float(best_game_row.get("true_confidence", 0.0), 0.0),
                     "Watchlist",
                 )
 
             fallback_rows.append(best_game_row)
+            debug_counts["fallback_rows"] += 1
 
-        # -------------------------------------------------
-        # PROP LAYER
-        # -------------------------------------------------
         if ENABLE_PLAYER_PROPS:
             try:
                 prop_rows = generate_mock_prop_rows_for_game(
@@ -2571,7 +2606,9 @@ def generate_ai_plays():
                     home_team=home_team,
                     away_team=away_team,
                 )
+
                 if isinstance(prop_rows, list) and prop_rows:
+                    normalized_props = []
                     for prop_row in prop_rows:
                         if not isinstance(prop_row, dict):
                             continue
@@ -2595,11 +2632,142 @@ def generate_ai_plays():
                         prop_row.setdefault("ai_tags", "")
                         prop_row.setdefault("context_score", 0.0)
 
-                    qualified_rows.extend(prop_rows)
+                        if not prop_row.get("play_id"):
+                            prop_row["play_id"] = build_play_id(prop_row)
+
+                        normalized_props.append(prop_row)
+
+                    if normalized_props:
+                        qualified_rows.extend(normalized_props)
+                        debug_counts["prop_rows"] += len(normalized_props)
+                        debug_counts["qualified_rows"] += len(normalized_props)
             except Exception:
                 pass
 
     plays_df = pd.DataFrame(qualified_rows)
+
+    if plays_df.empty and fallback_rows:
+        plays_df = pd.DataFrame(fallback_rows)
+
+    st.session_state["last_build_debug"] = debug_counts
+
+    if plays_df.empty:
+        return pd.DataFrame(columns=empty_cols)
+
+    plays_df = normalize_dataframe_for_selected_sport(plays_df, selected_sport)
+    plays_df = recalculate_play_metrics(plays_df)
+
+    plays_df["status"] = plays_df.get("status", "").fillna("").astype(str).str.strip()
+    plays_df["log_category"] = plays_df.get("log_category", "").fillna("").astype(str).str.strip()
+    plays_df.loc[plays_df["status"].eq("Watch"), "status"] = "Watchlist"
+
+    status_rank_map = {"Active": 0, "Watchlist": 1}
+    plays_df["status_rank"] = plays_df["status"].map(status_rank_map).fillna(9)
+
+    plays_df = plays_df.sort_values(
+        by=["status_rank", "rank_score", "true_confidence", "edge", "books_seen"],
+        ascending=[True, False, False, False, False],
+    ).reset_index(drop=True)
+
+    plays_df = plays_df.drop(columns=["status_rank"], errors="ignore")
+
+    if "play_id" in plays_df.columns:
+        plays_df["play_id"] = plays_df["play_id"].fillna("").astype(str).str.strip()
+        plays_df = plays_df[plays_df["play_id"] != ""].copy()
+        plays_df = plays_df.drop_duplicates(subset=["play_id"], keep="first").reset_index(drop=True)
+
+    return plays_df
+
+
+plays_df = generate_ai_plays()
+selected_sport = get_selected_sport()
+
+if plays_df is None or not isinstance(plays_df, pd.DataFrame):
+    plays_df = pd.DataFrame()
+
+if plays_df.empty:
+    st.session_state["plays_df"] = pd.DataFrame()
+    st.session_state["snapshot_plays_df"] = pd.DataFrame()
+    st.session_state["snapshot_all_plays_df"] = pd.DataFrame()
+    st.session_state["snapshot_active_df"] = pd.DataFrame()
+    st.session_state["snapshot_top_plays_df"] = pd.DataFrame()
+    st.session_state["snapshot_watchlist_df"] = pd.DataFrame()
+    st.session_state["snapshot_ai_slip_df"] = pd.DataFrame()
+    st.session_state["snapshot_parlay_df"] = pd.DataFrame()
+    st.session_state["snapshot_best_row"] = {}
+else:
+    plays_df = normalize_dataframe_for_selected_sport(plays_df, selected_sport)
+    plays_df = recalculate_play_metrics(plays_df)
+
+    plays_df["status"] = plays_df.get("status", "").fillna("").astype(str).str.strip()
+    plays_df["log_category"] = plays_df.get("log_category", "").fillna("").astype(str).str.strip()
+
+    active_df = plays_df[plays_df["status"] == "Active"].copy()
+    watchlist_df = plays_df[plays_df["status"].isin(["Watchlist", "Watch"])].copy()
+
+    if active_df.empty:
+        active_df = plays_df.sort_values(
+            by=["true_confidence", "edge", "books_seen"],
+            ascending=[False, False, False],
+        ).head(TOP_PLAYS_LIMIT).copy()
+
+        if not active_df.empty:
+            active_df["status"] = "Active"
+            active_df["log_category"] = "Top Plays"
+
+    top_plays_df = active_df.sort_values(
+        by=["true_confidence", "edge", "books_seen"],
+        ascending=[False, False, False],
+    ).head(TOP_PLAYS_LIMIT).copy()
+
+    if watchlist_df.empty:
+        remaining_df = plays_df.copy()
+
+        if "play_id" in remaining_df.columns and "play_id" in top_plays_df.columns:
+            remaining_df = remaining_df[
+                ~remaining_df["play_id"].isin(top_plays_df["play_id"])
+            ].copy()
+
+        if remaining_df.empty:
+            remaining_df = plays_df.copy()
+
+        watchlist_df = remaining_df.sort_values(
+            by=["true_confidence", "edge", "books_seen"],
+            ascending=[False, False, False],
+        ).head(WATCHLIST_LIMIT).copy()
+
+        if not watchlist_df.empty:
+            watchlist_df["status"] = "Watchlist"
+            watchlist_df["log_category"] = "Watchlist"
+
+    ai_slip_df = top_plays_df.head(5).copy()
+
+    st.session_state["plays_df"] = plays_df.copy()
+    st.session_state["snapshot_plays_df"] = plays_df.copy()
+    st.session_state["snapshot_all_plays_df"] = plays_df.copy()
+    st.session_state["snapshot_active_df"] = active_df.copy()
+    st.session_state["snapshot_top_plays_df"] = top_plays_df.copy()
+    st.session_state["snapshot_watchlist_df"] = watchlist_df.copy()
+    st.session_state["snapshot_ai_slip_df"] = ai_slip_df.copy()
+    st.session_state["snapshot_parlay_df"] = pd.DataFrame()
+    st.session_state["snapshot_best_row"] = ai_slip_df.iloc[0].to_dict() if not ai_slip_df.empty else {}
+
+    timestamp_now = pd.Timestamp.now().strftime("%Y-%m-%d %I:%M:%S %p")
+    st.session_state["snapshot_generated_at"] = timestamp_now
+    st.session_state["snapshot_last_updated"] = timestamp_now
+    st.session_state["snapshot_refresh_id"] = safe_int(
+        st.session_state.get("snapshot_refresh_id", 0), 0
+    ) + 1
+
+    try:
+        persist_generated_play_snapshots(plays_df.copy())
+    except Exception:
+        pass
+
+    try:
+        save_tab_snapshots_to_disk()
+    except Exception:
+        pass
 
     # -----------------------------------------------------
     # GLOBAL FALLBACK IF STRICT QUALIFICATION RETURNS EMPTY

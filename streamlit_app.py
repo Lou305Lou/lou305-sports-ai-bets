@@ -4708,51 +4708,136 @@ def render_pick_card(row_dict):
             <div style="font-size: 1.05rem; font-weight: 700; margin-bottom: 10
 
 # =========================================================
-# TOP PLAYS (FINAL SAFE VERSION)
+# NAVIGATION BLOCK (PLAIN STREAMLIT SAFE VERSION)
+# =========================================================
+
+def _safe_nav_df(value):
+    if isinstance(value, pd.DataFrame):
+        return value.copy()
+    return pd.DataFrame()
+
+
+def _safe_text(val, fallback=""):
+    text = str(val).strip() if val is not None else ""
+    if text.lower() in ["nan", "none"]:
+        return fallback
+    return text if text else fallback
+
+
+def _safe_num(val, default=0.0, digits=2):
+    try:
+        return round(float(pd.to_numeric(val, errors="coerce")), digits)
+    except Exception:
+        return round(float(default), digits)
+
+
+def _display_pick_summary(row):
+    game = _safe_text(row.get("game", ""), "Unknown Matchup")
+    pick = _safe_text(row.get("selection", ""), "N/A")
+    market = _safe_text(row.get("market", ""), "N/A")
+    book = _safe_text(row.get("best_book", row.get("book", "")), "N/A")
+    odds = _safe_text(row.get("odds", row.get("best_price", "")), "N/A")
+    edge = _safe_num(row.get("edge", 0.0), 0.0, 2)
+    conf = _safe_num(row.get("true_confidence", 0.0), 0.0, 1)
+    units = _safe_num(row.get("units", 0.0), 0.0, 2)
+    note = _safe_text(row.get("sportsdata_note", row.get("note", "")), "No additional note available.")
+
+    st.write("**Game:**", game)
+    st.write("**Pick:**", pick)
+    st.write("**Market:**", market)
+    st.write("**Book:**", book)
+    st.write("**Odds:**", odds)
+    st.write("**Edge:**", f"{edge:.2f}%")
+    st.write("**True Confidence:**", f"{conf:.1f}%")
+    st.write("**Units:**", f"{units:.2f}")
+    st.write("**Note:**", note)
+
+
+def _prepare_nav_df(df, default_status=""):
+    df = _safe_nav_df(df)
+    if df.empty:
+        return df
+
+    defaults = {
+        "game": "",
+        "selection": "",
+        "market": "",
+        "best_book": "",
+        "book": "",
+        "odds": "",
+        "best_price": "",
+        "edge": 0.0,
+        "true_confidence": 0.0,
+        "units": 0.0,
+        "books_seen": 0.0,
+        "status": default_status,
+        "sportsdata_note": "",
+        "note": "",
+    }
+
+    for col, default_val in defaults.items():
+        if col not in df.columns:
+            df[col] = default_val
+
+    for col in ["edge", "true_confidence", "units", "books_seen"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+
+    sort_cols = [c for c in ["rank_score", "true_confidence", "edge", "books_seen"] if c in df.columns]
+    if sort_cols:
+        df = df.sort_values(by=sort_cols, ascending=[False] * len(sort_cols)).reset_index(drop=True)
+
+    return df
+
+
+# =========================================================
+# TOP PLAYS
 # =========================================================
 if nav == "Top Plays":
     st.header("🎯 Top Plays")
     st.caption("Up to 10 qualified plays only. No filler.")
 
-    snapshot_top_df = st.session_state.get("snapshot_top_plays_df", pd.DataFrame())
+    current_api_mode = st.session_state.get("api_mode", "idle")
+    snapshot_top_df = _prepare_nav_df(
+        st.session_state.get("snapshot_top_plays_df", pd.DataFrame()),
+        default_status="Active",
+    )
+    snapshot_last_updated = _safe_text(st.session_state.get("snapshot_last_updated", ""))
 
-    if snapshot_top_df.empty:
+    if len(get_effective_odds_games()) == 0 and snapshot_top_df.empty:
+        if current_api_mode == "waiting_reset":
+            reset_expected = _safe_text(st.session_state.get("odds_api_reset_expected", ""))
+            if reset_expected:
+                st.warning(f"The Odds API is waiting for reset. Expected reset around {reset_expected}.")
+            else:
+                st.warning("The Odds API is waiting for reset.")
+        else:
+            st.warning("Press 'Refresh Live Odds' in the sidebar to load live odds.")
+
+    elif snapshot_top_df.empty:
         st.info("No Top Plays currently qualified.")
+        if snapshot_last_updated:
+            st.caption(f"Last saved play snapshot: {snapshot_last_updated}")
 
     else:
-        df = snapshot_top_df.copy().reset_index(drop=True)
+        if snapshot_last_updated:
+            st.caption(f"Last saved play snapshot: {snapshot_last_updated}")
 
-        for col in ["edge", "true_confidence", "units"]:
-            if col not in df.columns:
-                df[col] = 0.0
-
-        df["edge"] = pd.to_numeric(df["edge"], errors="coerce").fillna(0)
-        df["true_confidence"] = pd.to_numeric(df["true_confidence"], errors="coerce").fillna(0)
-        df["units"] = pd.to_numeric(df["units"], errors="coerce").fillna(0)
-
-        df = df.sort_values(by=["true_confidence", "edge"], ascending=[False, False])
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.metric("Top Plays Shown", len(snapshot_top_df))
+        with c2:
+            st.metric("Avg Edge", _safe_num(snapshot_top_df["edge"].mean(), 0.0, 2))
+        with c3:
+            st.metric("Avg True Confidence", _safe_num(snapshot_top_df["true_confidence"].mean(), 0.0, 1))
 
         st.markdown("---")
 
-        for _, row in df.iterrows():
+        for idx, (_, row) in enumerate(snapshot_top_df.head(TOP_PLAYS_LIMIT).iterrows(), start=1):
+            with st.container():
+                st.subheader(f"Top Play #{idx}")
+                _display_pick_summary(row)
+                st.markdown("---")
 
-            game = str(row.get("game", "")).strip() or "Unknown Matchup"
-            pick = str(row.get("selection", "")).strip() or "N/A"
-            market = str(row.get("market", "")).strip() or "N/A"
-            book = str(row.get("best_book", "")).strip() or "N/A"
-            odds = str(row.get("odds", "N/A"))
-
-            edge = round(float(safe_float(row.get("edge", 0.0), 0.0)), 2)
-            conf = round(float(safe_float(row.get("true_confidence", 0.0), 0.0)), 1)
-            units = round(float(safe_float(row.get("units", 0.0), 0.0)), 2)
-
-            st.markdown(f"### {game}")
-            st.write(f"Pick: {pick}")
-            st.write(f"Market: {market}")
-            st.write(f"Book: {book} | Odds: {odds}")
-            st.write(f"Edge: {edge}% | True Confidence: {conf}% | Units: {units}")
-
-            st.markdown("---")
 
 # =========================================================
 # WATCHLIST
@@ -4762,14 +4847,17 @@ elif nav == "Watchlist":
     st.caption("Near-qualified plays worth monitoring.")
 
     current_api_mode = st.session_state.get("api_mode", "idle")
-    snapshot_watchlist_df = st.session_state.get("snapshot_watchlist_df", pd.DataFrame())
-    snapshot_last_updated = str(st.session_state.get("snapshot_last_updated", "")).strip()
+    snapshot_watchlist_df = _prepare_nav_df(
+        st.session_state.get("snapshot_watchlist_df", pd.DataFrame()),
+        default_status="Watchlist",
+    )
+    snapshot_last_updated = _safe_text(st.session_state.get("snapshot_last_updated", ""))
 
     if len(get_effective_odds_games()) == 0 and snapshot_watchlist_df.empty:
         if current_api_mode == "waiting_reset":
-            reset_expected = str(st.session_state.get("odds_api_reset_expected", "")).strip()
+            reset_expected = _safe_text(st.session_state.get("odds_api_reset_expected", ""))
             if reset_expected:
-                st.warning("The Odds API is waiting for reset. Expected reset around {}.".format(reset_expected))
+                st.warning(f"The Odds API is waiting for reset. Expected reset around {reset_expected}.")
             else:
                 st.warning("The Odds API is waiting for reset.")
         else:
@@ -4778,79 +4866,28 @@ elif nav == "Watchlist":
     elif snapshot_watchlist_df.empty:
         st.info("No Watchlist plays currently qualified.")
         if snapshot_last_updated:
-            st.caption("Last saved play snapshot: {}".format(snapshot_last_updated))
+            st.caption(f"Last saved play snapshot: {snapshot_last_updated}")
 
     else:
-        watch_df = snapshot_watchlist_df.copy().reset_index(drop=True)
-
-        defaults_map = {
-            "game": "",
-            "selection": "",
-            "market": "",
-            "best_book": "",
-            "odds": "",
-            "edge": 0.0,
-            "true_confidence": 0.0,
-            "units": 0.0,
-            "status": "Watchlist",
-            "books_seen": 0,
-            "log_category": "Watchlist",
-        }
-
-        for col, default_val in defaults_map.items():
-            if col not in watch_df.columns:
-                watch_df[col] = default_val
-
-        for col in ["edge", "true_confidence", "units", "books_seen"]:
-            watch_df[col] = pd.to_numeric(watch_df[col], errors="coerce").fillna(0.0)
-
-        watch_df = watch_df.sort_values(
-            by=["true_confidence", "edge", "books_seen"],
-            ascending=[False, False, False],
-        ).reset_index(drop=True)
-
         if snapshot_last_updated:
-            st.caption("Last saved play snapshot: {}".format(snapshot_last_updated))
+            st.caption(f"Last saved play snapshot: {snapshot_last_updated}")
 
         c1, c2, c3 = st.columns(3)
         with c1:
-            st.metric("Watchlist Plays", len(watch_df))
+            st.metric("Watchlist Plays", len(snapshot_watchlist_df))
         with c2:
-            st.metric("Avg Edge", round(float(watch_df["edge"].mean()), 2) if not watch_df.empty else 0.0)
+            st.metric("Avg Edge", _safe_num(snapshot_watchlist_df["edge"].mean(), 0.0, 2))
         with c3:
-            st.metric("Avg True Confidence", round(float(watch_df["true_confidence"].mean()), 1) if not watch_df.empty else 0.0)
+            st.metric("Avg True Confidence", _safe_num(snapshot_watchlist_df["true_confidence"].mean(), 0.0, 1))
 
         st.markdown("---")
 
-        for _, row in watch_df.iterrows():
-            game = str(row.get("game", "")).strip() or "Unknown Matchup"
-            pick = str(row.get("selection", "")).strip() or "N/A"
-            market = str(row.get("market", "")).strip() or "N/A"
-            book = str(row.get("best_book", "")).strip() or "N/A"
-            odds = str(row.get("odds", "N/A"))
-            edge = "{:.2f}".format(float(safe_float(row.get("edge", 0.0), 0.0)))
-            conf = "{:.1f}".format(float(safe_float(row.get("true_confidence", 0.0), 0.0)))
-            units = "{:.2f}".format(float(safe_float(row.get("units", 0.0), 0.0)))
+        for idx, (_, row) in enumerate(snapshot_watchlist_df.head(WATCHLIST_LIMIT).iterrows(), start=1):
+            with st.container():
+                st.subheader(f"Watchlist Play #{idx}")
+                _display_pick_summary(row)
+                st.markdown("---")
 
-            card_html = """
-<div style="background:#111827;border:1px solid #374151;border-radius:16px;padding:16px;margin-bottom:14px;color:#f9fafb;">
-    <div style="font-weight:700;font-size:16px;margin-bottom:8px;">{game}</div>
-    <div><b>Pick:</b> {pick}</div>
-    <div><b>Market:</b> {market}</div>
-    <div><b>Book:</b> {book} | <b>Odds:</b> {odds}</div>
-    <div style="margin-top:8px;color:#d1d5db;">Edge: {edge}% | True Conf: {conf}% | Units: {units}</div>
-</div>
-""".format(
-                game=game,
-                pick=pick,
-                market=market,
-                book=book,
-                odds=odds,
-                edge=edge,
-                conf=conf,
-                units=units,
-            )
-            st.markdown(card_html, unsafe_allow_html=True)
 
 # =========================================================
 # AI SLIP
@@ -4859,142 +4896,63 @@ elif nav == "AI Slip":
     st.header("🧠 AI Slip")
     st.caption("Best combined plays based on current slate.")
 
-    snapshot_ai_df = st.session_state.get("snapshot_ai_slip_df", pd.DataFrame())
-    snapshot_last_updated = str(st.session_state.get("snapshot_last_updated", "")).strip()
-    snapshot_parlay_df = st.session_state.get("snapshot_parlay_df", pd.DataFrame())
+    snapshot_ai_df = _prepare_nav_df(
+        st.session_state.get("snapshot_ai_slip_df", pd.DataFrame()),
+        default_status="Active",
+    )
+    snapshot_last_updated = _safe_text(st.session_state.get("snapshot_last_updated", ""))
+    snapshot_parlay_df = _safe_nav_df(st.session_state.get("snapshot_parlay_df", pd.DataFrame()))
 
-    if snapshot_ai_df is None or snapshot_ai_df.empty:
+    if snapshot_ai_df.empty:
         st.info("No AI plays available yet.")
         if snapshot_last_updated:
-            st.caption("Last saved play snapshot: {}".format(snapshot_last_updated))
+            st.caption(f"Last saved play snapshot: {snapshot_last_updated}")
     else:
-        ai_df = snapshot_ai_df.copy().reset_index(drop=True)
-
-        for col, default_val in {
-            "game": "",
-            "selection": "",
-            "market": "",
-            "best_book": "",
-            "odds": "",
-            "edge": 0.0,
-            "true_confidence": 0.0,
-            "units": 0.0,
-        }.items():
-            if col not in ai_df.columns:
-                ai_df[col] = default_val
-
-        for col in ["edge", "true_confidence", "units"]:
-            ai_df[col] = pd.to_numeric(ai_df[col], errors="coerce").fillna(0.0)
-
-        ai_df = ai_df.sort_values(
-            by=["true_confidence", "edge"],
-            ascending=[False, False],
-        ).reset_index(drop=True)
-
         if snapshot_last_updated:
-            st.caption("Last saved play snapshot: {}".format(snapshot_last_updated))
+            st.caption(f"Last saved play snapshot: {snapshot_last_updated}")
 
-        st.markdown("### Best Current AI Play")
+        best_row = snapshot_ai_df.iloc[0]
 
-        best_row = ai_df.iloc[0]
-        game = str(best_row.get("game", "")).strip() or "Unknown Matchup"
-        pick = str(best_row.get("selection", "")).strip() or "N/A"
-        market = str(best_row.get("market", "")).strip() or "N/A"
-        book = str(best_row.get("best_book", "")).strip() or "N/A"
-        odds = str(best_row.get("odds", "N/A"))
-        edge = "{:.2f}".format(float(safe_float(best_row.get("edge", 0.0), 0.0)))
-        conf = "{:.1f}".format(float(safe_float(best_row.get("true_confidence", 0.0), 0.0)))
-        units = "{:.2f}".format(float(safe_float(best_row.get("units", 0.0), 0.0)))
-
-        best_html = """
-<div style="background:#0f172a;border:1px solid #334155;border-radius:16px;padding:18px;margin-bottom:20px;color:#f9fafb;">
-    <div style="font-size:18px;font-weight:700;margin-bottom:10px;">{game}</div>
-    <div><b>Pick:</b> {pick}</div>
-    <div><b>Market:</b> {market}</div>
-    <div><b>Book:</b> {book} | <b>Odds:</b> {odds}</div>
-    <div style="margin-top:8px;">Edge: {edge}% | True Conf: {conf}% | Units: {units}</div>
-</div>
-""".format(
-            game=game,
-            pick=pick,
-            market=market,
-            book=book,
-            odds=odds,
-            edge=edge,
-            conf=conf,
-            units=units,
-        )
-        st.markdown(best_html, unsafe_allow_html=True)
+        st.subheader("Best Current AI Play")
+        _display_pick_summary(best_row)
 
         st.markdown("---")
-        st.markdown("### Top AI Options")
+        st.subheader("Top AI Options")
 
-        for _, row in ai_df.iterrows():
-            game = str(row.get("game", "")).strip() or "Unknown Matchup"
-            pick = str(row.get("selection", "")).strip() or "N/A"
-            market = str(row.get("market", "")).strip() or "N/A"
-            book = str(row.get("best_book", "")).strip() or "N/A"
-            odds = str(row.get("odds", "N/A"))
-            edge = "{:.2f}".format(float(safe_float(row.get("edge", 0.0), 0.0)))
-            conf = "{:.1f}".format(float(safe_float(row.get("true_confidence", 0.0), 0.0)))
-            units = "{:.2f}".format(float(safe_float(row.get("units", 0.0), 0.0)))
+        for idx, (_, row) in enumerate(snapshot_ai_df.head(5).iterrows(), start=1):
+            with st.container():
+                st.write(f"**AI Option #{idx}**")
+                _display_pick_summary(row)
+                st.markdown("---")
 
-            option_html = """
-<div style="background:#111827;border:1px solid #374151;border-radius:14px;padding:14px;margin-bottom:12px;color:#f9fafb;">
-    <div style="font-weight:600;margin-bottom:6px;">{game}</div>
-    <div><b>Pick:</b> {pick}</div>
-    <div><b>Market:</b> {market}</div>
-    <div><b>Book:</b> {book} | <b>Odds:</b> {odds}</div>
-    <div style="margin-top:6px;color:#d1d5db;">Edge: {edge}% | True Conf: {conf}% | Units: {units}</div>
-</div>
-""".format(
-                game=game,
-                pick=pick,
-                market=market,
-                book=book,
-                odds=odds,
-                edge=edge,
-                conf=conf,
-                units=units,
-            )
-            st.markdown(option_html, unsafe_allow_html=True)
+    st.subheader("AI Parlay")
 
-        st.markdown("---")
-        st.markdown("### AI Parlay")
+    if isinstance(snapshot_parlay_df, pd.DataFrame) and not snapshot_parlay_df.empty:
+        parlay_row = snapshot_parlay_df.iloc[0]
 
-        if isinstance(snapshot_parlay_df, pd.DataFrame) and not snapshot_parlay_df.empty:
-            parlay_row = snapshot_parlay_df.iloc[0]
+        approval_type = _safe_text(parlay_row.get("approval_type", ""), "Primary")
+        leg_count = _safe_text(parlay_row.get("leg_count", ""), "N/A")
+        combined_odds = _safe_text(parlay_row.get("combined_odds", parlay_row.get("combined_odds_int", "")), "N/A")
+        avg_true_conf = _safe_text(parlay_row.get("avg_true_conf", ""), "N/A")
+        avg_edge = _safe_text(parlay_row.get("avg_edge", ""), "N/A")
+        risk_label = _safe_text(parlay_row.get("risk_label", ""), "N/A")
+        legs_text = _safe_text(parlay_row.get("legs_text", ""), "N/A")
+        games_text = _safe_text(parlay_row.get("games_text", ""), "N/A")
+        reasons = _safe_text(parlay_row.get("reasons", ""), "")
 
-            approval_type = str(parlay_row.get("approval_type", "")).strip() or "Primary"
-            leg_count = str(parlay_row.get("leg_count", "")).strip() or "N/A"
-            combined_odds = str(parlay_row.get("combined_odds", "")).strip() or "N/A"
-            avg_true_conf = str(parlay_row.get("avg_true_conf", "")).strip() or "N/A"
-            avg_edge = str(parlay_row.get("avg_edge", "")).strip() or "N/A"
-            risk_label = str(parlay_row.get("risk_label", "")).strip() or "N/A"
-            legs_text = str(parlay_row.get("legs_text", "")).strip() or "N/A"
+        st.write("**Approval Type:**", approval_type)
+        st.write("**Leg Count:**", leg_count)
+        st.write("**Odds:**", combined_odds)
+        st.write("**Avg True Confidence:**", avg_true_conf)
+        st.write("**Avg Edge:**", avg_edge)
+        st.write("**Risk Label:**", risk_label)
+        st.write("**Games:**", games_text)
+        st.write("**Selections:**", legs_text)
+        if reasons:
+            st.write("**Reasons:**", reasons)
+    else:
+        st.info("No parlay available.")
 
-            parlay_html = """
-<div style="background:#111827;border:1px solid #374151;border-radius:14px;padding:14px;margin-bottom:12px;color:#f9fafb;">
-    <div style="font-weight:700;font-size:16px;margin-bottom:8px;">{approval_type}</div>
-    <div><b>Legs:</b> {leg_count}</div>
-    <div><b>Odds:</b> {combined_odds}</div>
-    <div><b>Avg True Conf:</b> {avg_true_conf}</div>
-    <div><b>Avg Edge:</b> {avg_edge}</div>
-    <div><b>Risk:</b> {risk_label}</div>
-    <div style="margin-top:8px;color:#d1d5db;"><b>Selections:</b> {legs_text}</div>
-</div>
-""".format(
-                approval_type=approval_type,
-                leg_count=leg_count,
-                combined_odds=combined_odds,
-                avg_true_conf=avg_true_conf,
-                avg_edge=avg_edge,
-                risk_label=risk_label,
-                legs_text=legs_text,
-            )
-            st.markdown(parlay_html, unsafe_allow_html=True)
-        else:
-            st.info("No parlay available.")
 
 # =========================================================
 # BET LOG
@@ -5002,7 +4960,10 @@ elif nav == "AI Slip":
 elif nav == "Bet Log":
     st.header("🧾 Bet Log")
 
-    sync_manual_results_into_bet_log()
+    try:
+        sync_manual_results_into_bet_log()
+    except Exception:
+        pass
 
     selected_sport = get_selected_sport()
     latest_bet_log = st.session_state.get("bet_log", [])
@@ -5028,31 +4989,336 @@ elif nav == "Bet Log":
         log_df = log_df[log_df["sport"] == selected_sport].copy()
 
         if log_df.empty:
-            st.info("No bets logged yet for {}.".format(selected_sport))
+            st.info(f"No bets logged yet for {selected_sport}.")
         else:
-            for col in ["units", "profit", "stake", "implied_prob", "true_prob", "true_confidence", "edge", "clv_diff"]:
+            numeric_cols = [
+                "units",
+                "profit",
+                "implied_prob",
+                "true_prob",
+                "implied_probability",
+                "true_probability",
+                "true_confidence",
+                "edge",
+                "clv_diff",
+                "stake",
+            ]
+            for col in numeric_cols:
                 if col in log_df.columns:
                     log_df[col] = pd.to_numeric(log_df[col], errors="coerce").fillna(0.0)
 
-            st.subheader("📊 ROI Dashboard ({})".format(selected_sport))
-            roi_df = build_roi_dashboard(log_df)
+            text_cols = [
+                "market",
+                "log_category",
+                "timestamp",
+                "result",
+                "odds",
+                "selection",
+                "game",
+                "play_id",
+                "consensus",
+                "clv_result",
+            ]
+            for col in text_cols:
+                if col in log_df.columns:
+                    log_df[col] = log_df[col].fillna("").astype(str).str.strip()
 
-            if roi_df.empty:
+            st.subheader(f"📊 ROI Dashboard ({selected_sport})")
+            try:
+                roi_df = build_roi_dashboard(log_df)
+                if roi_df is not None and not roi_df.empty:
+                    st.dataframe(roi_df, use_container_width=True, hide_index=True)
+                else:
+                    st.info("No settled bets yet.")
+            except Exception:
                 st.info("No settled bets yet.")
-            else:
-                st.dataframe(roi_df, use_container_width=True, hide_index=True)
 
-            st.subheader("📋 Full Bet Log ({})".format(selected_sport))
-
+            st.subheader(f"📋 Full Bet Log ({selected_sport})")
             display_cols = [
                 c for c in [
-                    "sport","timestamp","game","market","selection","odds","units","stake",
-                    "profit","implied_prob","true_prob","true_confidence","edge",
-                    "books_seen","consensus","result","log_category","clv_diff","clv_result","play_id"
+                    "sport",
+                    "timestamp",
+                    "game",
+                    "market",
+                    "selection",
+                    "odds",
+                    "units",
+                    "stake",
+                    "profit",
+                    "implied_prob",
+                    "true_prob",
+                    "true_confidence",
+                    "edge",
+                    "books_seen",
+                    "consensus",
+                    "result",
+                    "log_category",
+                    "clv_diff",
+                    "clv_result",
+                    "play_id",
                 ] if c in log_df.columns
             ]
-            display_df = log_df[display_cols].copy()
-            st.dataframe(display_df, use_container_width=True, hide_index=True)
+            st.dataframe(log_df[display_cols].copy(), use_container_width=True, hide_index=True)
+
+            st.subheader("✍️ Update Results")
+
+            selectable_labels = []
+            selectable_map = {}
+
+            for _, r in log_df.iterrows():
+                pid = str(r.get("play_id", "")).strip()
+                selection = str(r.get("selection", "")).strip()
+                game = str(r.get("game", "")).strip()
+                market = str(r.get("market", "")).strip().lower()
+
+                if not pid:
+                    continue
+
+                short_pid = pid[:8]
+                market_label = f" [{market}]" if market else ""
+                label = f"{selection}{market_label} • {game} • ID {short_pid}"
+
+                suffix = 2
+                base_label = label
+                while label in selectable_map:
+                    label = f"{base_label} ({suffix})"
+                    suffix += 1
+
+                selectable_labels.append(label)
+                selectable_map[label] = pid
+
+            if selectable_labels:
+                selected_label = st.selectbox(
+                    "Select Bet",
+                    selectable_labels,
+                    key=f"update_result_select_{selected_sport}",
+                )
+                selected_id = selectable_map[selected_label]
+                selected_base_id = get_base_play_id(selected_id)
+
+                existing_result = "Pending"
+
+                for bet in latest_bet_log:
+                    pid = str(bet.get("play_id", "")).strip()
+                    if not pid:
+                        continue
+
+                        bet_sport = str(bet.get("sport", "")).strip().upper()
+                    if bet_sport and bet_sport != selected_sport:
+                        continue
+
+                    if pid == selected_id or get_base_play_id(pid) == selected_base_id:
+                        existing_result = normalize_result_value(bet.get("result", "Pending"))
+                        break
+
+                result_options = ["Pending", "Win", "Loss", "Push"]
+                if existing_result not in result_options:
+                    existing_result = "Pending"
+
+                result_choice = st.selectbox(
+                    "Result",
+                    result_options,
+                    index=result_options.index(existing_result),
+                    key=f"bet_result_choice_{selected_sport}",
+                )
+
+                if st.button("Save Result", key=f"save_result_button_{selected_sport}"):
+                    normalized_choice = normalize_result_value(result_choice)
+                    updated_any = False
+
+                    refreshed_bet_log = st.session_state.get("bet_log", [])
+                    if not isinstance(refreshed_bet_log, list):
+                        refreshed_bet_log = []
+
+                    for idx, bet in enumerate(refreshed_bet_log):
+                        pid = str(bet.get("play_id", "")).strip()
+                        if not pid:
+                            continue
+
+                        bet_sport = str(bet.get("sport", "")).strip().upper()
+                        if bet_sport and bet_sport != selected_sport:
+                            continue
+
+                        if pid == selected_id or get_base_play_id(pid) == selected_base_id:
+                            refreshed_bet_log[idx]["result"] = normalized_choice
+                            updated_any = True
+
+                            if normalized_choice == "Pending":
+                                refreshed_bet_log[idx]["profit"] = 0.0
+                            else:
+                                try:
+                                    odds_val = american_to_int(str(refreshed_bet_log[idx].get("odds", "")).strip())
+                                except Exception:
+                                    odds_val = None
+
+                                try:
+                                    stake_units = float(refreshed_bet_log[idx].get("stake", refreshed_bet_log[idx].get("units", 1.0)))
+                                except Exception:
+                                    stake_units = 1.0
+
+                                if stake_units <= 0:
+                                    stake_units = 1.0
+
+                                profit_val = 0.0
+                                if normalized_choice == "Win":
+                                    if odds_val is not None:
+                                        if odds_val > 0:
+                                            profit_val = round(stake_units * (odds_val / 100.0), 4)
+                                        elif odds_val < 0:
+                                            profit_val = round(stake_units * (100.0 / abs(odds_val)), 4)
+                                        else:
+                                            profit_val = round(stake_units, 4)
+                                    else:
+                                        profit_val = round(stake_units, 4)
+                                elif normalized_choice == "Loss":
+                                    profit_val = round(-stake_units, 4)
+                                elif normalized_choice == "Push":
+                                    profit_val = 0.0
+
+                                refreshed_bet_log[idx]["profit"] = profit_val
+
+                    st.session_state["bet_log"] = refreshed_bet_log
+                    st.session_state.setdefault("manual_results", {})
+                    st.session_state["manual_results"][selected_id] = normalized_choice
+
+                    save_bet_log()
+
+                    try:
+                        reloaded = load_bet_log()
+                        if isinstance(reloaded, list):
+                            st.session_state["bet_log"] = reloaded
+                    except Exception:
+                        pass
+
+                    if updated_any:
+                        st.success("Bet result saved successfully.")
+                        st.rerun()
+                    else:
+                        st.warning("Could not find that bet to update.")
+            else:
+                st.info("No selectable bets found.")
+
+    st.subheader("➕ Add Manual Bet")
+
+    with st.expander("Add Manual Bet Entry", expanded=False):
+        col1, col2 = st.columns(2)
+
+        with col1:
+            game_input = st.text_input("Game (e.g. LAL @ BOS)", key="manual_game_input")
+            market_input = st.selectbox(
+                "Market",
+                ["moneyline", "spread", "total", "prop"],
+                index=0,
+                key="manual_market_input",
+            )
+            selection_input = st.text_input(
+                "Selection (e.g. Lakers -3.5 or Over 221.5)",
+                key="manual_selection_input",
+            )
+
+        with col2:
+            odds_input = st.text_input(
+                "Odds (American, e.g. -110 or +150)",
+                key="manual_odds_input",
+            )
+            units_input = st.number_input(
+                "Units",
+                min_value=0.1,
+                max_value=10.0,
+                value=1.0,
+                step=0.1,
+                key="manual_units_input",
+            )
+            confidence_input = st.selectbox(
+                "Confidence",
+                ["Low", "Medium", "High"],
+                index=1,
+                key="manual_confidence_input",
+            )
+
+        if st.button("Add Bet", key="manual_add_bet_button"):
+            game_clean = str(game_input).strip()
+            market_clean = str(market_input).strip().lower()
+            selection_clean = str(selection_input).strip()
+            odds_clean = str(odds_input).strip()
+            units = float(units_input)
+            confidence = str(confidence_input).strip()
+
+            odds_int = american_to_int(odds_clean)
+
+            if not game_clean or not selection_clean or not odds_clean:
+                st.warning("Please fill in Game, Selection, and Odds.")
+            elif odds_int is None:
+                st.warning("Odds must be valid American odds like -110 or +150.")
+            else:
+                new_play_id = hashlib.md5(
+                    f"{selected_sport}|{game_clean}|{market_clean}|{selection_clean}|{odds_clean}|{time.time()}".encode()
+                ).hexdigest()
+
+                open_line_val = extract_line_from_selection(selection_clean)
+
+                implied_prob_val = None
+                try:
+                    if odds_int > 0:
+                        implied_prob_val = round(100.0 / (odds_int + 100.0) * 100.0, 2)
+                    elif odds_int < 0:
+                        implied_prob_val = round(abs(odds_int) / (abs(odds_int) + 100.0) * 100.0, 2)
+                except Exception:
+                    implied_prob_val = None
+
+                new = {
+                    "play_id": new_play_id,
+                    "sport": selected_sport,
+                    "game": game_clean,
+                    "market": market_clean,
+                    "selection": selection_clean,
+                    "odds": odds_int,
+                    "implied_prob": implied_prob_val,
+                    "true_prob": None,
+                    "implied_probability": implied_prob_val,
+                    "true_probability": None,
+                    "edge": None,
+                    "play_type": classify_play_type(
+                        {
+                            "market": market_clean,
+                            "selection": selection_clean,
+                            "category": "Manual",
+                        }
+                    ) if "classify_play_type" in globals() else market_clean,
+                    "primary_category": "Manual",
+                    "category": "Manual",
+                    "units": round(float(units), 2),
+                    "stake": round(float(units), 2),
+                    "confidence": confidence,
+                    "true_confidence": None,
+                    "books_seen": None,
+                    "consensus": None,
+                    "result": "Pending",
+                    "profit": 0.0,
+                    "mode": TEST_MODE,
+                    "log_category": "Manual",
+                    "timestamp": datetime.now().isoformat(),
+                    "open_odds": odds_int,
+                    "open_line": open_line_val,
+                    "closing_odds": None,
+                    "closing_line": None,
+                    "clv_diff": None,
+                    "clv_result": None,
+                }
+
+                st.session_state.setdefault("bet_log", [])
+                st.session_state["bet_log"].append(new)
+                save_bet_log()
+
+                try:
+                    reloaded = load_bet_log()
+                    if isinstance(reloaded, list):
+                        st.session_state["bet_log"] = reloaded
+                except Exception:
+                    pass
+
+                st.success(f"Manual {selected_sport} bet added successfully.")
+                st.rerun()
 
     # =========================================================
     # DEFAULT LEARNING STATE

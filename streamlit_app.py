@@ -6261,7 +6261,7 @@ if learning_enabled:
                 0.075,
             )
 
-    if total_settled_bets >= int(min_sample_size):
+    if total_settled_bets >= int(min_samples):
         if overall_win_rate >= 55.0 and total_profit > 0:
             learning_notes.append(
                 "Recent settled performance is positive. Slightly loosening qualified category thresholds."
@@ -6287,222 +6287,222 @@ learning_state["accelerated_learning_mode"] = min_samples <= 3
 
 save_learning_state_for_sport(learning_state, selected_sport)
 
-    # =========================================================
-    # TRUE PROBABILITY EMPHASIS
-    # =========================================================
-    st.markdown("#### 🎯 True Probability Emphasis")
-    st.caption(
-        "True probability remains the largest learning weight so the engine does not overreact "
-        "to short-term variance from weaker play types or categories."
+# =========================================================
+# TRUE PROBABILITY EMPHASIS
+# =========================================================
+st.markdown("#### 🎯 True Probability Emphasis")
+st.caption(
+    "True probability remains the largest learning weight so the engine does not overreact "
+    "to short-term variance from weaker play types or categories."
+)
+
+weight_df = pd.DataFrame(
+    [
+        {"Factor": "True Probability", "Weight": float(learning_state["weights"].get("true_probability", 0.30))},
+        {"Factor": "Price Edge", "Weight": float(learning_state["weights"].get("price_edge", 0.25))},
+        {"Factor": "Market Signal", "Weight": float(learning_state["weights"].get("market_signal", 0.15))},
+        {"Factor": "Matchup Quality", "Weight": float(learning_state["weights"].get("matchup_quality", 0.15))},
+        {"Factor": "Historical Performance", "Weight": float(learning_state["weights"].get("historical_performance", 0.15))},
+    ]
+)
+
+st.dataframe(weight_df, use_container_width=True, hide_index=True)
+
+# =========================================================
+# CATEGORY THRESHOLDS TABLE
+# =========================================================
+st.markdown("#### 📊 Adaptive Category Thresholds")
+
+threshold_rows = []
+for category_name in ["Top Plays", "AI Picks", "AI Parlays", "Watchlist"]:
+    threshold_rows.append(
+        {
+            "Category": category_name,
+            "Threshold": round(float(adjusted_category_thresholds.get(category_name, 0.03)), 4),
+            "Status": _status_from_threshold(
+                adjusted_category_thresholds.get(category_name, 0.03),
+                base_thresholds.get(category_name, 0.03),
+            ),
+        }
     )
 
-    weight_df = pd.DataFrame(
+threshold_df = pd.DataFrame(threshold_rows)
+st.dataframe(threshold_df, use_container_width=True, hide_index=True)
+
+# =========================================================
+# PLAY TYPE PERFORMANCE TABLE
+# =========================================================
+st.markdown("#### 🧠 Play Type Performance")
+
+if play_type_stats:
+    play_type_stats_df = pd.DataFrame(
         [
-            {"Factor": "True Probability", "Weight": float(learning_state["weights"].get("true_probability", 0.30))},
-            {"Factor": "Price Edge", "Weight": float(learning_state["weights"].get("price_edge", 0.25))},
-            {"Factor": "Market Signal", "Weight": float(learning_state["weights"].get("market_signal", 0.15))},
-            {"Factor": "Matchup Quality", "Weight": float(learning_state["weights"].get("matchup_quality", 0.15))},
-            {"Factor": "Historical Performance", "Weight": float(learning_state["weights"].get("historical_performance", 0.15))},
+            {
+                "Play Type": play_type_name,
+                "Bets": stats["sample_size"],
+                "Wins": stats["wins"],
+                "Losses": stats["losses"],
+                "Pushes": stats.get("pushes", 0),
+                "Win Rate %": stats["win_rate"],
+                "Profit": stats["profit"],
+                "ROI/Bet": stats["roi_per_bet"],
+                "Avg True Conf": stats["avg_true_conf"],
+                "Avg Edge": stats["avg_edge"],
+                "Filtered": "Yes" if learning_state.get("bad_play_type_flags", {}).get(play_type_name, {}).get("is_filtered", False) else "No",
+            }
+            for play_type_name, stats in play_type_stats.items()
         ]
-    )
+    ).sort_values(by=["Profit", "Win Rate %"], ascending=[False, False])
 
-    st.dataframe(weight_df, use_container_width=True, hide_index=True)
+    st.dataframe(play_type_stats_df, use_container_width=True, hide_index=True)
+else:
+    st.info("No settled play-type data yet for this sport.")
 
-    # =========================================================
-    # CATEGORY THRESHOLDS TABLE
-    # =========================================================
-    st.markdown("#### 📊 Adaptive Category Thresholds")
+# =========================================================
+# CATEGORY PERFORMANCE TABLE
+# =========================================================
+st.markdown("#### 📚 Category Performance")
 
-    threshold_rows = []
-    for category_name in ["Top Plays", "AI Picks", "AI Parlays", "Watchlist"]:
-        threshold_rows.append(
+if category_stats:
+    category_stats_df = pd.DataFrame(
+        [
             {
                 "Category": category_name,
-                "Threshold": round(float(adjusted_category_thresholds.get(category_name, 0.03)), 4),
-                "Status": _status_from_threshold(
-                    adjusted_category_thresholds.get(category_name, 0.03),
-                    base_thresholds.get(category_name, 0.03),
-                ),
+                "Bets": stats["sample_size"],
+                "Wins": stats["wins"],
+                "Losses": stats["losses"],
+                "Pushes": stats.get("pushes", 0),
+                "Win Rate %": stats["win_rate"],
+                "Profit": stats["profit"],
+                "ROI/Bet": stats["roi_per_bet"],
+                "Avg True Conf": stats["avg_true_conf"],
+                "Avg Edge": stats["avg_edge"],
+                "Stage": stats["stage"],
             }
-        )
+            for category_name, stats in category_stats.items()
+        ]
+    ).sort_values(by=["Profit", "Win Rate %"], ascending=[False, False])
 
-    threshold_df = pd.DataFrame(threshold_rows)
-    st.dataframe(threshold_df, use_container_width=True, hide_index=True)
+    st.dataframe(category_stats_df, use_container_width=True, hide_index=True)
+else:
+    st.info("No settled category data yet for this sport.")
 
-    # =========================================================
-    # PLAY TYPE PERFORMANCE TABLE
-    # =========================================================
-    st.markdown("#### 🧠 Play Type Performance")
+# =========================================================
+# LEARNING NOTES
+# =========================================================
+st.markdown("#### 📝 Learning Notes")
 
-    if play_type_stats:
-        play_type_stats_df = pd.DataFrame(
-            [
-                {
-                    "Play Type": play_type_name,
-                    "Bets": stats["sample_size"],
-                    "Wins": stats["wins"],
-                    "Losses": stats["losses"],
-                    "Pushes": stats.get("pushes", 0),
-                    "Win Rate %": stats["win_rate"],
-                    "Profit": stats["profit"],
-                    "ROI/Bet": stats["roi_per_bet"],
-                    "Avg True Conf": stats["avg_true_conf"],
-                    "Avg Edge": stats["avg_edge"],
-                    "Filtered": "Yes" if learning_state.get("bad_play_type_flags", {}).get(play_type_name, {}).get("is_filtered", False) else "No",
-                }
-                for play_type_name, stats in play_type_stats.items()
-            ]
-        ).sort_values(by=["Profit", "Win Rate %"], ascending=[False, False])
+if learning_state.get("learning_notes"):
+    for note in learning_state["learning_notes"]:
+        st.caption(f"• {note}")
+else:
+    st.caption("• Learning engine is active, but more settled samples are needed before stronger adjustments are made.")
 
-        st.dataframe(play_type_stats_df, use_container_width=True, hide_index=True)
-    else:
-        st.info("No settled play-type data yet for this sport.")
+st.caption(
+    f"Last learning refresh: {learning_state.get('last_learning_refresh', 'Not available')}"
+)
 
-    # =========================================================
-    # CATEGORY PERFORMANCE TABLE
-    # =========================================================
-    st.markdown("#### 📚 Category Performance")
+# =========================================================
+# LEARNING WEIGHTS DISPLAY
+# =========================================================
+st.markdown("### Learning Weights")
 
-    if category_stats:
-        category_stats_df = pd.DataFrame(
-            [
-                {
-                    "Category": category_name,
-                    "Bets": stats["sample_size"],
-                    "Wins": stats["wins"],
-                    "Losses": stats["losses"],
-                    "Pushes": stats.get("pushes", 0),
-                    "Win Rate %": stats["win_rate"],
-                    "Profit": stats["profit"],
-                    "ROI/Bet": stats["roi_per_bet"],
-                    "Avg True Conf": stats["avg_true_conf"],
-                    "Avg Edge": stats["avg_edge"],
-                    "Stage": stats["stage"],
-                }
-                for category_name, stats in category_stats.items()
-            ]
-        ).sort_values(by=["Profit", "Win Rate %"], ascending=[False, False])
+weights = learning_state.get("weights", {})
 
-        st.dataframe(category_stats_df, use_container_width=True, hide_index=True)
-    else:
-        st.info("No settled category data yet for this sport.")
+c1, c2 = st.columns(2)
+with c1:
+    st.metric("True Prob", f"{weights.get('true_probability', 0) * 100:.1f}%")
+    st.metric("Price Edge", f"{weights.get('price_edge', 0) * 100:.1f}%")
+    st.metric("Market Signal", f"{weights.get('market_signal', 0) * 100:.1f}%")
+with c2:
+    st.metric("Matchup Quality", f"{weights.get('matchup_quality', 0) * 100:.1f}%")
+    st.metric("History", f"{weights.get('historical_performance', 0) * 100:.1f}%")
+    st.metric("Min Samples", str(min_samples))
 
-    # =========================================================
-    # LEARNING NOTES
-    # =========================================================
-    st.markdown("#### 📝 Learning Notes")
+last_update = learning_state.get("last_update")
+st.caption(f"Last learning update: {last_update if last_update else 'None'}")
+st.caption(f"Learning scope: {selected_sport}")
 
-    if learning_state.get("learning_notes"):
-        for note in learning_state["learning_notes"]:
-            st.caption(f"• {note}")
-    else:
-        st.caption("• Learning engine is active, but more settled samples are needed before stronger adjustments are made.")
+# =========================================================
+# PLAY TYPE PERFORMANCE / AUTO-FILTER STATUS
+# =========================================================
+st.markdown("### Play Type Performance / Auto-Filter Status")
 
-    st.caption(
-        f"Last learning refresh: {learning_state.get('last_learning_refresh', 'Not available')}"
+if play_type_stats:
+    pt_rows = []
+    for play_type_name, stats in play_type_stats.items():
+        flag_info = learning_state.get("bad_play_type_flags", {}).get(play_type_name, {})
+        pt_rows.append({
+            "Play Type": play_type_name if play_type_name else "Unknown",
+            "Stage": stats.get("stage", "Collecting"),
+            "Bets": stats.get("sample_size", 0),
+            "Wins": stats.get("wins", 0),
+            "Losses": stats.get("losses", 0),
+            "Pushes": stats.get("pushes", 0),
+            "Profit": stats.get("profit", 0.0),
+            "Win Rate %": stats.get("win_rate", 0.0),
+            "Avg True Conf": stats.get("avg_true_conf", 0.0),
+            "Avg Edge %": stats.get("avg_edge", 0.0),
+            "Filtered": "Yes" if flag_info.get("is_filtered", False) else "No",
+            "Reason": flag_info.get("reason", "")
+        })
+
+    pt_df = pd.DataFrame(pt_rows).sort_values(
+        by=["Filtered", "Profit", "Win Rate %"],
+        ascending=[False, False, False]
     )
+    st.dataframe(pt_df, use_container_width=True, hide_index=True)
+else:
+    st.info(f"No graded {selected_sport} bet history yet. The self-learning engine will activate after enough settled bets.")
 
-    # =========================================================
-    # LEARNING WEIGHTS DISPLAY
-    # =========================================================
-    st.markdown("### Learning Weights")
+# =========================================================
+# CATEGORY PERFORMANCE SNAPSHOT
+# =========================================================
+st.markdown("### Category Performance Snapshot")
 
-    weights = learning_state.get("weights", {})
+if category_stats:
+    cat_rows = []
+    for category_name, stats in category_stats.items():
+        cat_rows.append({
+            "Category": category_name if category_name else "Unknown",
+            "Stage": stats.get("stage", "Collecting"),
+            "Bets": stats.get("sample_size", 0),
+            "Wins": stats.get("wins", 0),
+            "Losses": stats.get("losses", 0),
+            "Pushes": stats.get("pushes", 0),
+            "Profit": stats.get("profit", 0.0),
+            "Win Rate %": stats.get("win_rate", 0.0),
+            "Avg True Conf": stats.get("avg_true_conf", 0.0),
+            "Avg Edge %": stats.get("avg_edge", 0.0),
+        })
 
-    c1, c2 = st.columns(2)
-    with c1:
-        st.metric("True Prob", f"{weights.get('true_probability', 0) * 100:.1f}%")
-        st.metric("Price Edge", f"{weights.get('price_edge', 0) * 100:.1f}%")
-        st.metric("Market Signal", f"{weights.get('market_signal', 0) * 100:.1f}%")
-    with c2:
-        st.metric("Matchup Quality", f"{weights.get('matchup_quality', 0) * 100:.1f}%")
-        st.metric("History", f"{weights.get('historical_performance', 0) * 100:.1f}%")
-        st.metric("Min Samples", str(min_samples))
-
-    last_update = learning_state.get("last_update")
-    st.caption(f"Last learning update: {last_update if last_update else 'None'}")
-    st.caption(f"Learning scope: {selected_sport}")
-
-    # =========================================================
-    # PLAY TYPE PERFORMANCE / AUTO-FILTER STATUS
-    # =========================================================
-    st.markdown("### Play Type Performance / Auto-Filter Status")
-
-    if play_type_stats:
-        pt_rows = []
-        for play_type_name, stats in play_type_stats.items():
-            flag_info = learning_state.get("bad_play_type_flags", {}).get(play_type_name, {})
-            pt_rows.append({
-                "Play Type": play_type_name if play_type_name else "Unknown",
-                "Stage": stats.get("stage", "Collecting"),
-                "Bets": stats.get("sample_size", 0),
-                "Wins": stats.get("wins", 0),
-                "Losses": stats.get("losses", 0),
-                "Pushes": stats.get("pushes", 0),
-                "Profit": stats.get("profit", 0.0),
-                "Win Rate %": stats.get("win_rate", 0.0),
-                "Avg True Conf": stats.get("avg_true_conf", 0.0),
-                "Avg Edge %": stats.get("avg_edge", 0.0),
-                "Filtered": "Yes" if flag_info.get("is_filtered", False) else "No",
-                "Reason": flag_info.get("reason", "")
-            })
-
-        pt_df = pd.DataFrame(pt_rows).sort_values(
-            by=["Filtered", "Profit", "Win Rate %"],
-            ascending=[False, False, False]
-        )
-        st.dataframe(pt_df, use_container_width=True, hide_index=True)
-    else:
-        st.info(f"No graded {selected_sport} bet history yet. The self-learning engine will activate after enough settled bets.")
-
-    # =========================================================
-    # CATEGORY PERFORMANCE SNAPSHOT
-    # =========================================================
-    st.markdown("### Category Performance Snapshot")
-
-    if category_stats:
-        cat_rows = []
-        for category_name, stats in category_stats.items():
-            cat_rows.append({
-                "Category": category_name if category_name else "Unknown",
-                "Stage": stats.get("stage", "Collecting"),
-                "Bets": stats.get("sample_size", 0),
-                "Wins": stats.get("wins", 0),
-                "Losses": stats.get("losses", 0),
-                "Pushes": stats.get("pushes", 0),
-                "Profit": stats.get("profit", 0.0),
-                "Win Rate %": stats.get("win_rate", 0.0),
-                "Avg True Conf": stats.get("avg_true_conf", 0.0),
-                "Avg Edge %": stats.get("avg_edge", 0.0),
-            })
-
-        cat_df = pd.DataFrame(cat_rows).sort_values(
-            by=["Profit", "Win Rate %"],
-            ascending=[False, False]
-        )
-        st.dataframe(cat_df, use_container_width=True, hide_index=True)
-    else:
-        st.info(f"No settled {selected_sport} category data yet.")
-
-    # =========================================================
-    # CLV LEARNING NOTES
-    # =========================================================
-    st.markdown("### CLV Learning Notes")
-    st.caption(
-        f"Accelerated Learning Mode for {selected_sport} starts with probation-stage learning after 3 settled bets, "
-        "becomes active around 5, and trusted around 8. Early adjustments stay small to reduce overreaction."
+    cat_df = pd.DataFrame(cat_rows).sort_values(
+        by=["Profit", "Win Rate %"],
+        ascending=[False, False]
     )
+    st.dataframe(cat_df, use_container_width=True, hide_index=True)
+else:
+    st.info(f"No settled {selected_sport} category data yet.")
 
-    # =========================================================
-    # ENGINE READINESS
-    # =========================================================
-    st.markdown("### Engine Readiness")
+# =========================================================
+# CLV LEARNING NOTES
+# =========================================================
+st.markdown("### CLV Learning Notes")
+st.caption(
+    f"Accelerated Learning Mode for {selected_sport} starts with probation-stage learning after 3 settled bets, "
+    "becomes active around 5, and trusted around 8. Early adjustments stay small to reduce overreaction."
+)
 
-    if len(settled_df) < min_samples:
-        st.warning(f"{selected_sport} learning engine is collecting data (need {min_samples}+ settled bets).")
-    elif len(settled_df) < 5:
-        st.info(f"{selected_sport} Accelerated Learning Mode is in probation stage.")
-    elif len(settled_df) < 8:
-        st.info(f"{selected_sport} Accelerated Learning Mode is active.")
-    else:
-        st.success(f"{selected_sport} Accelerated Learning Mode is fully active.")
+# =========================================================
+# ENGINE READINESS
+# =========================================================
+st.markdown("### Engine Readiness")
+
+if len(settled_df) < min_samples:
+    st.warning(f"{selected_sport} learning engine is collecting data (need {min_samples}+ settled bets).")
+elif len(settled_df) < 5:
+    st.info(f"{selected_sport} Accelerated Learning Mode is in probation stage.")
+elif len(settled_df) < 8:
+    st.info(f"{selected_sport} Accelerated Learning Mode is active.")
+else:
+    st.success(f"{selected_sport} Accelerated Learning Mode is fully active.")

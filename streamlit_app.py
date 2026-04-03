@@ -1065,6 +1065,7 @@ st.sidebar.markdown("### 📡 SportsDataIO Controls")
 st.session_state["sportsdata_enabled"] = st.sidebar.toggle(
     "Enable SportsDataIO Context",
     value=st.session_state.get("sportsdata_enabled", True),
+    key="sportsdata_enabled_toggle",
 )
 
 st.sidebar.caption(f"Current SportData mode: {get_current_sportsdata_slug().upper()}")
@@ -1072,6 +1073,7 @@ st.sidebar.caption(f"Current SportData mode: {get_current_sportsdata_slug().uppe
 sportsdata_game_date = st.sidebar.text_input(
     "SportsData Game Date (YYYY-MM-DD)",
     value=today_str(),
+    key="sportsdata_game_date_input",
 )
 
 if SPORTSDATA_API_KEY:
@@ -1079,10 +1081,9 @@ if SPORTSDATA_API_KEY:
 else:
     st.sidebar.warning("Missing SportsDataIO API key in Streamlit secrets")
 
-if st.sidebar.button("🔄 Refresh Live Odds", use_container_width=True):
+refresh_button_key = f"refresh_live_odds_btn_{get_selected_sport()}"
+if st.sidebar.button("🔄 Refresh Live Odds", use_container_width=True, key=refresh_button_key):
     st.session_state["manual_refresh_triggered"] = True
-else:
-    st.session_state["manual_refresh_triggered"] = False
 
 # =========================================================
 # ODDS CACHE HELPERS

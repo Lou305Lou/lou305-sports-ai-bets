@@ -5805,22 +5805,55 @@ if nav == "Bet Log":
         "It does not auto-increase bet sizing."
     )
 
-    # =========================================================
-    # SETTLED PERFORMANCE SUMMARY
-    # =========================================================
-    total_settled_bets = int(len(settled_df))
-    total_wins = int((settled_df["result_clean"] == "win").sum()) if not settled_df.empty else 0
-    total_losses = int((settled_df["result_clean"] == "loss").sum()) if not settled_df.empty else 0
-    total_pushes = int((settled_df["result_clean"] == "push").sum()) if not settled_df.empty else 0
-    total_profit = float(settled_df["profit_num"].sum()) if not settled_df.empty else 0.0
-    decision_bets = total_wins + total_losses
-    overall_win_rate = (total_wins / decision_bets * 100.0) if decision_bets > 0 else 0.0
+   # =========================================================
+# SETTLED PERFORMANCE SUMMARY (SAFE FIX)
+# =========================================================
 
-    summary_col1, summary_col2, summary_col3, summary_col4 = st.columns(4)
-    summary_col1.metric("Settled Bets", total_settled_bets)
-    summary_col2.metric("Wins / Losses / Pushes", f"{total_wins} / {total_losses} / {total_pushes}")
-    summary_col3.metric("Win Rate", f"{overall_win_rate:.1f}%")
-    summary_col4.metric("Profit", f"{total_profit:.2f}u")
+# Ensure settled_df ALWAYS exists
+settled_df = pd.DataFrame()
+
+try:
+    selected_sport = get_selected_sport()
+    sport_bet_log = get_bet_log_for_sport(selected_sport)
+
+    if sport_bet_log:
+        settled_df = pd.DataFrame(sport_bet_log).copy()
+
+        # Ensure required columns exist
+        for col in ["result", "profit"]:
+            if col not in settled_df.columns:
+                settled_df[col] = ""
+
+        settled_df["result_clean"] = settled_df["result"].astype(str).str.strip().str.lower()
+        settled_df["profit_num"] = pd.to_numeric(settled_df["profit"], errors="coerce").fillna(0.0)
+
+except Exception as e:
+    st.warning(f"Performance summary error: {e}")
+    settled_df = pd.DataFrame()
+
+# Safe calculations
+if not settled_df.empty:
+    total_settled_bets = int(len(settled_df))
+    total_wins = int((settled_df["result_clean"] == "win").sum())
+    total_losses = int((settled_df["result_clean"] == "loss").sum())
+    total_pushes = int((settled_df["result_clean"] == "push").sum())
+    total_profit = float(settled_df["profit_num"].sum())
+else:
+    total_settled_bets = 0
+    total_wins = 0
+    total_losses = 0
+    total_pushes = 0
+    total_profit = 0.0
+
+# Display
+st.markdown("### 📊 Performance Summary")
+
+col1, col2, col3, col4 = st.columns(4)
+
+col1.metric("Bets", total_settled_bets)
+col2.metric("Wins", total_wins)
+col3.metric("Losses", total_losses)
+col4.metric("Profit", f"{total_profit:.2f}")
 
     # =========================================================
     # BUILD PLAY TYPE STATS

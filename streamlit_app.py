@@ -4708,102 +4708,51 @@ def render_pick_card(row_dict):
             <div style="font-size: 1.05rem; font-weight: 700; margin-bottom: 10
 
 # =========================================================
-# TOP PLAYS
+# TOP PLAYS (FINAL SAFE VERSION)
 # =========================================================
 if nav == "Top Plays":
     st.header("🎯 Top Plays")
     st.caption("Up to 10 qualified plays only. No filler.")
 
-    current_api_mode = st.session_state.get("api_mode", "idle")
     snapshot_top_df = st.session_state.get("snapshot_top_plays_df", pd.DataFrame())
-    snapshot_last_updated = str(st.session_state.get("snapshot_last_updated", "")).strip()
 
-    if len(get_effective_odds_games()) == 0 and snapshot_top_df.empty:
-        if current_api_mode == "waiting_reset":
-            reset_expected = str(st.session_state.get("odds_api_reset_expected", "")).strip()
-            if reset_expected:
-                st.warning("The Odds API is waiting for reset. Expected reset around {}.".format(reset_expected))
-            else:
-                st.warning("The Odds API is waiting for reset.")
-        else:
-            st.warning("Press 'Refresh Live Odds' in the sidebar to load live odds.")
-
-    elif snapshot_top_df.empty:
+    if snapshot_top_df.empty:
         st.info("No Top Plays currently qualified.")
-        if snapshot_last_updated:
-            st.caption("Last saved play snapshot: {}".format(snapshot_last_updated))
 
     else:
-        top_df = snapshot_top_df.copy().reset_index(drop=True)
+        df = snapshot_top_df.copy().reset_index(drop=True)
 
-        defaults_map = {
-            "game": "",
-            "selection": "",
-            "market": "",
-            "best_book": "",
-            "odds": "",
-            "edge": 0.0,
-            "true_confidence": 0.0,
-            "units": 0.0,
-            "status": "Active",
-            "books_seen": 0,
-            "log_category": "Top Plays",
-        }
+        for col in ["edge", "true_confidence", "units"]:
+            if col not in df.columns:
+                df[col] = 0.0
 
-        for col, default_val in defaults_map.items():
-            if col not in top_df.columns:
-                top_df[col] = default_val
+        df["edge"] = pd.to_numeric(df["edge"], errors="coerce").fillna(0)
+        df["true_confidence"] = pd.to_numeric(df["true_confidence"], errors="coerce").fillna(0)
+        df["units"] = pd.to_numeric(df["units"], errors="coerce").fillna(0)
 
-        for col in ["edge", "true_confidence", "units", "books_seen"]:
-            top_df[col] = pd.to_numeric(top_df[col], errors="coerce").fillna(0.0)
-
-        top_df = top_df.sort_values(
-            by=["true_confidence", "edge", "books_seen"],
-            ascending=[False, False, False],
-        ).reset_index(drop=True)
-
-        if snapshot_last_updated:
-            st.caption("Last saved play snapshot: {}".format(snapshot_last_updated))
-
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            st.metric("Top Plays Shown", len(top_df))
-        with c2:
-            st.metric("Avg Edge", round(float(top_df["edge"].mean()), 2) if not top_df.empty else 0.0)
-        with c3:
-            st.metric("Avg True Confidence", round(float(top_df["true_confidence"].mean()), 1) if not top_df.empty else 0.0)
+        df = df.sort_values(by=["true_confidence", "edge"], ascending=[False, False])
 
         st.markdown("---")
 
-        for _, row in top_df.iterrows():
+        for _, row in df.iterrows():
+
             game = str(row.get("game", "")).strip() or "Unknown Matchup"
             pick = str(row.get("selection", "")).strip() or "N/A"
             market = str(row.get("market", "")).strip() or "N/A"
             book = str(row.get("best_book", "")).strip() or "N/A"
             odds = str(row.get("odds", "N/A"))
-            edge = "{:.2f}".format(float(safe_float(row.get("edge", 0.0), 0.0)))
-            conf = "{:.1f}".format(float(safe_float(row.get("true_confidence", 0.0), 0.0)))
-            units = "{:.2f}".format(float(safe_float(row.get("units", 0.0), 0.0)))
 
-            card_html = """
-<div style="background:#111827;border:1px solid #374151;border-radius:16px;padding:16px;margin-bottom:14px;color:#f9fafb;">
-    <div style="font-weight:700;font-size:16px;margin-bottom:8px;">{game}</div>
-    <div><b>Pick:</b> {pick}</div>
-    <div><b>Market:</b> {market}</div>
-    <div><b>Book:</b> {book} | <b>Odds:</b> {odds}</div>
-    <div style="margin-top:8px;color:#d1d5db;">Edge: {edge}% | True Conf: {conf}% | Units: {units}</div>
-</div>
-""".format(
-                game=game,
-                pick=pick,
-                market=market,
-                book=book,
-                odds=odds,
-                edge=edge,
-                conf=conf,
-                units=units,
-            )
-            st.markdown(card_html, unsafe_allow_html=True)
+            edge = round(float(safe_float(row.get("edge", 0.0), 0.0)), 2)
+            conf = round(float(safe_float(row.get("true_confidence", 0.0), 0.0)), 1)
+            units = round(float(safe_float(row.get("units", 0.0), 0.0)), 2)
+
+            st.markdown(f"### {game}")
+            st.write(f"Pick: {pick}")
+            st.write(f"Market: {market}")
+            st.write(f"Book: {book} | Odds: {odds}")
+            st.write(f"Edge: {edge}% | True Confidence: {conf}% | Units: {units}")
+
+            st.markdown("---")
 
 # =========================================================
 # WATCHLIST

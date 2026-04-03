@@ -4708,86 +4708,61 @@ def render_pick_card(row_dict):
             <div style="font-size: 1.05rem; font-weight: 700; margin-bottom: 10
 
 # =========================================================
-# NAVIGATION BLOCK (PLAIN STREAMLIT SAFE VERSION)
+# NAVIGATION BLOCK (PLAIN SAFE RESET)
 # =========================================================
 
-def _safe_nav_df(value):
+def _nav_df(value):
     if isinstance(value, pd.DataFrame):
         return value.copy()
     return pd.DataFrame()
 
-
-def _safe_text(val, fallback=""):
-    text = str(val).strip() if val is not None else ""
+def _nav_text(value, fallback=""):
+    if value is None:
+        return fallback
+    text = str(value).strip()
     if text.lower() in ["nan", "none"]:
         return fallback
     return text if text else fallback
 
-
-def _safe_num(val, default=0.0, digits=2):
+def _nav_num(value, default=0.0, digits=2):
     try:
-        return round(float(pd.to_numeric(val, errors="coerce")), digits)
+        return round(float(pd.to_numeric(value, errors="coerce")), digits)
     except Exception:
         return round(float(default), digits)
 
+def _show_pick(row):
+    game = _nav_text(row.get("game", ""), "Unknown Matchup")
+    pick = _nav_text(row.get("selection", ""), "N/A")
+    market = _nav_text(row.get("market", ""), "N/A")
+    book = _nav_text(row.get("best_book", row.get("book", "")), "N/A")
+    odds = _nav_text(row.get("odds", row.get("best_price", "")), "N/A")
+    edge = _nav_num(row.get("edge", 0.0), 0.0, 2)
+    conf = _nav_num(row.get("true_confidence", 0.0), 0.0, 1)
+    units = _nav_num(row.get("units", 0.0), 0.0, 2)
+    note = _nav_text(row.get("sportsdata_note", row.get("note", "")), "No additional note available.")
 
-def _display_pick_summary(row):
-    game = _safe_text(row.get("game", ""), "Unknown Matchup")
-    pick = _safe_text(row.get("selection", ""), "N/A")
-    market = _safe_text(row.get("market", ""), "N/A")
-    book = _safe_text(row.get("best_book", row.get("book", "")), "N/A")
-    odds = _safe_text(row.get("odds", row.get("best_price", "")), "N/A")
-    edge = _safe_num(row.get("edge", 0.0), 0.0, 2)
-    conf = _safe_num(row.get("true_confidence", 0.0), 0.0, 1)
-    units = _safe_num(row.get("units", 0.0), 0.0, 2)
-    note = _safe_text(row.get("sportsdata_note", row.get("note", "")), "No additional note available.")
+    st.write("Game:", game)
+    st.write("Pick:", pick)
+    st.write("Market:", market)
+    st.write("Book:", book)
+    st.write("Odds:", odds)
+    st.write("Edge:", str(edge) + "%")
+    st.write("True Confidence:", str(conf) + "%")
+    st.write("Units:", units)
+    st.write("Note:", note)
 
-    st.write("**Game:**", game)
-    st.write("**Pick:**", pick)
-    st.write("**Market:**", market)
-    st.write("**Book:**", book)
-    st.write("**Odds:**", odds)
-    st.write("**Edge:**", f"{edge:.2f}%")
-    st.write("**True Confidence:**", f"{conf:.1f}%")
-    st.write("**Units:**", f"{units:.2f}")
-    st.write("**Note:**", note)
-
-
-def _prepare_nav_df(df, default_status=""):
-    df = _safe_nav_df(df)
+def _prep_df(df):
+    df = _nav_df(df)
     if df.empty:
         return df
-
-    defaults = {
-        "game": "",
-        "selection": "",
-        "market": "",
-        "best_book": "",
-        "book": "",
-        "odds": "",
-        "best_price": "",
-        "edge": 0.0,
-        "true_confidence": 0.0,
-        "units": 0.0,
-        "books_seen": 0.0,
-        "status": default_status,
-        "sportsdata_note": "",
-        "note": "",
-    }
-
-    for col, default_val in defaults.items():
-        if col not in df.columns:
-            df[col] = default_val
-
     for col in ["edge", "true_confidence", "units", "books_seen"]:
+        if col not in df.columns:
+            df[col] = 0.0
         df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
-
     sort_cols = [c for c in ["rank_score", "true_confidence", "edge", "books_seen"] if c in df.columns]
     if sort_cols:
         df = df.sort_values(by=sort_cols, ascending=[False] * len(sort_cols)).reset_index(drop=True)
-
     return df
-
 
 # =========================================================
 # TOP PLAYS
@@ -4797,47 +4772,39 @@ if nav == "Top Plays":
     st.caption("Up to 10 qualified plays only. No filler.")
 
     current_api_mode = st.session_state.get("api_mode", "idle")
-    snapshot_top_df = _prepare_nav_df(
-        st.session_state.get("snapshot_top_plays_df", pd.DataFrame()),
-        default_status="Active",
-    )
-    snapshot_last_updated = _safe_text(st.session_state.get("snapshot_last_updated", ""))
+    top_df = _prep_df(st.session_state.get("snapshot_top_plays_df", pd.DataFrame()))
+    snapshot_last_updated = _nav_text(st.session_state.get("snapshot_last_updated", ""))
 
-    if len(get_effective_odds_games()) == 0 and snapshot_top_df.empty:
+    if len(get_effective_odds_games()) == 0 and top_df.empty:
         if current_api_mode == "waiting_reset":
-            reset_expected = _safe_text(st.session_state.get("odds_api_reset_expected", ""))
+            reset_expected = _nav_text(st.session_state.get("odds_api_reset_expected", ""))
             if reset_expected:
-                st.warning(f"The Odds API is waiting for reset. Expected reset around {reset_expected}.")
+                st.warning("The Odds API is waiting for reset. Expected reset around " + reset_expected + ".")
             else:
                 st.warning("The Odds API is waiting for reset.")
         else:
             st.warning("Press 'Refresh Live Odds' in the sidebar to load live odds.")
-
-    elif snapshot_top_df.empty:
+    elif top_df.empty:
         st.info("No Top Plays currently qualified.")
         if snapshot_last_updated:
-            st.caption(f"Last saved play snapshot: {snapshot_last_updated}")
-
+            st.caption("Last saved play snapshot: " + snapshot_last_updated)
     else:
         if snapshot_last_updated:
-            st.caption(f"Last saved play snapshot: {snapshot_last_updated}")
+            st.caption("Last saved play snapshot: " + snapshot_last_updated)
 
         c1, c2, c3 = st.columns(3)
         with c1:
-            st.metric("Top Plays Shown", len(snapshot_top_df))
+            st.metric("Top Plays Shown", len(top_df))
         with c2:
-            st.metric("Avg Edge", _safe_num(snapshot_top_df["edge"].mean(), 0.0, 2))
+            st.metric("Avg Edge", _nav_num(top_df["edge"].mean(), 0.0, 2))
         with c3:
-            st.metric("Avg True Confidence", _safe_num(snapshot_top_df["true_confidence"].mean(), 0.0, 1))
+            st.metric("Avg True Confidence", _nav_num(top_df["true_confidence"].mean(), 0.0, 1))
 
         st.markdown("---")
-
-        for idx, (_, row) in enumerate(snapshot_top_df.head(TOP_PLAYS_LIMIT).iterrows(), start=1):
-            with st.container():
-                st.subheader(f"Top Play #{idx}")
-                _display_pick_summary(row)
-                st.markdown("---")
-
+        for idx, (_, row) in enumerate(top_df.head(TOP_PLAYS_LIMIT).iterrows(), start=1):
+            st.subheader("Top Play #" + str(idx))
+            _show_pick(row)
+            st.markdown("---")
 
 # =========================================================
 # WATCHLIST
@@ -4847,47 +4814,39 @@ elif nav == "Watchlist":
     st.caption("Near-qualified plays worth monitoring.")
 
     current_api_mode = st.session_state.get("api_mode", "idle")
-    snapshot_watchlist_df = _prepare_nav_df(
-        st.session_state.get("snapshot_watchlist_df", pd.DataFrame()),
-        default_status="Watchlist",
-    )
-    snapshot_last_updated = _safe_text(st.session_state.get("snapshot_last_updated", ""))
+    watch_df = _prep_df(st.session_state.get("snapshot_watchlist_df", pd.DataFrame()))
+    snapshot_last_updated = _nav_text(st.session_state.get("snapshot_last_updated", ""))
 
-    if len(get_effective_odds_games()) == 0 and snapshot_watchlist_df.empty:
+    if len(get_effective_odds_games()) == 0 and watch_df.empty:
         if current_api_mode == "waiting_reset":
-            reset_expected = _safe_text(st.session_state.get("odds_api_reset_expected", ""))
+            reset_expected = _nav_text(st.session_state.get("odds_api_reset_expected", ""))
             if reset_expected:
-                st.warning(f"The Odds API is waiting for reset. Expected reset around {reset_expected}.")
+                st.warning("The Odds API is waiting for reset. Expected reset around " + reset_expected + ".")
             else:
                 st.warning("The Odds API is waiting for reset.")
         else:
             st.warning("Press 'Refresh Live Odds' in the sidebar to load live odds.")
-
-    elif snapshot_watchlist_df.empty:
+    elif watch_df.empty:
         st.info("No Watchlist plays currently qualified.")
         if snapshot_last_updated:
-            st.caption(f"Last saved play snapshot: {snapshot_last_updated}")
-
+            st.caption("Last saved play snapshot: " + snapshot_last_updated)
     else:
         if snapshot_last_updated:
-            st.caption(f"Last saved play snapshot: {snapshot_last_updated}")
+            st.caption("Last saved play snapshot: " + snapshot_last_updated)
 
         c1, c2, c3 = st.columns(3)
         with c1:
-            st.metric("Watchlist Plays", len(snapshot_watchlist_df))
+            st.metric("Watchlist Plays", len(watch_df))
         with c2:
-            st.metric("Avg Edge", _safe_num(snapshot_watchlist_df["edge"].mean(), 0.0, 2))
+            st.metric("Avg Edge", _nav_num(watch_df["edge"].mean(), 0.0, 2))
         with c3:
-            st.metric("Avg True Confidence", _safe_num(snapshot_watchlist_df["true_confidence"].mean(), 0.0, 1))
+            st.metric("Avg True Confidence", _nav_num(watch_df["true_confidence"].mean(), 0.0, 1))
 
         st.markdown("---")
-
-        for idx, (_, row) in enumerate(snapshot_watchlist_df.head(WATCHLIST_LIMIT).iterrows(), start=1):
-            with st.container():
-                st.subheader(f"Watchlist Play #{idx}")
-                _display_pick_summary(row)
-                st.markdown("---")
-
+        for idx, (_, row) in enumerate(watch_df.head(WATCHLIST_LIMIT).iterrows(), start=1):
+            st.subheader("Watchlist Play #" + str(idx))
+            _show_pick(row)
+            st.markdown("---")
 
 # =========================================================
 # AI SLIP
@@ -4896,63 +4855,44 @@ elif nav == "AI Slip":
     st.header("🧠 AI Slip")
     st.caption("Best combined plays based on current slate.")
 
-    snapshot_ai_df = _prepare_nav_df(
-        st.session_state.get("snapshot_ai_slip_df", pd.DataFrame()),
-        default_status="Active",
-    )
-    snapshot_last_updated = _safe_text(st.session_state.get("snapshot_last_updated", ""))
-    snapshot_parlay_df = _safe_nav_df(st.session_state.get("snapshot_parlay_df", pd.DataFrame()))
+    ai_df = _prep_df(st.session_state.get("snapshot_ai_slip_df", pd.DataFrame()))
+    parlay_df = _nav_df(st.session_state.get("snapshot_parlay_df", pd.DataFrame()))
+    snapshot_last_updated = _nav_text(st.session_state.get("snapshot_last_updated", ""))
 
-    if snapshot_ai_df.empty:
+    if ai_df.empty:
         st.info("No AI plays available yet.")
         if snapshot_last_updated:
-            st.caption(f"Last saved play snapshot: {snapshot_last_updated}")
+            st.caption("Last saved play snapshot: " + snapshot_last_updated)
     else:
         if snapshot_last_updated:
-            st.caption(f"Last saved play snapshot: {snapshot_last_updated}")
-
-        best_row = snapshot_ai_df.iloc[0]
+            st.caption("Last saved play snapshot: " + snapshot_last_updated)
 
         st.subheader("Best Current AI Play")
-        _display_pick_summary(best_row)
+        _show_pick(ai_df.iloc[0])
 
         st.markdown("---")
         st.subheader("Top AI Options")
-
-        for idx, (_, row) in enumerate(snapshot_ai_df.head(5).iterrows(), start=1):
-            with st.container():
-                st.write(f"**AI Option #{idx}**")
-                _display_pick_summary(row)
-                st.markdown("---")
+        for idx, (_, row) in enumerate(ai_df.head(5).iterrows(), start=1):
+            st.write("AI Option #" + str(idx))
+            _show_pick(row)
+            st.markdown("---")
 
     st.subheader("AI Parlay")
-
-    if isinstance(snapshot_parlay_df, pd.DataFrame) and not snapshot_parlay_df.empty:
-        parlay_row = snapshot_parlay_df.iloc[0]
-
-        approval_type = _safe_text(parlay_row.get("approval_type", ""), "Primary")
-        leg_count = _safe_text(parlay_row.get("leg_count", ""), "N/A")
-        combined_odds = _safe_text(parlay_row.get("combined_odds", parlay_row.get("combined_odds_int", "")), "N/A")
-        avg_true_conf = _safe_text(parlay_row.get("avg_true_conf", ""), "N/A")
-        avg_edge = _safe_text(parlay_row.get("avg_edge", ""), "N/A")
-        risk_label = _safe_text(parlay_row.get("risk_label", ""), "N/A")
-        legs_text = _safe_text(parlay_row.get("legs_text", ""), "N/A")
-        games_text = _safe_text(parlay_row.get("games_text", ""), "N/A")
-        reasons = _safe_text(parlay_row.get("reasons", ""), "")
-
-        st.write("**Approval Type:**", approval_type)
-        st.write("**Leg Count:**", leg_count)
-        st.write("**Odds:**", combined_odds)
-        st.write("**Avg True Confidence:**", avg_true_conf)
-        st.write("**Avg Edge:**", avg_edge)
-        st.write("**Risk Label:**", risk_label)
-        st.write("**Games:**", games_text)
-        st.write("**Selections:**", legs_text)
+    if isinstance(parlay_df, pd.DataFrame) and not parlay_df.empty:
+        row = parlay_df.iloc[0]
+        st.write("Approval Type:", _nav_text(row.get("approval_type", ""), "Primary"))
+        st.write("Leg Count:", _nav_text(row.get("leg_count", ""), "N/A"))
+        st.write("Odds:", _nav_text(row.get("combined_odds", row.get("combined_odds_int", "")), "N/A"))
+        st.write("Avg True Confidence:", _nav_text(row.get("avg_true_conf", ""), "N/A"))
+        st.write("Avg Edge:", _nav_text(row.get("avg_edge", ""), "N/A"))
+        st.write("Risk Label:", _nav_text(row.get("risk_label", ""), "N/A"))
+        st.write("Games:", _nav_text(row.get("games_text", ""), "N/A"))
+        st.write("Selections:", _nav_text(row.get("legs_text", ""), "N/A"))
+        reasons = _nav_text(row.get("reasons", ""), "")
         if reasons:
-            st.write("**Reasons:**", reasons)
+            st.write("Reasons:", reasons)
     else:
         st.info("No parlay available.")
-
 
 # =========================================================
 # BET LOG
@@ -4991,22 +4931,9 @@ elif nav == "Bet Log":
         if log_df.empty:
             st.info("No bets logged yet for " + str(selected_sport) + ".")
         else:
-            numeric_cols = [
-                "units", "profit", "stake", "implied_prob", "true_prob",
-                "implied_probability", "true_probability", "true_confidence",
-                "edge", "clv_diff"
-            ]
-            for col in numeric_cols:
+            for col in ["units", "profit", "stake", "implied_prob", "true_prob", "true_confidence", "edge", "clv_diff"]:
                 if col in log_df.columns:
                     log_df[col] = pd.to_numeric(log_df[col], errors="coerce").fillna(0.0)
-
-            text_cols = [
-                "market", "log_category", "timestamp", "result", "odds",
-                "selection", "game", "play_id", "consensus", "clv_result"
-            ]
-            for col in text_cols:
-                if col in log_df.columns:
-                    log_df[col] = log_df[col].fillna("").astype(str).str.strip()
 
             st.subheader("ROI Dashboard (" + str(selected_sport) + ")")
             try:
@@ -5057,25 +4984,18 @@ elif nav == "Bet Log":
                 selectable_map[label] = pid
 
             if selectable_labels:
-                selected_label = st.selectbox(
-                    "Select Bet",
-                    selectable_labels,
-                    key="update_result_select_" + str(selected_sport),
-                )
+                selected_label = st.selectbox("Select Bet", selectable_labels, key="update_result_select_" + str(selected_sport))
                 selected_id = selectable_map[selected_label]
                 selected_base_id = get_base_play_id(selected_id)
 
                 existing_result = "Pending"
-
                 for bet in latest_bet_log:
                     pid = str(bet.get("play_id", "")).strip()
                     if not pid:
                         continue
-
                     bet_sport = str(bet.get("sport", "")).strip().upper()
                     if bet_sport and bet_sport != selected_sport:
                         continue
-
                     if pid == selected_id or get_base_play_id(pid) == selected_base_id:
                         existing_result = normalize_result_value(bet.get("result", "Pending"))
                         break
@@ -5084,12 +5004,7 @@ elif nav == "Bet Log":
                 if existing_result not in result_options:
                     existing_result = "Pending"
 
-                result_choice = st.selectbox(
-                    "Result",
-                    result_options,
-                    index=result_options.index(existing_result),
-                    key="bet_result_choice_" + str(selected_sport),
-                )
+                result_choice = st.selectbox("Result", result_options, index=result_options.index(existing_result), key="bet_result_choice_" + str(selected_sport))
 
                 if st.button("Save Result", key="save_result_button_" + str(selected_sport)):
                     normalized_choice = normalize_result_value(result_choice)
@@ -5121,12 +5036,7 @@ elif nav == "Bet Log":
                                     odds_val = None
 
                                 try:
-                                    stake_units = float(
-                                        refreshed_bet_log[idx].get(
-                                            "stake",
-                                            refreshed_bet_log[idx].get("units", 1.0)
-                                        )
-                                    )
+                                    stake_units = float(refreshed_bet_log[idx].get("stake", refreshed_bet_log[idx].get("units", 1.0)))
                                 except Exception:
                                     stake_units = 1.0
 
@@ -5157,13 +5067,6 @@ elif nav == "Bet Log":
 
                     save_bet_log()
 
-                    try:
-                        reloaded = load_bet_log()
-                        if isinstance(reloaded, list):
-                            st.session_state["bet_log"] = reloaded
-                    except Exception:
-                        pass
-
                     if updated_any:
                         st.success("Bet result saved successfully.")
                         st.rerun()
@@ -5179,36 +5082,13 @@ elif nav == "Bet Log":
 
         with col1:
             game_input = st.text_input("Game (e.g. LAL @ BOS)", key="manual_game_input")
-            market_input = st.selectbox(
-                "Market",
-                ["moneyline", "spread", "total", "prop"],
-                index=0,
-                key="manual_market_input",
-            )
-            selection_input = st.text_input(
-                "Selection (e.g. Lakers -3.5 or Over 221.5)",
-                key="manual_selection_input",
-            )
+            market_input = st.selectbox("Market", ["moneyline", "spread", "total", "prop"], index=0, key="manual_market_input")
+            selection_input = st.text_input("Selection (e.g. Lakers -3.5 or Over 221.5)", key="manual_selection_input")
 
         with col2:
-            odds_input = st.text_input(
-                "Odds (American, e.g. -110 or +150)",
-                key="manual_odds_input",
-            )
-            units_input = st.number_input(
-                "Units",
-                min_value=0.1,
-                max_value=10.0,
-                value=1.0,
-                step=0.1,
-                key="manual_units_input",
-            )
-            confidence_input = st.selectbox(
-                "Confidence",
-                ["Low", "Medium", "High"],
-                index=1,
-                key="manual_confidence_input",
-            )
+            odds_input = st.text_input("Odds (American, e.g. -110 or +150)", key="manual_odds_input")
+            units_input = st.number_input("Units", min_value=0.1, max_value=10.0, value=1.0, step=0.1, key="manual_units_input")
+            confidence_input = st.selectbox("Confidence", ["Low", "Medium", "High"], index=1, key="manual_confidence_input")
 
         if st.button("Add Bet", key="manual_add_bet_button"):
             game_clean = str(game_input).strip()
@@ -5225,10 +5105,7 @@ elif nav == "Bet Log":
             elif odds_int is None:
                 st.warning("Odds must be valid American odds like -110 or +150.")
             else:
-                new_play_id = hashlib.md5(
-                    (str(selected_sport) + "|" + game_clean + "|" + market_clean + "|" + selection_clean + "|" + odds_clean + "|" + str(time.time())).encode()
-                ).hexdigest()
-
+                new_play_id = hashlib.md5((str(selected_sport) + "|" + game_clean + "|" + market_clean + "|" + selection_clean + "|" + odds_clean + "|" + str(time.time())).encode()).hexdigest()
                 open_line_val = extract_line_from_selection(selection_clean)
 
                 implied_prob_val = None

@@ -4708,52 +4708,15 @@ def render_pick_card(row_dict):
             <div style="font-size: 1.05rem; font-weight: 700; margin-bottom: 10
 
 # =========================================================
-# TOP PLAYS
+# TOP PLAYS (CLEAN + SAFE HTML + SNAPSHOT)
 # =========================================================
 if nav == "Top Plays":
     st.header("🎯 Top Plays")
     st.caption("Up to 10 qualified plays only. No filler.")
 
     current_api_mode = st.session_state.get("api_mode", "idle")
-    persisted_plays_df = get_persisted_plays_df()
-    snapshot_active_df = st.session_state.get("snapshot_active_df", pd.DataFrame())
-    snapshot_top_df = st.session_state.get("snapshot_top_plays_df", pd.DataFrame())
-    snapshot_last_updated = str(st.session_state.get("snapshot_last_updated", "")).strip()
 
-    if snapshot_top_df.empty and not persisted_plays_df.empty:
-        try:
-            persist_generated_play_snapshots(persisted_plays_df)
-            snapshot_active_df = st.session_state.get("snapshot_active_df", pd.DataFrame())
-            snapshot_top_df = st.session_state.get("snapshot_top_plays_df", pd.DataFrame())
-            snapshot_last_updated = str(st.session_state.get("snapshot_last_updated", "")).strip()
-        except Exception:
-            pass
-
-    if snapshot_top_df.empty and not snapshot_active_df.empty:
-        working_active_df = snapshot_active_df.copy()
-
-        if "true_confidence" not in working_active_df.columns:
-            working_active_df["true_confidence"] = 0.0
-        if "edge" not in working_active_df.columns:
-            working_active_df["edge"] = 0.0
-
-        working_active_df["true_confidence"] = pd.to_numeric(
-            working_active_df["true_confidence"], errors="coerce"
-        ).fillna(0.0)
-        working_active_df["edge"] = pd.to_numeric(
-            working_active_df["edge"], errors="coerce"
-        ).fillna(0.0)
-
-        sort_cols = [c for c in ["rank_score", "true_confidence", "edge"] if c in working_active_df.columns]
-        if sort_cols:
-            snapshot_top_df = working_active_df.sort_values(
-                by=sort_cols,
-                ascending=[False] * len(sort_cols),
-            ).head(int(globals().get("TOP_PLAYS_LIMIT", 10))).copy()
-        else:
-            snapshot_top_df = working_active_df.head(int(globals().get("TOP_PLAYS_LIMIT", 10))).copy()
-
-    if len(get_effective_odds_games()) == 0 and persisted_plays_df.empty and snapshot_top_df.empty:
+    if len(get_effective_odds_games()) == 0:
         if current_api_mode == "waiting_reset":
             reset_expected = str(st.session_state.get("odds_api_reset_expected", "")).strip()
             if reset_expected:
@@ -4762,71 +4725,87 @@ if nav == "Top Plays":
                 st.warning("The Odds API is waiting for reset.")
         else:
             st.warning("Press 'Refresh Live Odds' in the sidebar to load live odds.")
-
-    elif snapshot_top_df.empty:
-        st.info("No Top Plays currently qualified.")
-        if snapshot_last_updated:
-            st.caption(f"Last saved play snapshot: {snapshot_last_updated}")
-
     else:
-        top_df = snapshot_top_df.copy().reset_index(drop=True)
+        snapshot_top_df = st.session_state.get("snapshot_top_plays_df", pd.DataFrame())
 
-        for col, default_val in {
-            "true_confidence": 0.0,
-            "edge": 0.0,
-            "units": 0.0,
-            "status": "Active",
-            "best_book": "",
-            "best_price": "",
-            "books_seen": 0,
-            "consensus": "",
-            "tier": "C",
-            "quality_label": "Watch",
-            "watch_tier": "",
-            "ai_tags": [[] for _ in range(len(top_df))] if len(top_df) > 0 else [],
-            "sportsdata_note": "",
-            "injury_flag": "",
-            "lineup_flag": "",
-            "context_score": 0.0,
-            "score": 0.0,
-            "rank_score": 0.0,
-        }.items():
-            if col not in top_df.columns:
-                if col == "ai_tags":
-                    top_df[col] = [[] for _ in range(len(top_df))]
-                else:
-                    top_df[col] = default_val
+        if snapshot_top_df is not None and not snapshot_top_df.empty:
 
-        numeric_cols = [
-            "true_confidence",
-            "edge",
-            "units",
-            "books_seen",
-            "context_score",
-            "score",
-            "rank_score",
-            "implied_prob",
-            "true_prob",
-        ]
-        for col in numeric_cols:
-            if col in top_df.columns:
-                top_df[col] = pd.to_numeric(top_df[col], errors="coerce").fillna(0.0)
+            top_df = snapshot_top_df.copy()
 
-        if snapshot_last_updated:
-            st.caption(f"Last saved play snapshot: {snapshot_last_updated}")
+            # =========================
+            # SUMMARY METRICS
+            # =========================
+            try:
+                avg_edge = round(top_df["edge"].astype(float).mean(), 2)
+            except:
+                avg_edge = 0
 
-        metric_col_1, metric_col_2, metric_col_3 = st.columns(3)
-        with metric_col_1:
-            st.metric("Top Plays Shown", len(top_df))
-        with metric_col_2:
-            avg_edge = round(float(top_df["edge"].mean()), 2) if not top_df.empty else 0.0
-            st.metric("Avg Edge", avg_edge)
-        with metric_col_3:
-            avg_conf = round(float(top_df["true_confidence"].mean()), 1) if not top_df.empty else 0.0
-            st.metric("Avg True Confidence", avg_conf)
+            try:
+                avg_conf = round(top_df["true_confidence"].astype(float).mean(), 1)
+            except:
+                avg_conf = 0
 
-        st.markdown("---")
-        render_mobile_or_table(top_df, best_first=True)
+            st.markdown(f"""
+            **Top Plays Shown:** {len(top_df)}  
+            **Avg Edge:** {avg_edge}  
+            **Avg True Confidence:** {avg_conf}
+            """)
+
+            st.markdown("---")
+
+            # =========================
+            # CARD RENDER
+            # =========================
+            for _, row in top_df.iterrows():
+
+                game = row.get("game", "N/A")
+                pick = row.get("selection", "N/A")
+                market = row.get("market", "N/A")
+                book = row.get("book", "N/A")
+                odds = row.get("odds", "N/A")
+
+                try:
+                    edge = f'{float(row.get("edge", 0)):.2f}%'
+                except:
+                    edge = "0.00%"
+
+                try:
+                    conf = f'{float(row.get("true_confidence", 0)):.1f}%'
+                except:
+                    conf = "0.0%"
+
+                try:
+                    units = f'{float(row.get("units", 0)):.2f}'
+                except:
+                    units = "0.00"
+
+                st.markdown(f'''
+                <div style="
+                    background: #111;
+                    padding: 14px;
+                    border-radius: 14px;
+                    margin-bottom: 12px;
+                    border: 1px solid #333;
+                    color: white;
+                    font-size: 14px;
+                    line-height: 1.4;
+                ">
+                    <div style="font-weight:600; font-size:15px; margin-bottom:6px;">
+                        {game}
+                    </div>
+
+                    <div><b>Pick:</b> {pick}</div>
+                    <div><b>Market:</b> {market}</div>
+                    <div><b>Book:</b> {book} | <b>Odds:</b> {odds}</div>
+
+                    <div style="margin-top:6px; font-size:13px; color:#ccc;">
+                        Edge: {edge} | True Conf: {conf} | Units: {units}
+                    </div>
+                </div>
+                ''', unsafe_allow_html=True)
+
+        else:
+            st.info("No qualified plays yet. Try refreshing odds.")
 
 # =========================================================
 # WATCHLIST

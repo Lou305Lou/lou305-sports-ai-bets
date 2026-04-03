@@ -4297,12 +4297,45 @@ if auto_logged_count > 0:
 # =========================================================
 st.markdown('<div class="metric-panel">', unsafe_allow_html=True)
 st.markdown('<div class="metric-panel-title">Market Snapshot</div>', unsafe_allow_html=True)
+
+# ---------------------------------------------------------
+# LOAD SNAPSHOT DATA (SAFE)
+# ---------------------------------------------------------
+snapshot_top_df = st.session_state.get("snapshot_top_plays_df", pd.DataFrame())
+snapshot_watch_df = st.session_state.get("snapshot_watchlist_df", pd.DataFrame())
+
+# ---------------------------------------------------------
+# CALCULATIONS (SAFE FALLBACKS)
+# ---------------------------------------------------------
+active_count = len(snapshot_top_df) if not snapshot_top_df.empty else 0
+watch_count = len(snapshot_watch_df) if not snapshot_watch_df.empty else 0
+
+if not snapshot_top_df.empty:
+    avg_active_edge = float(snapshot_top_df.get("edge", pd.Series()).mean() or 0.0)
+    avg_true_prob = float(snapshot_top_df.get("true_prob", pd.Series()).mean() or 0.0)
+    avg_true_conf = float(snapshot_top_df.get("true_confidence", pd.Series()).mean() or 0.0)
+    total_units = float(snapshot_top_df.get("units", pd.Series()).sum() or 0.0)
+
+    if "true_confidence" in snapshot_top_df.columns:
+        best_score = float(snapshot_top_df["true_confidence"].max())
+    else:
+        best_score = 0.0
+else:
+    avg_active_edge = 0.0
+    avg_true_prob = 0.0
+    avg_true_conf = 0.0
+    total_units = 0.0
+    best_score = 0.0
+
+# ---------------------------------------------------------
+# RENDER
+# ---------------------------------------------------------
 st.markdown(
     f"""
     <div class="metric-mini-grid">
-        <div><div class="metric-mini-label">Active Plays</div><div class="metric-mini-value">{len(active_df)}</div></div>
-        <div><div class="metric-mini-label">Watchlist</div><div class="metric-mini-value">{len(watch_df)}</div></div>
-        <div><div class="metric-mini-label">Best Score</div><div class="metric-mini-value">{best_score}</div></div>
+        <div><div class="metric-mini-label">Active Plays</div><div class="metric-mini-value">{active_count}</div></div>
+        <div><div class="metric-mini-label">Watchlist</div><div class="metric-mini-value">{watch_count}</div></div>
+        <div><div class="metric-mini-label">Best Score</div><div class="metric-mini-value">{best_score:.1f}</div></div>
         <div><div class="metric-mini-label">Avg Value Edge</div><div class="metric-mini-value">{avg_active_edge:.2f}%</div></div>
         <div><div class="metric-mini-label">Avg True Prob</div><div class="metric-mini-value">{avg_true_prob:.1f}%</div></div>
         <div><div class="metric-mini-label">Avg True Conf</div><div class="metric-mini-value">{avg_true_conf:.1f}</div></div>
@@ -4311,6 +4344,7 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
 st.markdown("</div>", unsafe_allow_html=True)
 
 # =========================================================

@@ -4962,60 +4962,52 @@ elif nav == "Watchlist":
             )
 
 # =========================================================
-# AI SLIP
+# WATCHLIST
 # =========================================================
-elif nav == "AI Slip":
-    st.header("🧠 AI Slip")
-
-    if today_games:
-        st.caption("Filtered Slate: " + " | ".join(today_games))
-    else:
-        st.caption("Using all live games returned by the API.")
+elif nav == "Watchlist":
+    st.header("👀 Watchlist")
+    st.caption("Near-qualified plays worth monitoring.")
 
     current_api_mode = st.session_state.get("api_mode", "idle")
     persisted_plays_df = get_persisted_plays_df()
-    snapshot_active_df = st.session_state.get("snapshot_active_df", pd.DataFrame())
-    snapshot_top_df = st.session_state.get("snapshot_top_plays_df", pd.DataFrame())
-    snapshot_ai_slip_df = st.session_state.get("snapshot_ai_slip_df", pd.DataFrame())
-    snapshot_parlay_df = st.session_state.get("snapshot_parlay_df", pd.DataFrame())
+    snapshot_watchlist_df = st.session_state.get("snapshot_watchlist_df", pd.DataFrame())
     snapshot_last_updated = str(st.session_state.get("snapshot_last_updated", "")).strip()
 
-    if snapshot_top_df.empty and not persisted_plays_df.empty:
+    if snapshot_watchlist_df.empty and not persisted_plays_df.empty:
         try:
-            persist_generated_play_snapshots(persisted_plays_df)
-            snapshot_active_df = st.session_state.get("snapshot_active_df", pd.DataFrame())
-            snapshot_top_df = st.session_state.get("snapshot_top_plays_df", pd.DataFrame())
-            snapshot_ai_slip_df = st.session_state.get("snapshot_ai_slip_df", pd.DataFrame())
-            snapshot_parlay_df = st.session_state.get("snapshot_parlay_df", pd.DataFrame())
+            restored_df = persisted_plays_df.copy()
+            restored_df = normalize_dataframe_for_selected_sport(restored_df, get_selected_sport())
+            restored_df = recalculate_play_metrics(restored_df)
+
+            if "status" not in restored_df.columns:
+                restored_df["status"] = ""
+            if "log_category" not in restored_df.columns:
+                restored_df["log_category"] = ""
+
+            restored_df["status"] = restored_df["status"].fillna("").astype(str).str.strip()
+            restored_df["log_category"] = restored_df["log_category"].fillna("").astype(str).str.strip()
+
+            snapshot_watchlist_df = restored_df[
+                restored_df["status"].isin(["Watchlist", "Watch"])
+            ].copy()
+
+            if snapshot_watchlist_df.empty:
+                remaining_df = restored_df.copy()
+                snapshot_watchlist_df = remaining_df.sort_values(
+                    by=["true_confidence", "edge", "books_seen"],
+                    ascending=[False, False, False],
+                ).head(WATCHLIST_LIMIT).copy()
+
+                if not snapshot_watchlist_df.empty:
+                    snapshot_watchlist_df["status"] = "Watchlist"
+                    snapshot_watchlist_df["log_category"] = "Watchlist"
+
+            st.session_state["snapshot_watchlist_df"] = snapshot_watchlist_df.copy()
             snapshot_last_updated = str(st.session_state.get("snapshot_last_updated", "")).strip()
         except Exception:
             pass
 
-    if snapshot_top_df.empty and not snapshot_active_df.empty:
-        working_active_df = snapshot_active_df.copy()
-
-        if "true_confidence" not in working_active_df.columns:
-            working_active_df["true_confidence"] = 0.0
-        if "edge" not in working_active_df.columns:
-            working_active_df["edge"] = 0.0
-
-        working_active_df["true_confidence"] = pd.to_numeric(
-            working_active_df["true_confidence"], errors="coerce"
-        ).fillna(0.0)
-        working_active_df["edge"] = pd.to_numeric(
-            working_active_df["edge"], errors="coerce"
-        ).fillna(0.0)
-
-        sort_cols = [c for c in ["rank_score", "true_confidence", "edge"] if c in working_active_df.columns]
-        if sort_cols:
-            snapshot_top_df = working_active_df.sort_values(
-                by=sort_cols,
-                ascending=[False] * len(sort_cols),
-            ).head(int(globals().get("TOP_PLAYS_LIMIT", 10))).copy()
-        else:
-            snapshot_top_df = working_active_df.head(int(globals().get("TOP_PLAYS_LIMIT", 10))).copy()
-
-    if len(get_effective_odds_games()) == 0 and persisted_plays_df.empty and snapshot_top_df.empty:
+    if len(get_effective_odds_games()) == 0 and persisted_plays_df.empty and snapshot_watchlist_df.empty:
         if current_api_mode == "waiting_reset":
             reset_expected = str(st.session_state.get("odds_api_reset_expected", "")).strip()
             if reset_expected:
@@ -5025,230 +5017,103 @@ elif nav == "AI Slip":
         else:
             st.warning("Press 'Refresh Live Odds' in the sidebar to load live odds.")
 
-    elif snapshot_top_df.empty:
-        st.info("No AI Slip available yet because no Top Plays are currently qualified.")
+    elif snapshot_watchlist_df.empty:
+        st.info("No Watchlist plays currently qualified.")
         if snapshot_last_updated:
             st.caption(f"Last saved play snapshot: {snapshot_last_updated}")
 
     else:
-        top_df = snapshot_top_df.copy().reset_index(drop=True)
+        watch_df = snapshot_watchlist_df.copy().reset_index(drop=True)
 
-        for col, default_val in {
-            "true_confidence": 0.0,
-            "edge": 0.0,
-            "units": 0.0,
-            "status": "Active",
+        defaults_map = {
+            "game": "",
+            "selection": "",
+            "market": "",
             "best_book": "",
-            "best_price": "",
+            "odds": "",
+            "edge": 0.0,
+            "true_confidence": 0.0,
+            "units": 0.0,
+            "status": "Watchlist",
             "books_seen": 0,
-            "consensus": "",
+            "context_score": 0.0,
+            "score": 0.0,
+            "rank_score": 0.0,
+            "implied_prob": 0.0,
+            "true_prob": 0.0,
             "sportsdata_note": "",
-        }.items():
-            if col not in top_df.columns:
-                top_df[col] = default_val
+            "injury_flag": "",
+            "lineup_flag": "",
+            "log_category": "Watchlist",
+        }
 
-        top_df["true_confidence"] = pd.to_numeric(top_df["true_confidence"], errors="coerce").fillna(0.0)
-        top_df["edge"] = pd.to_numeric(top_df["edge"], errors="coerce").fillna(0.0)
-        top_df["units"] = pd.to_numeric(top_df["units"], errors="coerce").fillna(0.0)
+        for col, default_val in defaults_map.items():
+            if col not in watch_df.columns:
+                watch_df[col] = default_val
 
-        def _first_nonblank(row, cols):
-            for col in cols:
-                if col in top_df.columns:
-                    value = row.get(col, "")
-                    if pd.notna(value):
-                        text = str(value).strip()
-                        if text and text.lower() not in ["nan", "none", "n/a"]:
-                            return text
-            return ""
+        numeric_cols = [
+            "true_confidence",
+            "edge",
+            "units",
+            "books_seen",
+            "context_score",
+            "score",
+            "rank_score",
+            "implied_prob",
+            "true_prob",
+        ]
+        for col in numeric_cols:
+            watch_df[col] = pd.to_numeric(watch_df[col], errors="coerce").fillna(0.0)
 
-        def _matchup_from_row(row):
-            matchup_val = _first_nonblank(
-                row,
-                ["matchup", "game", "event_name", "display_name", "teams"],
-            )
-            if matchup_val:
-                return matchup_val
+        watch_df["status"] = watch_df["status"].fillna("Watchlist").astype(str).str.strip()
+        watch_df["log_category"] = watch_df["log_category"].fillna("Watchlist").astype(str).str.strip()
 
-            home_team = str(row.get("home_team", "")).strip() if "home_team" in top_df.columns else ""
-            away_team = str(row.get("away_team", "")).strip() if "away_team" in top_df.columns else ""
-            if away_team and home_team:
-                return f"{away_team} @ {home_team}"
-
-            return "Matchup not available"
-
-        def _pick_from_row(row):
-            return _first_nonblank(row, ["selection", "pick", "bet_name", "play_name", "side"]) or "N/A"
-
-        def _market_from_row(row):
-            return _first_nonblank(row, ["market", "market_type", "bet_type"]) or "N/A"
-
-        def _sportsbook_from_row(row):
-            for col in ["best_book", "sportsbook", "book", "bookmaker"]:
-                if col in top_df.columns:
-                    value = row.get(col, "")
-                    if pd.notna(value):
-                        text = str(value).strip()
-                        if text and text.lower() not in ["nan", "none", "n/a", "sim"]:
-                            return text
-            return "Best available"
-
-        def _odds_from_row(row):
-            for col in ["best_price", "odds", "price", "american_odds"]:
-                if col in top_df.columns:
-                    value = row.get(col, "")
-                    if pd.notna(value):
-                        text = str(value).strip()
-                        if text and text.lower() not in ["nan", "none"]:
-                            return text
-            return "N/A"
-
-        def _note_from_row(row):
-            return _first_nonblank(row, ["reason", "sportsdata_note", "context_note", "ai_note", "note"]) or "No additional note available."
-
-        best_row = top_df.iloc[0].copy()
-
-        matchup = _matchup_from_row(best_row)
-        pick_text = _pick_from_row(best_row)
-        market_text = _market_from_row(best_row)
-        sportsbook_text = _sportsbook_from_row(best_row)
-        odds_text = _odds_from_row(best_row)
-        note_text = _note_from_row(best_row)
-
-        true_conf = float(best_row.get("true_confidence", 0.0))
-        edge_val = float(best_row.get("edge", 0.0))
-        units_val = float(best_row.get("units", 0.0))
-        risk_level = "Low" if units_val <= 0.60 else "Moderate"
+        watch_df = watch_df.sort_values(
+            by=["true_confidence", "edge", "books_seen"],
+            ascending=[False, False, False],
+        ).reset_index(drop=True)
 
         if snapshot_last_updated:
             st.caption(f"Last saved play snapshot: {snapshot_last_updated}")
 
-        st.markdown(
-            f"""
-            <div style="
-                background: linear-gradient(135deg, #111827 0%, #0f172a 100%);
-                border: 1px solid rgba(255,255,255,0.16);
-                border-radius: 16px;
-                padding: 16px;
-                margin-bottom: 14px;
-                box-shadow: 0 6px 18px rgba(0,0,0,0.22);
-                color: #f9fafb;
-            ">
-                <div style="font-size:1.10rem; font-weight:800; margin-bottom:10px; color:#ffffff;">
-                    Best Current AI Play
-                </div>
-                <div style="font-size:1rem; margin-bottom:7px; color:#f3f4f6;">
-                    <span style="color:#93c5fd; font-weight:700;">Matchup:</span> {matchup}
-                </div>
-                <div style="font-size:1rem; margin-bottom:7px; color:#f3f4f6;">
-                    <span style="color:#93c5fd; font-weight:700;">Pick:</span> {pick_text}
-                </div>
-                <div style="font-size:0.96rem; margin-bottom:7px; color:#e5e7eb;">
-                    <span style="color:#93c5fd; font-weight:700;">Market:</span> {market_text}
-                </div>
-                <div style="font-size:0.96rem; margin-bottom:7px; color:#e5e7eb;">
-                    <span style="color:#93c5fd; font-weight:700;">Book:</span> {sportsbook_text}
-                    &nbsp;&nbsp;
-                    <span style="color:#93c5fd; font-weight:700;">Odds:</span> {odds_text}
-                </div>
-                <div style="font-size:0.96rem; margin-bottom:7px; color:#e5e7eb;">
-                    <span style="color:#93c5fd; font-weight:700;">Edge:</span> {edge_val:.2f}%
-                    &nbsp;&nbsp;
-                    <span style="color:#93c5fd; font-weight:700;">True Confidence:</span> {true_conf:.1f}%
-                    &nbsp;&nbsp;
-                    <span style="color:#93c5fd; font-weight:700;">Units:</span> {units_val:.2f}
-                </div>
-                <div style="font-size:0.96rem; margin-bottom:7px; color:#e5e7eb;">
-                    <span style="color:#93c5fd; font-weight:700;">Risk Level:</span> {risk_level}
-                </div>
-                <div style="font-size:0.93rem; line-height:1.5; color:#f3f4f6;">
-                    <span style="color:#93c5fd; font-weight:700;">Note:</span> {note_text}
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        metric_col_1, metric_col_2, metric_col_3 = st.columns(3)
+        with metric_col_1:
+            st.metric("Watchlist Plays", len(watch_df))
+        with metric_col_2:
+            avg_edge = round(float(watch_df["edge"].mean()), 2) if not watch_df.empty else 0.0
+            st.metric("Avg Edge", avg_edge)
+        with metric_col_3:
+            avg_conf = round(float(watch_df["true_confidence"].mean()), 1) if not watch_df.empty else 0.0
+            st.metric("Avg True Confidence", avg_conf)
 
         st.markdown("---")
-        st.subheader("Top AI Options")
 
-        for _, row in top_df.head(5).iterrows():
-            option_matchup = _matchup_from_row(row)
-            option_pick = _pick_from_row(row)
-            option_market = _market_from_row(row)
-            option_book = _sportsbook_from_row(row)
-            option_odds = _odds_from_row(row)
-            option_true_conf = float(row.get("true_confidence", 0.0))
-            option_edge = float(row.get("edge", 0.0))
-            option_units = float(row.get("units", 0.0))
+        for _, row in watch_df.iterrows():
+            game = str(row.get("game", "")).strip() or "Unknown Matchup"
+            selection = str(row.get("selection", "")).strip() or "N/A"
+            market = str(row.get("market", "")).strip() or "N/A"
+            best_book = str(row.get("best_book", "")).strip() or "N/A"
+            odds = row.get("odds", "")
+            edge = float(safe_float(row.get("edge", 0.0), 0.0))
+            true_conf = float(safe_float(row.get("true_confidence", 0.0), 0.0))
+            units = float(safe_float(row.get("units", 0.0), 0.0))
 
             st.markdown(
                 f"""
-                <div style="
-                    border:1px solid rgba(17,24,39,0.10);
-                    border-radius:12px;
-                    padding:12px;
-                    margin-bottom:10px;
-                    background:#ffffff;
-                    color:#111827;
-                    box-shadow:0 2px 8px rgba(15,23,42,0.06);
-                ">
-                    <div style="font-weight:800; margin-bottom:6px; color:#111827;">
-                        {option_matchup}
-                    </div>
-                    <div style="margin-bottom:4px; color:#111827;">
-                        <b>Pick:</b> {option_pick}
-                    </div>
-                    <div style="margin-bottom:4px; color:#111827;">
-                        <b>Market:</b> {option_market}
-                    </div>
-                    <div style="margin-bottom:4px; color:#111827;">
-                        <b>Book:</b> {option_book} &nbsp;&nbsp; <b>Odds:</b> {option_odds}
-                    </div>
-                    <div style="color:#111827;">
-                        <b>Edge:</b> {option_edge:.2f}% &nbsp;&nbsp;
-                        <b>True Confidence:</b> {option_true_conf:.1f}% &nbsp;&nbsp;
-                        <b>Units:</b> {option_units:.2f}
-                    </div>
-                </div>
+<div style="background:#111827;border:1px solid #374151;border-radius:16px;padding:16px 18px;margin-bottom:14px;">
+    <div style="font-size:1.15rem;font-weight:700;color:#f9fafb;margin-bottom:10px;">{game}</div>
+    <div style="font-size:1rem;color:#e5e7eb;margin-bottom:8px;"><strong>Pick:</strong> {selection}</div>
+    <div style="font-size:1rem;color:#e5e7eb;margin-bottom:8px;"><strong>Market:</strong> {market}</div>
+    <div style="font-size:1rem;color:#e5e7eb;margin-bottom:8px;"><strong>Book:</strong> {best_book} | <strong>Odds:</strong> {odds}</div>
+    <div style="font-size:1rem;color:#e5e7eb;">
+        <strong>Edge:</strong> {edge:.2f}% |
+        <strong>True Confidence:</strong> {true_conf:.1f}% |
+        <strong>Units:</strong> {units:.2f}
+    </div>
+</div>
                 """,
                 unsafe_allow_html=True,
             )
-
-        st.markdown("---")
-        st.subheader("Best Available AI Parlay")
-
-        parlay_obj = None
-        if isinstance(best_parlay, dict) and best_parlay:
-            parlay_obj = best_parlay
-        elif isinstance(snapshot_parlay_df, pd.DataFrame) and not snapshot_parlay_df.empty:
-            try:
-                first_parlay = snapshot_parlay_df.iloc[0].to_dict()
-                parlay_obj = {
-                    "approval_type": first_parlay.get("approval_type", ""),
-                    "combined_odds": first_parlay.get("combined_odds", ""),
-                    "combined_odds_int": first_parlay.get("combined_odds_int", 0),
-                    "avg_true_conf": first_parlay.get("avg_true_conf", 0.0),
-                    "avg_edge": first_parlay.get("avg_edge", 0.0),
-                    "avg_books": first_parlay.get("avg_books", 0.0),
-                    "total_penalty": first_parlay.get("total_penalty", 0.0),
-                    "cross_game": first_parlay.get("cross_game", False),
-                    "correlation_score": first_parlay.get("correlation_score", 0.0),
-                    "score": first_parlay.get("score", 0.0),
-                    "display_score": first_parlay.get("display_score", 0.0),
-                    "risk_label": first_parlay.get("risk_label", ""),
-                    "reasons": str(first_parlay.get("reasons", "")).split(" | ") if str(first_parlay.get("reasons", "")).strip() else [],
-                    "legs": [
-                        {"selection": leg.strip(), "game": ""}
-                        for leg in str(first_parlay.get("legs_text", "")).split(" | ")
-                        if leg.strip()
-                    ],
-                }
-            except Exception:
-                parlay_obj = None
-
-        render_parlay_card(parlay_obj)
-        render_parlay_table(sharp_candidates, "Sharp Approved Candidates")
-        render_parlay_table(fallback_candidates, "Balanced Fallback Candidates")
 
 # =========================================================
 # BET LOG

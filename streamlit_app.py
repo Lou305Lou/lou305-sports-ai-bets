@@ -6296,13 +6296,32 @@ st.caption(
     "to short-term variance from weaker play types or categories."
 )
 
+safe_weights = learning_state.get("weights", {})
+if not isinstance(safe_weights, dict):
+    safe_weights = {}
+
 weight_df = pd.DataFrame(
     [
-        {"Factor": "True Probability", "Weight": float(learning_state["weights"].get("true_probability", 0.30))},
-        {"Factor": "Price Edge", "Weight": float(learning_state["weights"].get("price_edge", 0.25))},
-        {"Factor": "Market Signal", "Weight": float(learning_state["weights"].get("market_signal", 0.15))},
-        {"Factor": "Matchup Quality", "Weight": float(learning_state["weights"].get("matchup_quality", 0.15))},
-        {"Factor": "Historical Performance", "Weight": float(learning_state["weights"].get("historical_performance", 0.15))},
+        {
+            "Factor": "True Probability",
+            "Weight": float(safe_weights.get("true_probability", 0.30)),
+        },
+        {
+            "Factor": "Price Edge",
+            "Weight": float(safe_weights.get("price_edge", 0.25)),
+        },
+        {
+            "Factor": "Market Signal",
+            "Weight": float(safe_weights.get("market_signal", 0.15)),
+        },
+        {
+            "Factor": "Matchup Quality",
+            "Weight": float(safe_weights.get("matchup_quality", 0.15)),
+        },
+        {
+            "Factor": "Historical Performance",
+            "Weight": float(safe_weights.get("historical_performance", 0.15)),
+        },
     ]
 )
 
@@ -6318,7 +6337,10 @@ for category_name in ["Top Plays", "AI Picks", "AI Parlays", "Watchlist"]:
     threshold_rows.append(
         {
             "Category": category_name,
-            "Threshold": round(float(adjusted_category_thresholds.get(category_name, 0.03)), 4),
+            "Threshold": round(
+                float(adjusted_category_thresholds.get(category_name, 0.03)),
+                4,
+            ),
             "Status": _status_from_threshold(
                 adjusted_category_thresholds.get(category_name, 0.03),
                 base_thresholds.get(category_name, 0.03),
@@ -6339,16 +6361,22 @@ if play_type_stats:
         [
             {
                 "Play Type": play_type_name,
-                "Bets": stats["sample_size"],
-                "Wins": stats["wins"],
-                "Losses": stats["losses"],
+                "Bets": stats.get("sample_size", 0),
+                "Wins": stats.get("wins", 0),
+                "Losses": stats.get("losses", 0),
                 "Pushes": stats.get("pushes", 0),
-                "Win Rate %": stats["win_rate"],
-                "Profit": stats["profit"],
-                "ROI/Bet": stats["roi_per_bet"],
-                "Avg True Conf": stats["avg_true_conf"],
-                "Avg Edge": stats["avg_edge"],
-                "Filtered": "Yes" if learning_state.get("bad_play_type_flags", {}).get(play_type_name, {}).get("is_filtered", False) else "No",
+                "Win Rate %": stats.get("win_rate", 0.0),
+                "Profit": stats.get("profit", 0.0),
+                "ROI/Bet": stats.get("roi_per_bet", 0.0),
+                "Avg True Conf": stats.get("avg_true_conf", 0.0),
+                "Avg Edge": stats.get("avg_edge", 0.0),
+                "Filtered": (
+                    "Yes"
+                    if learning_state.get("bad_play_type_flags", {})
+                    .get(play_type_name, {})
+                    .get("is_filtered", False)
+                    else "No"
+                ),
             }
             for play_type_name, stats in play_type_stats.items()
         ]
@@ -6368,16 +6396,16 @@ if category_stats:
         [
             {
                 "Category": category_name,
-                "Bets": stats["sample_size"],
-                "Wins": stats["wins"],
-                "Losses": stats["losses"],
+                "Bets": stats.get("sample_size", 0),
+                "Wins": stats.get("wins", 0),
+                "Losses": stats.get("losses", 0),
                 "Pushes": stats.get("pushes", 0),
-                "Win Rate %": stats["win_rate"],
-                "Profit": stats["profit"],
-                "ROI/Bet": stats["roi_per_bet"],
-                "Avg True Conf": stats["avg_true_conf"],
-                "Avg Edge": stats["avg_edge"],
-                "Stage": stats["stage"],
+                "Win Rate %": stats.get("win_rate", 0.0),
+                "Profit": stats.get("profit", 0.0),
+                "ROI/Bet": stats.get("roi_per_bet", 0.0),
+                "Avg True Conf": stats.get("avg_true_conf", 0.0),
+                "Avg Edge": stats.get("avg_edge", 0.0),
+                "Stage": stats.get("stage", "Collecting"),
             }
             for category_name, stats in category_stats.items()
         ]
@@ -6393,10 +6421,12 @@ else:
 st.markdown("#### 📝 Learning Notes")
 
 if learning_state.get("learning_notes"):
-    for note in learning_state["learning_notes"]:
+    for note in learning_state.get("learning_notes", []):
         st.caption(f"• {note}")
 else:
-    st.caption("• Learning engine is active, but more settled samples are needed before stronger adjustments are made.")
+    st.caption(
+        "• Learning engine is active, but more settled samples are needed before stronger adjustments are made."
+    )
 
 st.caption(
     f"Last learning refresh: {learning_state.get('last_learning_refresh', 'Not available')}"
@@ -6407,16 +6437,16 @@ st.caption(
 # =========================================================
 st.markdown("### Learning Weights")
 
-weights = learning_state.get("weights", {})
+weights = safe_weights
 
 c1, c2 = st.columns(2)
 with c1:
-    st.metric("True Prob", f"{weights.get('true_probability', 0) * 100:.1f}%")
-    st.metric("Price Edge", f"{weights.get('price_edge', 0) * 100:.1f}%")
-    st.metric("Market Signal", f"{weights.get('market_signal', 0) * 100:.1f}%")
+    st.metric("True Prob", f"{float(weights.get('true_probability', 0.30)) * 100:.1f}%")
+    st.metric("Price Edge", f"{float(weights.get('price_edge', 0.25)) * 100:.1f}%")
+    st.metric("Market Signal", f"{float(weights.get('market_signal', 0.15)) * 100:.1f}%")
 with c2:
-    st.metric("Matchup Quality", f"{weights.get('matchup_quality', 0) * 100:.1f}%")
-    st.metric("History", f"{weights.get('historical_performance', 0) * 100:.1f}%")
+    st.metric("Matchup Quality", f"{float(weights.get('matchup_quality', 0.15)) * 100:.1f}%")
+    st.metric("History", f"{float(weights.get('historical_performance', 0.15)) * 100:.1f}%")
     st.metric("Min Samples", str(min_samples))
 
 last_update = learning_state.get("last_update")
@@ -6432,28 +6462,32 @@ if play_type_stats:
     pt_rows = []
     for play_type_name, stats in play_type_stats.items():
         flag_info = learning_state.get("bad_play_type_flags", {}).get(play_type_name, {})
-        pt_rows.append({
-            "Play Type": play_type_name if play_type_name else "Unknown",
-            "Stage": stats.get("stage", "Collecting"),
-            "Bets": stats.get("sample_size", 0),
-            "Wins": stats.get("wins", 0),
-            "Losses": stats.get("losses", 0),
-            "Pushes": stats.get("pushes", 0),
-            "Profit": stats.get("profit", 0.0),
-            "Win Rate %": stats.get("win_rate", 0.0),
-            "Avg True Conf": stats.get("avg_true_conf", 0.0),
-            "Avg Edge %": stats.get("avg_edge", 0.0),
-            "Filtered": "Yes" if flag_info.get("is_filtered", False) else "No",
-            "Reason": flag_info.get("reason", "")
-        })
+        pt_rows.append(
+            {
+                "Play Type": play_type_name if play_type_name else "Unknown",
+                "Stage": stats.get("stage", "Collecting"),
+                "Bets": stats.get("sample_size", 0),
+                "Wins": stats.get("wins", 0),
+                "Losses": stats.get("losses", 0),
+                "Pushes": stats.get("pushes", 0),
+                "Profit": stats.get("profit", 0.0),
+                "Win Rate %": stats.get("win_rate", 0.0),
+                "Avg True Conf": stats.get("avg_true_conf", 0.0),
+                "Avg Edge %": stats.get("avg_edge", 0.0),
+                "Filtered": "Yes" if flag_info.get("is_filtered", False) else "No",
+                "Reason": flag_info.get("reason", ""),
+            }
+        )
 
     pt_df = pd.DataFrame(pt_rows).sort_values(
         by=["Filtered", "Profit", "Win Rate %"],
-        ascending=[False, False, False]
+        ascending=[False, False, False],
     )
     st.dataframe(pt_df, use_container_width=True, hide_index=True)
 else:
-    st.info(f"No graded {selected_sport} bet history yet. The self-learning engine will activate after enough settled bets.")
+    st.info(
+        f"No graded {selected_sport} bet history yet. The self-learning engine will activate after enough settled bets."
+    )
 
 # =========================================================
 # CATEGORY PERFORMANCE SNAPSHOT
@@ -6463,22 +6497,24 @@ st.markdown("### Category Performance Snapshot")
 if category_stats:
     cat_rows = []
     for category_name, stats in category_stats.items():
-        cat_rows.append({
-            "Category": category_name if category_name else "Unknown",
-            "Stage": stats.get("stage", "Collecting"),
-            "Bets": stats.get("sample_size", 0),
-            "Wins": stats.get("wins", 0),
-            "Losses": stats.get("losses", 0),
-            "Pushes": stats.get("pushes", 0),
-            "Profit": stats.get("profit", 0.0),
-            "Win Rate %": stats.get("win_rate", 0.0),
-            "Avg True Conf": stats.get("avg_true_conf", 0.0),
-            "Avg Edge %": stats.get("avg_edge", 0.0),
-        })
+        cat_rows.append(
+            {
+                "Category": category_name if category_name else "Unknown",
+                "Stage": stats.get("stage", "Collecting"),
+                "Bets": stats.get("sample_size", 0),
+                "Wins": stats.get("wins", 0),
+                "Losses": stats.get("losses", 0),
+                "Pushes": stats.get("pushes", 0),
+                "Profit": stats.get("profit", 0.0),
+                "Win Rate %": stats.get("win_rate", 0.0),
+                "Avg True Conf": stats.get("avg_true_conf", 0.0),
+                "Avg Edge %": stats.get("avg_edge", 0.0),
+            }
+        )
 
     cat_df = pd.DataFrame(cat_rows).sort_values(
         by=["Profit", "Win Rate %"],
-        ascending=[False, False]
+        ascending=[False, False],
     )
     st.dataframe(cat_df, use_container_width=True, hide_index=True)
 else:

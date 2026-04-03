@@ -2284,28 +2284,16 @@ def generate_mock_prop_rows_for_game(game_label, selected_sport, home_team, away
     return rows
 
 # =========================================================
-# DATA BUILD
+# DATA BUILD (CLEAN SAFE VERSION)
 # =========================================================
 def generate_ai_plays():
     selected_sport = get_selected_sport()
     odds_games = get_effective_odds_games_for_sport(selected_sport)
-    slate_filters = get_today_games_filter()
-
-    empty_cols = [
-        "sport","game","market","selection","player","team","opponent","line",
-        "odds","best_price","best_book","implied_prob","true_prob","edge",
-        "price_edge","books","books_seen","consensus_pct","consensus",
-        "sharp_score","market_signal","matchup_score","historical_score",
-        "true_confidence","status","units","play_id","log_category",
-        "sportsdata_note","injury_flag","lineup_flag","model_score",
-        "context_score",
-    ]
 
     if not odds_games:
-        return pd.DataFrame(columns=empty_cols)
+        return pd.DataFrame()
 
     rows = []
-    fallback_rows = []
 
     for game in odds_games:
         home_team = str(game.get("home_team", "")).strip()
@@ -2314,140 +2302,91 @@ def generate_ai_plays():
         if not home_team or not away_team:
             continue
 
-        if not game_matches_filter(home_team, away_team, slate_filters):
-            continue
-
         game_label = f"{away_team} @ {home_team}"
-        bookmakers = game.get("bookmakers", [])
 
-        for book in bookmakers:
+        for book in game.get("bookmakers", []):
+            book_name = str(book.get("title", "")).strip()
+
             for market in book.get("markets", []):
-                market_key = str(market.get("key", "")).lower()
+                market_key = str(market.get("key", "")).strip().lower()
 
                 if market_key not in ["h2h", "spreads", "totals"]:
                     continue
 
-                for outcome in market.get("outcomes", []):
-                    price = safe_float(outcome.get("price", 0), 0)
+                normalized_market = normalize_market_name_by_sport(market_key, selected_sport)
 
-                    if price == 0:
+                for outcome in market.get("outcomes", []):
+                    price = outcome.get("price", None)
+                    if price is None:
                         continue
 
-                    implied_prob = american_to_implied_prob(price)
-                    true_prob = implied_prob + random.uniform(0.01, 0.05)
-                    edge = round((true_prob - implied_prob) * 100, 2)
+                    odds_int = american_to_int(price)
+                    if odds_int is None:
+                        continue
 
-                    true_conf = round(true_prob * 100, 2)
-                    books = len(bookmakers)
+                    implied_prob = american_to_implied_prob(odds_int)
+                    true_prob = clamp(implied_prob + 0.03, 0.02, 0.95)
+                    edge = round((true_prob - implied_prob) * 100.0, 2)
+                    true_conf = round(true_prob * 100.0, 2)
 
-                    status = ""
-                    category = ""
-
-                    if edge >= MIN_ACTIVE_EDGE and true_conf >= MIN_ACTIVE_TRUE_CONF:
+                    if edge >= 2.0:
                         status = "Active"
-                        category = "Top Plays"
-                    elif edge >= MIN_WATCH_EDGE:
+                        log_category = "Top Plays"
+                    else:
                         status = "Watchlist"
-                        category = "Watchlist"
+                        log_category = "Watchlist"
 
-                    row = {
-                        "sport": selected_sport,
-                        "game": game_label,
-                        "market": market_key,
-                        "selection": outcome.get("name"),
-                        "team": outcome.get("name"),
-                        "opponent": "",
-                        "line": outcome.get("point"),
-                        "odds": int(price),
-                        "best_price": int(price),
-                        "best_book": book.get("title"),
-                        "implied_prob": round(implied_prob * 100, 2),
-                        "true_prob": round(true_prob * 100, 2),
-                        "edge": edge,
-                        "price_edge": edge,
-                        "books": books,
-                        "books_seen": books,
-                        "consensus_pct": 50,
-                        "consensus": "50%",
-                        "sharp_score": 50,
-                        "market_signal": 50,
-                        "matchup_score": 50,
-                        "historical_score": 50,
-                        "true_confidence": true_conf,
-                        "status": status,
-                        "units": calculate_units(true_conf, status),
-                        "play_id": build_play_id(selected_sport, game_label, market_key, outcome.get("name"), outcome.get("point")),
-                        "log_category": category,
-                        "sportsdata_note": "",
-                        "injury_flag": "",
-                        "lineup_flag": "",
-                        "model_score": 50,
-                        "context_score": 0,
-                    }
+                    selection_name = str(outcome.get("name", "")).strip()
+                    line_value = outcome.get("point", None)
 
-                    fallback_rows.append(row)
+                    rows.append(
+                        {
+                            "sport": selected_sport,
+                            "game": game_label,
+                            "market": normalized_market,
+                            "selection": selection_name,
+                            "player": "",
+                            "team": selection_name,
+                            "opponent": "",
+                            "line": line_value,
+                            "odds": odds_int,
+                            "best_price": odds_int,
+                            "best_book": book_name,
+                            "implied_prob": round(implied_prob * 100.0, 2),
+                            "true_prob": round(true_prob * 100.0, 2),
+                            "edge": edge,
+                            "price_edge": edge,
+                            "books": 1,
+                            "books_seen": 1,
+                            "consensus_pct": 50.0,
+                            "consensus": "50%",
+                            "sharp_score": 50.0,
+                            "market_signal": 50.0,
+                            "matchup_score": 50.0,
+                            "historical_score": 50.0,
+                            "true_confidence": true_conf,
+                            "status": status,
+                            "units": calculate_units(true_conf, status),
+                            "play_id": build_play_id(
+                                selected_sport,
+                                game_label,
+                                normalized_market,
+                                selection_name,
+                                line_value,
+                            ),
+                            "log_category": log_category,
+                            "sportsdata_note": "",
+                            "injury_flag": "",
+                            "lineup_flag": "",
+                            "model_score": 50.0,
+                            "context_score": 0.0,
+                        }
+                    )
 
-                    if status:
-                        rows.append(row)
-
-    # -------------------------------
-    # PRIMARY / FALLBACK HANDLING
-    # -------------------------------
-    if rows:
-        plays_df = pd.DataFrame(rows)
-    elif fallback_rows:
-        plays_df = pd.DataFrame(fallback_rows)
-    else:
-        return pd.DataFrame(columns=empty_cols)
-
-    plays_df = normalize_dataframe_for_selected_sport(plays_df, selected_sport)
-    plays_df = recalculate_play_metrics(plays_df)
-
-    plays_df = plays_df.sort_values(
-        by=["true_confidence","edge"],
-        ascending=[False, False]
-    ).reset_index(drop=True)
-
-    return plays_df
-
-
-# =========================================================
-# EXECUTE DATA BUILD + SNAPSHOT
-# =========================================================
-plays_df = generate_ai_plays()
-selected_sport = get_selected_sport()
-
-if plays_df is None or not isinstance(plays_df, pd.DataFrame):
-    plays_df = pd.DataFrame()
-
-if plays_df.empty:
-    st.session_state["snapshot_top_plays_df"] = pd.DataFrame()
-    st.session_state["snapshot_watchlist_df"] = pd.DataFrame()
-    st.session_state["snapshot_ai_slip_df"] = pd.DataFrame()
-
-else:
-    active_df = plays_df[plays_df["status"] == "Active"].copy()
-    watchlist_df = plays_df[plays_df["status"] == "Watchlist"].copy()
-
-    if active_df.empty:
-        active_df = plays_df.head(TOP_PLAYS_LIMIT).copy()
-        active_df["status"] = "Active"
-
-    top_plays_df = active_df.head(TOP_PLAYS_LIMIT).copy()
-    ai_slip_df = top_plays_df.head(5).copy()
-
-    st.session_state["snapshot_top_plays_df"] = top_plays_df
-    st.session_state["snapshot_watchlist_df"] = watchlist_df
-    st.session_state["snapshot_ai_slip_df"] = ai_slip_df
-
-    # -----------------------------------------------------
-    # GLOBAL FALLBACK IF STRICT QUALIFICATION RETURNS EMPTY
-    # -----------------------------------------------------
-    if plays_df.empty and fallback_rows:
-        plays_df = pd.DataFrame(fallback_rows)
+    plays_df = pd.DataFrame(rows)
 
     if plays_df.empty:
-        return pd.DataFrame(columns=empty_cols)
+        return pd.DataFrame()
 
     plays_df = normalize_dataframe_for_selected_sport(plays_df, selected_sport)
     plays_df = recalculate_play_metrics(plays_df)
@@ -2461,20 +2400,10 @@ else:
     plays_df["status"] = plays_df["status"].fillna("").astype(str).str.strip()
     plays_df["log_category"] = plays_df["log_category"].fillna("").astype(str).str.strip()
 
-    plays_df.loc[plays_df["status"].eq("Watch"), "status"] = "Watchlist"
-
-    status_rank_map = {
-        "Active": 0,
-        "Watchlist": 1,
-    }
-    plays_df["status_rank"] = plays_df["status"].map(status_rank_map).fillna(9)
-
     plays_df = plays_df.sort_values(
-        by=["status_rank", "rank_score", "true_confidence", "edge", "books_seen"],
-        ascending=[True, False, False, False, False],
+        by=["true_confidence", "edge"],
+        ascending=[False, False],
     ).reset_index(drop=True)
-
-    plays_df = plays_df.drop(columns=["status_rank"], errors="ignore")
 
     if "play_id" in plays_df.columns:
         plays_df["play_id"] = plays_df["play_id"].fillna("").astype(str).str.strip()
@@ -2484,6 +2413,9 @@ else:
     return plays_df
 
 
+# =========================================================
+# EXECUTE DATA BUILD + SNAPSHOT
+# =========================================================
 plays_df = generate_ai_plays()
 selected_sport = get_selected_sport()
 
@@ -2512,6 +2444,8 @@ else:
 
     plays_df["status"] = plays_df["status"].fillna("").astype(str).str.strip()
     plays_df["log_category"] = plays_df["log_category"].fillna("").astype(str).str.strip()
+
+    plays_df.loc[plays_df["status"].eq("Watch"), "status"] = "Watchlist"
 
     active_df = plays_df[plays_df["status"] == "Active"].copy()
     watchlist_df = plays_df[plays_df["status"].isin(["Watchlist", "Watch"])].copy()

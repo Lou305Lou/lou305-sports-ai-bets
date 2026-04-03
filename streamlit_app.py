@@ -4582,6 +4582,82 @@ except Exception as e:
     st.session_state["snapshot_save_error"] = str(e)
 
 # =========================================================
+# RENDER HELPERS (FIXED - REQUIRED FOR UI)
+# =========================================================
+
+def render_mobile_or_table(df, best_first=True):
+    """
+    Safe renderer for mobile card UI OR fallback table
+    """
+    if df is None or df.empty:
+        st.info("No plays available.")
+        return
+
+    df = df.copy()
+
+    # Sort if needed
+    if best_first and "true_confidence" in df.columns:
+        df = df.sort_values(by="true_confidence", ascending=False)
+
+    for _, row in df.iterrows():
+        game = row.get("game", "N/A")
+        pick = row.get("selection", "N/A")
+        market = row.get("market", "N/A")
+        book = row.get("book", "N/A")
+        odds = row.get("odds", "N/A")
+        edge = row.get("edge", 0)
+        true_conf = row.get("true_confidence", 0)
+        units = row.get("units", 0)
+
+        st.markdown(f"""
+        <div style="
+            background-color:#1e1e1e;
+            padding:12px;
+            border-radius:10px;
+            margin-bottom:10px;
+            border:1px solid #333;
+        ">
+            <b>{game}</b><br>
+            Pick: {pick}<br>
+            Market: {market}<br>
+            Book: {book} | Odds: {odds}<br>
+            Edge: {edge:.2f}% | True Confidence: {true_conf:.1f}% | Units: {units}
+        </div>
+        """, unsafe_allow_html=True)
+
+
+def render_parlay_card(parlay_obj):
+    """
+    Safe parlay card renderer
+    """
+    if not parlay_obj:
+        st.info("No parlay available.")
+        return
+
+    legs = parlay_obj.get("legs", [])
+    total_odds = parlay_obj.get("odds", "N/A")
+    total_units = parlay_obj.get("units", 0)
+
+    st.markdown(f"""
+    <div style="
+        background-color:#111827;
+        padding:15px;
+        border-radius:12px;
+        border:1px solid #333;
+        margin-bottom:15px;
+    ">
+        <h4>🔥 AI Parlay</h4>
+        <b>Odds:</b> {total_odds}<br>
+        <b>Units:</b> {total_units}<br><br>
+    """, unsafe_allow_html=True)
+
+    for leg in legs:
+        st.markdown(f"""
+        • {leg.get("game","")} → {leg.get("selection","")}
+        """)
+
+    st.markdown("</div>", unsafe_allow_html=True)
+# =========================================================
 # TOP PLAYS
 # =========================================================
 if nav == "Top Plays":

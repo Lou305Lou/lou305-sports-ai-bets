@@ -2422,16 +2422,17 @@ selected_sport = get_selected_sport()
 if plays_df is None or not isinstance(plays_df, pd.DataFrame):
     plays_df = pd.DataFrame()
 
+# ---------------------------------------------------------
+# KEEP EXISTING SNAPSHOTS IF NO NEW PLAYS WERE BUILT
+# ---------------------------------------------------------
 if plays_df.empty:
-    st.session_state["plays_df"] = pd.DataFrame()
-    st.session_state["snapshot_plays_df"] = pd.DataFrame()
-    st.session_state["snapshot_all_plays_df"] = pd.DataFrame()
-    st.session_state["snapshot_active_df"] = pd.DataFrame()
-    st.session_state["snapshot_top_plays_df"] = pd.DataFrame()
-    st.session_state["snapshot_watchlist_df"] = pd.DataFrame()
-    st.session_state["snapshot_ai_slip_df"] = pd.DataFrame()
-    st.session_state["snapshot_parlay_df"] = pd.DataFrame()
-    st.session_state["snapshot_best_row"] = {}
+    existing_snapshot_df = st.session_state.get("snapshot_plays_df", pd.DataFrame())
+
+    if isinstance(existing_snapshot_df, pd.DataFrame) and not existing_snapshot_df.empty:
+        st.session_state["plays_df"] = existing_snapshot_df.copy()
+    else:
+        st.session_state["plays_df"] = pd.DataFrame()
+
 else:
     plays_df = normalize_dataframe_for_selected_sport(plays_df, selected_sport)
     plays_df = recalculate_play_metrics(plays_df)
@@ -2494,8 +2495,13 @@ else:
     st.session_state["snapshot_top_plays_df"] = top_plays_df.copy()
     st.session_state["snapshot_watchlist_df"] = watchlist_df.copy()
     st.session_state["snapshot_ai_slip_df"] = ai_slip_df.copy()
-    st.session_state["snapshot_parlay_df"] = pd.DataFrame()
-    st.session_state["snapshot_best_row"] = ai_slip_df.iloc[0].to_dict() if not ai_slip_df.empty else {}
+
+    if "snapshot_parlay_df" not in st.session_state:
+        st.session_state["snapshot_parlay_df"] = pd.DataFrame()
+
+    st.session_state["snapshot_best_row"] = (
+        ai_slip_df.iloc[0].to_dict() if not ai_slip_df.empty else st.session_state.get("snapshot_best_row", {})
+    )
 
     timestamp_now = pd.Timestamp.now().strftime("%Y-%m-%d %I:%M:%S %p")
     st.session_state["snapshot_generated_at"] = timestamp_now
@@ -2513,7 +2519,6 @@ else:
         save_tab_snapshots_to_disk()
     except Exception:
         pass
-
 # =========================================================
 # FORCE SESSION STATE PERSISTENCE (CRITICAL FIX)
 # =========================================================

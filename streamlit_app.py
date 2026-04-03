@@ -1314,7 +1314,19 @@ def game_matches_filter(home_team: str, away_team: str, filters: list):
             return True
 
     return False
-
+# =========================================================
+# EXECUTE MANUAL REFRESH REQUEST
+# =========================================================
+if st.session_state.pop("manual_refresh_triggered", False):
+    try:
+        refresh_live_odds()
+    except Exception as e:
+        st.session_state["last_refresh_error"] = str(e)
+        try:
+            set_api_status("error", f"Refresh failed: {e}")
+        except Exception:
+            pass
+    st.rerun()
 # =========================================================
 # CONSENSUS + SCORING HELPERS
 # =========================================================

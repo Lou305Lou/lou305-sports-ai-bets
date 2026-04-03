@@ -5902,274 +5902,390 @@ if nav == "Bet Log":
     )
 
 # =========================================================
-# SETTLED PERFORMANCE SUMMARY (SAFE FIX)
+# SETTLED PERFORMANCE SUMMARY + LEARNING UPDATE (SAFE FIX)
 # =========================================================
 
 # Ensure settled_df ALWAYS exists
 settled_df = pd.DataFrame()
 
+selected_sport = get_selected_sport()
+
 try:
-    selected_sport = get_selected_sport()
     sport_bet_log = get_bet_log_for_sport(selected_sport)
 
     if sport_bet_log:
         settled_df = pd.DataFrame(sport_bet_log).copy()
 
         # Ensure required columns exist
-        for col in ["result", "profit"]:
+        required_cols = [
+            "result",
+            "profit",
+            "market",
+            "log_category",
+            "true_confidence",
+            "edge",
+            "play_type",
+        ]
+        for col in required_cols:
             if col not in settled_df.columns:
                 settled_df[col] = ""
 
-        settled_df["result_clean"] = settled_df["result"].astype(str).str.strip().str.lower()
-        settled_df["profit_num"] = pd.to_numeric(settled_df["profit"], errors="coerce").fillna(0.0)
+        settled_df["result_clean"] = (
+            settled_df["result"]
+            .astype(str)
+            .str.strip()
+            .str.lower()
+            .replace(
+                {
+                    "won": "win",
+                    "lost": "loss",
+                    "pushes": "push",
+                }
+            )
+        )
+
+        settled_df["profit_num"] = pd.to_numeric(
+            settled_df["profit"], errors="coerce"
+        ).fillna(0.0)
+
+        settled_df["true_conf_num"] = pd.to_numeric(
+            settled_df["true_confidence"], errors="coerce"
+        ).fillna(0.0)
+
+        settled_df["edge_num"] = pd.to_numeric(
+            settled_df["edge"], errors="coerce"
+        ).fillna(0.0)
+
+        settled_df["market_clean"] = (
+            settled_df["market"].astype(str).str.strip().str.lower()
+        )
+
+        settled_df["category_clean"] = (
+            settled_df["log_category"].astype(str).str.strip()
+        )
+
+        settled_df["play_type_clean"] = (
+            settled_df["play_type"].astype(str).str.strip().str.lower()
+        )
+
+        settled_df = settled_df[
+            settled_df["result_clean"].isin(["win", "loss", "push"])
+        ].copy()
 
 except Exception as e:
     st.warning(f"Performance summary error: {e}")
     settled_df = pd.DataFrame()
 
-# Safe calculations
+# ---------------------------------------------------------
+# SAFE TOTALS
+# ---------------------------------------------------------
 if not settled_df.empty:
     total_settled_bets = int(len(settled_df))
     total_wins = int((settled_df["result_clean"] == "win").sum())
     total_losses = int((settled_df["result_clean"] == "loss").sum())
     total_pushes = int((settled_df["result_clean"] == "push").sum())
     total_profit = float(settled_df["profit_num"].sum())
+
+    decision_count = total_wins + total_losses
+    overall_win_rate = (
+        (total_wins / decision_count) * 100.0 if decision_count > 0 else 0.0
+    )
 else:
     total_settled_bets = 0
     total_wins = 0
     total_losses = 0
     total_pushes = 0
     total_profit = 0.0
+    overall_win_rate = 0.0
 
-# Display
+# ---------------------------------------------------------
+# DISPLAY
+# ---------------------------------------------------------
 st.markdown("### 📊 Performance Summary")
 
 col1, col2, col3, col4 = st.columns(4)
-
 col1.metric("Bets", total_settled_bets)
 col2.metric("Wins", total_wins)
 col3.metric("Losses", total_losses)
 col4.metric("Profit", f"{total_profit:.2f}")
 
-    # =========================================================
-    # BUILD PLAY TYPE STATS
-    # =========================================================
-    play_type_stats = {}
-    category_stats = {}
-    learning_notes = []
-    bad_play_type_flags = {}
+# ---------------------------------------------------------
+# SAFE DEFAULTS
+# ---------------------------------------------------------
+learning_state = get_active_learning_state(selected_sport)
 
-    if not settled_df.empty:
-        play_type_grouped = (
-            settled_df.groupby("play_type_clean", dropna=False)
-            .agg(
-                bets=("result_clean", "count"),
-                wins=("result_clean", lambda s: (s == "win").sum()),
-                losses=("result_clean", lambda s: (s == "loss").sum()),
-                pushes=("result_clean", lambda s: (s == "push").sum()),
-                profit=("profit_num", "sum"),
-                avg_true_conf=("true_conf_num", "mean"),
-                avg_edge=("edge_num", "mean"),
-            )
-            .reset_index()
+default_thresholds = {
+    "Top Plays": 0.03,
+    "AI Picks": 0.035,
+    "AI Parlays": 0.05,
+    "Watchlist": 0.02,
+    "Manual": 0.03,
+}
+
+if "default_learning_state" in globals() and isinstance(default_learning_state, dict):
+    default_thresholds = dict(
+        default_learning_state.get("category_thresholds", default_thresholds)
+    )
+
+learning_enabled = bool(st.session_state.get("learning_enabled", True))
+auto_filter_bad_types = bool(st.session_state.get("auto_filter_bad_types", True))
+min_samples = int(st.session_state.get("min_samples", 8))
+min_sample_size = int(st.session_state.get("min_sample_size", min_samples))
+
+def _safe_pct_threshold(value, fallback):
+    try:
+        return float(clamp(float(value), 0.015, 0.075))
+    except Exception:
+        return float(fallback)
+
+def _clamp(value, low, high):
+    try:
+        return max(low, min(high, float(value)))
+    except Exception:
+        return low
+
+def _learning_stage(sample_size):
+    sample_size = int(sample_size)
+    if sample_size >= 8:
+        return "Trusted"
+    if sample_size >= 5:
+        return "Active"
+    if sample_size >= min_samples:
+        return "Probation"
+    return "Collecting"
+
+# ---------------------------------------------------------
+# BUILD PLAY TYPE STATS
+# ---------------------------------------------------------
+play_type_stats = {}
+category_stats = {}
+learning_notes = []
+bad_play_type_flags = {}
+
+if not settled_df.empty:
+    play_type_grouped = (
+        settled_df.groupby("play_type_clean", dropna=False)
+        .agg(
+            bets=("result_clean", "count"),
+            wins=("result_clean", lambda s: (s == "win").sum()),
+            losses=("result_clean", lambda s: (s == "loss").sum()),
+            pushes=("result_clean", lambda s: (s == "push").sum()),
+            profit=("profit_num", "sum"),
+            avg_true_conf=("true_conf_num", "mean"),
+            avg_edge=("edge_num", "mean"),
         )
+        .reset_index()
+    )
 
-        for _, row in play_type_grouped.iterrows():
-            play_type_name = str(row["play_type_clean"]).strip()
-            if not play_type_name:
-                play_type_name = "unknown"
+    for _, row in play_type_grouped.iterrows():
+        play_type_name = str(row["play_type_clean"]).strip()
+        if not play_type_name:
+            play_type_name = "unknown"
 
-            bets = int(row["bets"])
-            wins = int(row["wins"])
-            losses = int(row["losses"])
-            pushes = int(row["pushes"])
-            profit = float(row["profit"])
-            avg_true_conf = float(row["avg_true_conf"]) if pd.notna(row["avg_true_conf"]) else 0.0
-            avg_edge = float(row["avg_edge"]) if pd.notna(row["avg_edge"]) else 0.0
-            decision_count = wins + losses
-            win_rate = (wins / decision_count * 100.0) if decision_count > 0 else 0.0
-            roi_per_bet = (profit / bets) if bets > 0 else 0.0
-            stage = _learning_stage(bets)
+        bets = int(row["bets"])
+        wins = int(row["wins"])
+        losses = int(row["losses"])
+        pushes = int(row["pushes"])
+        profit = float(row["profit"])
+        avg_true_conf = (
+            float(row["avg_true_conf"]) if pd.notna(row["avg_true_conf"]) else 0.0
+        )
+        avg_edge = float(row["avg_edge"]) if pd.notna(row["avg_edge"]) else 0.0
 
-            play_type_stats[play_type_name] = {
-                "sample_size": bets,
-                "wins": wins,
-                "losses": losses,
-                "pushes": pushes,
-                "profit": round(profit, 4),
-                "win_rate": round(win_rate, 2),
-                "roi_per_bet": round(roi_per_bet, 4),
-                "avg_true_conf": round(avg_true_conf, 2),
-                "avg_edge": round(avg_edge, 2),
-                "stage": stage,
-            }
+        decision_count = wins + losses
+        win_rate = (wins / decision_count * 100.0) if decision_count > 0 else 0.0
+        roi_per_bet = (profit / bets) if bets > 0 else 0.0
+        stage = _learning_stage(bets)
 
-            if auto_filter_bad_types:
-                if bets >= 8:
-                    if profit <= -2 and win_rate < 45:
-                        bad_play_type_flags[play_type_name] = {
-                            "is_filtered": True,
-                            "reason": f"Trusted filter: poor results ({wins}-{losses}-{pushes}, profit {round(profit, 2)})"
-                        }
-                    elif profit >= 2 and win_rate >= 55:
-                        bad_play_type_flags[play_type_name] = {
-                            "is_filtered": False,
-                            "reason": f"Trusted positive results ({wins}-{losses}-{pushes}, profit {round(profit, 2)})"
-                        }
-                    else:
-                        bad_play_type_flags[play_type_name] = {
-                            "is_filtered": False,
-                            "reason": "Trusted but neutral"
-                        }
+        play_type_stats[play_type_name] = {
+            "sample_size": bets,
+            "wins": wins,
+            "losses": losses,
+            "pushes": pushes,
+            "profit": round(profit, 4),
+            "win_rate": round(win_rate, 2),
+            "roi_per_bet": round(roi_per_bet, 4),
+            "avg_true_conf": round(avg_true_conf, 2),
+            "avg_edge": round(avg_edge, 2),
+            "stage": stage,
+        }
 
-                elif bets >= 5:
-                    if profit <= -1.5 and win_rate < 45:
-                        bad_play_type_flags[play_type_name] = {
-                            "is_filtered": True,
-                            "reason": f"Active filter: weak results ({wins}-{losses}-{pushes}, profit {round(profit, 2)})"
-                        }
-                    elif profit >= 1.5 and win_rate >= 55:
-                        bad_play_type_flags[play_type_name] = {
-                            "is_filtered": False,
-                            "reason": f"Active positive results ({wins}-{losses}-{pushes}, profit {round(profit, 2)})"
-                        }
-                    else:
-                        bad_play_type_flags[play_type_name] = {
-                            "is_filtered": False,
-                            "reason": "Active review"
-                        }
-
-                elif bets >= min_samples:
-                    if profit <= -1 and win_rate < 40:
-                        bad_play_type_flags[play_type_name] = {
-                            "is_filtered": True,
-                            "reason": f"Probation filter: very weak start ({wins}-{losses}-{pushes}, profit {round(profit, 2)})"
-                        }
-                    elif profit >= 1 and win_rate >= 60:
-                        bad_play_type_flags[play_type_name] = {
-                            "is_filtered": False,
-                            "reason": f"Probation positive start ({wins}-{losses}-{pushes}, profit {round(profit, 2)})"
-                        }
-                    else:
-                        bad_play_type_flags[play_type_name] = {
-                            "is_filtered": False,
-                            "reason": "Probation / still evaluating"
-                        }
+        if auto_filter_bad_types:
+            if bets >= 8:
+                if profit <= -2 and win_rate < 45:
+                    bad_play_type_flags[play_type_name] = {
+                        "is_filtered": True,
+                        "reason": f"Trusted filter: poor results ({wins}-{losses}-{pushes}, profit {round(profit, 2)})",
+                    }
+                elif profit >= 2 and win_rate >= 55:
+                    bad_play_type_flags[play_type_name] = {
+                        "is_filtered": False,
+                        "reason": f"Trusted positive results ({wins}-{losses}-{pushes}, profit {round(profit, 2)})",
+                    }
                 else:
                     bad_play_type_flags[play_type_name] = {
                         "is_filtered": False,
-                        "reason": f"Collecting data ({bets}/{min_samples})"
+                        "reason": "Trusted but neutral",
                     }
 
-        category_grouped = (
-            settled_df.groupby("category_clean", dropna=False)
-            .agg(
-                bets=("result_clean", "count"),
-                wins=("result_clean", lambda s: (s == "win").sum()),
-                losses=("result_clean", lambda s: (s == "loss").sum()),
-                pushes=("result_clean", lambda s: (s == "push").sum()),
-                profit=("profit_num", "sum"),
-                avg_true_conf=("true_conf_num", "mean"),
-                avg_edge=("edge_num", "mean"),
+            elif bets >= 5:
+                if profit <= -1.5 and win_rate < 45:
+                    bad_play_type_flags[play_type_name] = {
+                        "is_filtered": True,
+                        "reason": f"Active filter: weak results ({wins}-{losses}-{pushes}, profit {round(profit, 2)})",
+                    }
+                elif profit >= 1.5 and win_rate >= 55:
+                    bad_play_type_flags[play_type_name] = {
+                        "is_filtered": False,
+                        "reason": f"Active positive results ({wins}-{losses}-{pushes}, profit {round(profit, 2)})",
+                    }
+                else:
+                    bad_play_type_flags[play_type_name] = {
+                        "is_filtered": False,
+                        "reason": "Active review",
+                    }
+
+            elif bets >= min_samples:
+                if profit <= -1 and win_rate < 40:
+                    bad_play_type_flags[play_type_name] = {
+                        "is_filtered": True,
+                        "reason": f"Probation filter: very weak start ({wins}-{losses}-{pushes}, profit {round(profit, 2)})",
+                    }
+                elif profit >= 1 and win_rate >= 60:
+                    bad_play_type_flags[play_type_name] = {
+                        "is_filtered": False,
+                        "reason": f"Probation positive start ({wins}-{losses}-{pushes}, profit {round(profit, 2)})",
+                    }
+                else:
+                    bad_play_type_flags[play_type_name] = {
+                        "is_filtered": False,
+                        "reason": "Probation / still evaluating",
+                    }
+            else:
+                bad_play_type_flags[play_type_name] = {
+                    "is_filtered": False,
+                    "reason": f"Collecting data ({bets}/{min_samples})",
+                }
+
+    category_grouped = (
+        settled_df.groupby("category_clean", dropna=False)
+        .agg(
+            bets=("result_clean", "count"),
+            wins=("result_clean", lambda s: (s == "win").sum()),
+            losses=("result_clean", lambda s: (s == "loss").sum()),
+            pushes=("result_clean", lambda s: (s == "push").sum()),
+            profit=("profit_num", "sum"),
+            avg_true_conf=("true_conf_num", "mean"),
+            avg_edge=("edge_num", "mean"),
+        )
+        .reset_index()
+    )
+
+    for _, row in category_grouped.iterrows():
+        category_name = str(row["category_clean"]).strip()
+        if not category_name:
+            continue
+
+        bets = int(row["bets"])
+        wins = int(row["wins"])
+        losses = int(row["losses"])
+        pushes = int(row["pushes"])
+        profit = float(row["profit"])
+        avg_true_conf = (
+            float(row["avg_true_conf"]) if pd.notna(row["avg_true_conf"]) else 0.0
+        )
+        avg_edge = float(row["avg_edge"]) if pd.notna(row["avg_edge"]) else 0.0
+
+        decision_count = wins + losses
+        win_rate = (wins / decision_count * 100.0) if decision_count > 0 else 0.0
+        roi_per_bet = (profit / bets) if bets > 0 else 0.0
+        stage = _learning_stage(bets)
+
+        category_stats[category_name] = {
+            "sample_size": bets,
+            "wins": wins,
+            "losses": losses,
+            "pushes": pushes,
+            "profit": round(profit, 4),
+            "win_rate": round(win_rate, 2),
+            "roi_per_bet": round(roi_per_bet, 4),
+            "avg_true_conf": round(avg_true_conf, 2),
+            "avg_edge": round(avg_edge, 2),
+            "stage": stage,
+        }
+
+# ---------------------------------------------------------
+# CONTROLLED LEARNING ADJUSTMENTS
+# ---------------------------------------------------------
+adjusted_category_thresholds = dict(learning_state.get("category_thresholds", {}))
+
+for cat_name, fallback_val in default_thresholds.items():
+    adjusted_category_thresholds[cat_name] = _safe_pct_threshold(
+        adjusted_category_thresholds.get(cat_name, fallback_val),
+        fallback_val,
+    )
+
+if learning_enabled:
+    for category_name, stats in category_stats.items():
+        if category_name not in adjusted_category_thresholds:
+            continue
+
+        current_threshold = float(adjusted_category_thresholds.get(category_name, 0.03))
+        bets = int(stats.get("sample_size", 0))
+        profit = float(stats.get("profit", 0.0))
+        win_rate = float(stats.get("win_rate", 0.0))
+        avg_true_conf = float(stats.get("avg_true_conf", 0.0))
+
+        if bets >= min_samples:
+            if bets >= 8:
+                if profit <= -2 and win_rate < 45:
+                    current_threshold += 0.0030
+                elif profit >= 2 and win_rate >= 55 and avg_true_conf >= 65:
+                    current_threshold -= 0.0030
+
+            elif bets >= 5:
+                if profit <= -1.5 and win_rate < 45:
+                    current_threshold += 0.0025
+                elif profit >= 1.5 and win_rate >= 55 and avg_true_conf >= 65:
+                    current_threshold -= 0.0025
+
+            elif bets >= 3:
+                if profit <= -1 and win_rate < 40:
+                    current_threshold += 0.0015
+                elif profit >= 1 and win_rate >= 60 and avg_true_conf >= 68:
+                    current_threshold -= 0.0015
+
+            adjusted_category_thresholds[category_name] = _clamp(
+                current_threshold,
+                0.015,
+                0.075,
             )
-            .reset_index()
-        )
 
-        for _, row in category_grouped.iterrows():
-            category_name = str(row["category_clean"]).strip()
-            if not category_name:
-                continue
+    if total_settled_bets >= int(min_sample_size):
+        if overall_win_rate >= 55.0 and total_profit > 0:
+            learning_notes.append(
+                "Recent settled performance is positive. Slightly loosening qualified category thresholds."
+            )
+        elif overall_win_rate < 45.0 or total_profit < 0:
+            learning_notes.append(
+                "Recent settled performance is weak. Tightening category thresholds for better selectivity."
+            )
 
-            bets = int(row["bets"])
-            wins = int(row["wins"])
-            losses = int(row["losses"])
-            pushes = int(row["pushes"])
-            profit = float(row["profit"])
-            avg_true_conf = float(row["avg_true_conf"]) if pd.notna(row["avg_true_conf"]) else 0.0
-            avg_edge = float(row["avg_edge"]) if pd.notna(row["avg_edge"]) else 0.0
-            decision_count = wins + losses
-            win_rate = (wins / decision_count * 100.0) if decision_count > 0 else 0.0
-            roi_per_bet = (profit / bets) if bets > 0 else 0.0
-            stage = _learning_stage(bets)
+learning_state["play_type_stats"] = play_type_stats
+learning_state["category_stats"] = category_stats
+learning_state["bad_play_type_flags"] = (
+    bad_play_type_flags if auto_filter_bad_types else {}
+)
+learning_state["category_thresholds"] = adjusted_category_thresholds
+learning_state["learning_notes"] = learning_notes
+learning_state["last_learning_refresh"] = pd.Timestamp.now().strftime(
+    "%Y-%m-%d %I:%M:%S %p"
+)
+learning_state["last_update"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+learning_state["category_min_samples"] = min_samples
+learning_state["accelerated_learning_mode"] = min_samples <= 3
 
-            category_stats[category_name] = {
-                "sample_size": bets,
-                "wins": wins,
-                "losses": losses,
-                "pushes": pushes,
-                "profit": round(profit, 4),
-                "win_rate": round(win_rate, 2),
-                "roi_per_bet": round(roi_per_bet, 4),
-                "avg_true_conf": round(avg_true_conf, 2),
-                "avg_edge": round(avg_edge, 2),
-                "stage": stage,
-            }
-
-    # =========================================================
-    # CONTROLLED LEARNING ADJUSTMENTS
-    # =========================================================
-    adjusted_category_thresholds = learning_state.get("category_thresholds", {}).copy()
-    base_thresholds = default_learning_state["category_thresholds"].copy()
-
-    for cat_name, fallback_val in base_thresholds.items():
-        adjusted_category_thresholds[cat_name] = _safe_pct_threshold(
-            adjusted_category_thresholds.get(cat_name, fallback_val),
-            fallback_val,
-        )
-
-    if learning_enabled:
-        for category_name, stats in category_stats.items():
-            if category_name not in adjusted_category_thresholds:
-                continue
-
-            current_threshold = float(adjusted_category_thresholds.get(category_name, 0.03))
-            bets = int(stats.get("sample_size", 0))
-            profit = float(stats.get("profit", 0.0))
-            win_rate = float(stats.get("win_rate", 0.0))
-            avg_true_conf = float(stats.get("avg_true_conf", 0.0))
-
-            if bets >= min_samples:
-                if bets >= 8:
-                    if profit <= -2 and win_rate < 45:
-                        current_threshold += 0.0030
-                    elif profit >= 2 and win_rate >= 55 and avg_true_conf >= 65:
-                        current_threshold -= 0.0030
-
-                elif bets >= 5:
-                    if profit <= -1.5 and win_rate < 45:
-                        current_threshold += 0.0025
-                    elif profit >= 1.5 and win_rate >= 55 and avg_true_conf >= 65:
-                        current_threshold -= 0.0025
-
-                elif bets >= 3:
-                    if profit <= -1 and win_rate < 40:
-                        current_threshold += 0.0015
-                    elif profit >= 1 and win_rate >= 60 and avg_true_conf >= 68:
-                        current_threshold -= 0.0015
-
-                adjusted_category_thresholds[category_name] = _clamp(current_threshold, 0.015, 0.075)
-
-        if total_settled_bets >= int(min_sample_size):
-            if overall_win_rate >= 55.0 and total_profit > 0:
-                learning_notes.append(
-                    "Recent settled performance is positive. Slightly loosening qualified category thresholds."
-                )
-            elif overall_win_rate < 45.0 or total_profit < 0:
-                learning_notes.append(
-                    "Recent settled performance is weak. Tightening category thresholds for better selectivity."
-                )
-
-    learning_state["play_type_stats"] = play_type_stats
-    learning_state["category_stats"] = category_stats
-    learning_state["bad_play_type_flags"] = bad_play_type_flags if auto_filter_bad_types else {}
-    learning_state["category_thresholds"] = adjusted_category_thresholds
-    learning_state["learning_notes"] = learning_notes
-    learning_state["last_learning_refresh"] = pd.Timestamp.now().strftime("%Y-%m-%d %I:%M:%S %p")
-    learning_state["last_update"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    learning_state["category_min_samples"] = min_samples
-    learning_state["accelerated_learning_mode"] = min_samples <= 3
-
-    save_learning_state_for_sport(learning_state, selected_sport)
+save_learning_state_for_sport(learning_state, selected_sport)
 
     # =========================================================
     # TRUE PROBABILITY EMPHASIS

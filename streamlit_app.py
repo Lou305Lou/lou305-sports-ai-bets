@@ -58,7 +58,7 @@ PERSISTED_PLAYS_FILE = "persisted_plays_by_sport.json"
 
 ODDS_API_BASE = "https://api.the-odds-api.com/v4/sports"
 ODDS_REGIONS = "us"
-ODDS_MARKETS = "h2h,spreads,totals"
+ODDS_MARKETS = "h2h,spreads,totals,player_points,player_rebounds,player_assists,player_threes,player_pra"
 ODDS_ODDS_FORMAT = "american"
 ODDS_BOOKMAKERS = "draftkings,fanduel,betmgm,caesars,espnbet,betrivers"
 
@@ -2284,7 +2284,7 @@ def generate_mock_prop_rows_for_game(game_label, selected_sport, home_team, away
     return rows
 
 # =========================================================
-# DATA BUILD (PERSISTENCE LOCK FIX - SAFE FOR YOUR STRUCTURE)
+# DATA BUILD (CLEAN SAFE VERSION)
 # =========================================================
 def generate_ai_plays():
     selected_sport = get_selected_sport()
@@ -2298,6 +2298,12 @@ def generate_ai_plays():
         "h2h",
         "spreads",
         "totals",
+        "player_points",
+        "player_rebounds",
+        "player_assists",
+        "player_threes",
+        "player_pra",
+        "player_points_rebounds_assists",
     }
 
     for game in odds_games:
@@ -2331,14 +2337,28 @@ def generate_ai_plays():
 
                     line_value = outcome.get("point", None)
                     outcome_name = str(outcome.get("name", "")).strip()
+                    player_name = ""
+                    team_name = ""
+                    opponent = ""
+                    selection_name = outcome_name
 
-                    team_name = outcome_name
-                    opponent = away_team if team_name == home_team else home_team
+                    if market_key.startswith("player_"):
+                        player_name = str(outcome.get("description", "")).strip()
+                        if not player_name:
+                            continue
+                        selection_name = f"{player_name} {outcome_name} {line_value}".strip()
+                        normalized_market = market_key
+                    else:
+                        if market_key == "totals":
+                            selection_name = f"{outcome_name} {line_value}".strip() if line_value not in [None, ""] else outcome_name
+                        else:
+                            selection_name = outcome_name
+                            team_name = outcome_name
+                            opponent = away_team if team_name == home_team else home_team
 
                     implied_prob = american_to_implied_prob(odds_int)
                     true_prob = clamp(implied_prob + 0.03, 0.02, 0.95)
                     edge = round((true_prob - implied_prob) * 100.0, 2)
-
                     true_conf = calculate_true_confidence(
                         true_prob,
                         edge,
@@ -2363,7 +2383,8 @@ def generate_ai_plays():
                             "sport": selected_sport,
                             "game": game_label,
                             "market": normalized_market,
-                            "selection": outcome_name,
+                            "selection": selection_name,
+                            "player": player_name,
                             "team": team_name,
                             "opponent": opponent,
                             "line": line_value,
@@ -2376,6 +2397,12 @@ def generate_ai_plays():
                             "price_edge": edge,
                             "books": 1,
                             "books_seen": 1,
+                            "consensus_pct": 50.0,
+                            "consensus": "50%",
+                            "sharp_score": 50.0,
+                            "market_signal": 50.0,
+                            "matchup_score": 50.0,
+                            "historical_score": 50.0,
                             "true_confidence": true_conf,
                             "status": status,
                             "units": calculate_units(true_conf, status if status else "Watchlist"),
@@ -2383,12 +2410,30 @@ def generate_ai_plays():
                                 selected_sport,
                                 game_label,
                                 normalized_market,
-                                outcome_name,
+                                selection_name,
                                 line_value,
                             ),
                             "log_category": log_category,
+                            "sportsdata_note": "",
+                            "injury_flag": "",
+                            "lineup_flag": "",
+                            "model_score": calculate_model_score(true_prob, edge, 1),
+                            "context_score": 0.0,
                         }
                     )
+
+        if ENABLE_PLAYER_PROPS and selected_sport in PROP_TYPES_BY_SPORT:
+            try:
+                rows.extend(
+                    generate_mock_prop_rows_for_game(
+                        game_label=game_label,
+                        selected_sport=selected_sport,
+                        home_team=home_team,
+                        away_team=away_team,
+                    )
+                )
+            except Exception:
+                pass
 
     plays_df = pd.DataFrame(rows)
 
@@ -2398,17 +2443,24 @@ def generate_ai_plays():
     plays_df = normalize_dataframe_for_selected_sport(plays_df, selected_sport)
     plays_df = recalculate_play_metrics(plays_df)
 
+    if "status" not in plays_df.columns:
+        plays_df["status"] = ""
+
+    if "log_category" not in plays_df.columns:
+        plays_df["log_category"] = ""
+
+    plays_df["status"] = plays_df["status"].fillna("").astype(str).str.strip()
+    plays_df["log_category"] = plays_df["log_category"].fillna("").astype(str).str.strip()
+
     plays_df = plays_df.sort_values(
         by=["true_confidence", "edge"],
         ascending=[False, False],
     ).reset_index(drop=True)
 
-    # =====================================================
-    # 🔒 PERSISTENCE FIX (THIS IS THE KEY)
-    # =====================================================
-    st.session_state["generated_plays_df"] = plays_df.copy()
-    st.session_state["snapshot_plays_df"] = plays_df.copy()
-    st.session_state["snapshot_last_updated"] = pd.Timestamp.now().strftime("%Y-%m-%d %I:%M:%S %p")
+    if "play_id" in plays_df.columns:
+        plays_df["play_id"] = plays_df["play_id"].fillna("").astype(str).str.strip()
+        plays_df = plays_df[plays_df["play_id"] != ""].copy()
+        plays_df = plays_df.drop_duplicates(subset=["play_id"], keep="first").reset_index(drop=True)
 
     return plays_df
 
@@ -4675,42 +4727,46 @@ def _prep_df(df):
     return df
 
 # =========================================================
-# TOP PLAYS (SNAPSHOT LOCKED)
+# TOP PLAYS
 # =========================================================
 if nav == "Top Plays":
     st.header("🎯 Top Plays")
     st.caption("Up to 10 qualified plays only. No filler.")
 
-    snapshot_df = st.session_state.get("snapshot_plays_df", pd.DataFrame())
+    current_api_mode = st.session_state.get("api_mode", "idle")
+    top_df = _prep_df(st.session_state.get("snapshot_top_plays_df", pd.DataFrame()))
+    snapshot_last_updated = _nav_text(st.session_state.get("snapshot_last_updated", ""))
 
-    if snapshot_df.empty:
-        st.warning("Press 'Refresh Live Odds' in the sidebar to load plays.")
-    else:
-        st.caption(f"Last saved play snapshot: {st.session_state.get('snapshot_last_updated','')}")
-
-        display_df = snapshot_df.copy()
-
-        top_df = display_df[
-            display_df["status"].astype(str).str.strip() == "Active"
-        ].copy()
-
-        if top_df.empty:
-            st.info("No active plays currently qualified.")
+    if len(get_effective_odds_games()) == 0 and top_df.empty:
+        if current_api_mode == "waiting_reset":
+            reset_expected = _nav_text(st.session_state.get("odds_api_reset_expected", ""))
+            if reset_expected:
+                st.warning("The Odds API is waiting for reset. Expected reset around " + reset_expected + ".")
+            else:
+                st.warning("The Odds API is waiting for reset.")
         else:
-            top_df = top_df.head(10)
+            st.warning("Press 'Refresh Live Odds' in the sidebar to load live odds.")
+    elif top_df.empty:
+        st.info("No Top Plays currently qualified.")
+        if snapshot_last_updated:
+            st.caption("Last saved play snapshot: " + snapshot_last_updated)
+    else:
+        if snapshot_last_updated:
+            st.caption("Last saved play snapshot: " + snapshot_last_updated)
 
-            for i, row in top_df.iterrows():
-                st.markdown(f"""
-                ### 🎯 Top Play #{i+1}
-                Game: {row.get('game','')}
-                Pick: {row.get('selection','')}
-                Market: {row.get('market','')}
-                Book: {row.get('best_book','')}
-                Odds: {row.get('odds','')}
-                Edge: {row.get('edge','')}%
-                True Confidence: {row.get('true_confidence','')}%
-                Units: {row.get('units','')}
-                """)
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.metric("Top Plays Shown", len(top_df))
+        with c2:
+            st.metric("Avg Edge", _nav_num(top_df["edge"].mean(), 0.0, 2))
+        with c3:
+            st.metric("Avg True Confidence", _nav_num(top_df["true_confidence"].mean(), 0.0, 1))
+
+        st.markdown("---")
+        for idx, (_, row) in enumerate(top_df.head(TOP_PLAYS_LIMIT).iterrows(), start=1):
+            st.subheader("Top Play #" + str(idx))
+            _show_pick(row)
+            st.markdown("---")
 
 # =========================================================
 # WATCHLIST

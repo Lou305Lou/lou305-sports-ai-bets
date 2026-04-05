@@ -257,6 +257,15 @@ def _ensure_session_defaults():
 _ensure_session_defaults()
 
 # =========================================================
+# SNAPSHOT HELPER (FORCED LOCK)
+# =========================================================
+def get_locked_snapshot_df():
+    df = st.session_state.get("snapshot_plays_df", pd.DataFrame())
+    if isinstance(df, pd.DataFrame):
+        return df.copy()
+    return pd.DataFrame()
+
+# =========================================================
 # BASIC HELPERS
 # =========================================================
 def is_mobile():
@@ -4733,8 +4742,8 @@ if nav == "Top Plays":
     st.header("🎯 Top Plays")
     st.caption("Up to 10 qualified plays only. No filler.")
 
-    snapshot_df = _prep_df(st.session_state.get("snapshot_plays_df", pd.DataFrame()))
-    snapshot_last_updated = _nav_text(st.session_state.get("snapshot_last_updated", ""))
+    snapshot_df = get_locked_snapshot_df()
+    snapshot_last_updated = str(st.session_state.get("snapshot_last_updated", "")).strip()
 
     if snapshot_df.empty:
         st.warning("Press 'Refresh Live Odds' in the sidebar to load plays.")
@@ -4758,8 +4767,8 @@ elif nav == "Watchlist":
     st.header("👀 Watchlist")
     st.caption("Near-qualified plays worth monitoring.")
 
-    snapshot_df = _prep_df(st.session_state.get("snapshot_plays_df", pd.DataFrame()))
-    snapshot_last_updated = _nav_text(st.session_state.get("snapshot_last_updated", ""))
+    snapshot_df = get_locked_snapshot_df()
+    snapshot_last_updated = str(st.session_state.get("snapshot_last_updated", "")).strip()
 
     if snapshot_df.empty:
         st.warning("No watchlist data available.")
@@ -4783,8 +4792,8 @@ elif nav == "AI Slip":
     st.header("🧠 AI Slip")
     st.caption("Best combined plays based on current slate.")
 
-    snapshot_df = _prep_df(st.session_state.get("snapshot_plays_df", pd.DataFrame()))
-    snapshot_last_updated = _nav_text(st.session_state.get("snapshot_last_updated", ""))
+    snapshot_df = get_locked_snapshot_df()
+    snapshot_last_updated = str(st.session_state.get("snapshot_last_updated", "")).strip()
 
     if snapshot_df.empty:
         st.warning("No plays available to build AI Slip.")
@@ -4800,7 +4809,6 @@ elif nav == "AI Slip":
             st.info("Not enough plays for AI Slip.")
         else:
             slip_df = top_df.head(3)
-
             st.subheader("Suggested Parlay")
             st.dataframe(slip_df, use_container_width=True)
 

@@ -4733,40 +4733,23 @@ if nav == "Top Plays":
     st.header("🎯 Top Plays")
     st.caption("Up to 10 qualified plays only. No filler.")
 
-    current_api_mode = st.session_state.get("api_mode", "idle")
-    top_df = _prep_df(st.session_state.get("snapshot_top_plays_df", pd.DataFrame()))
+    snapshot_df = _prep_df(st.session_state.get("snapshot_plays_df", pd.DataFrame()))
     snapshot_last_updated = _nav_text(st.session_state.get("snapshot_last_updated", ""))
 
-    if len(get_effective_odds_games()) == 0 and top_df.empty:
-        if current_api_mode == "waiting_reset":
-            reset_expected = _nav_text(st.session_state.get("odds_api_reset_expected", ""))
-            if reset_expected:
-                st.warning("The Odds API is waiting for reset. Expected reset around " + reset_expected + ".")
-            else:
-                st.warning("The Odds API is waiting for reset.")
-        else:
-            st.warning("Press 'Refresh Live Odds' in the sidebar to load live odds.")
-    elif top_df.empty:
-        st.info("No Top Plays currently qualified.")
-        if snapshot_last_updated:
-            st.caption("Last saved play snapshot: " + snapshot_last_updated)
+    if snapshot_df.empty:
+        st.warning("Press 'Refresh Live Odds' in the sidebar to load plays.")
     else:
         if snapshot_last_updated:
-            st.caption("Last saved play snapshot: " + snapshot_last_updated)
+            st.caption("Snapshot locked: " + snapshot_last_updated)
 
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            st.metric("Top Plays Shown", len(top_df))
-        with c2:
-            st.metric("Avg Edge", _nav_num(top_df["edge"].mean(), 0.0, 2))
-        with c3:
-            st.metric("Avg True Confidence", _nav_num(top_df["true_confidence"].mean(), 0.0, 1))
+        top_df = snapshot_df[
+            snapshot_df["status"].astype(str).str.strip() == "Active"
+        ].copy()
 
-        st.markdown("---")
-        for idx, (_, row) in enumerate(top_df.head(TOP_PLAYS_LIMIT).iterrows(), start=1):
-            st.subheader("Top Play #" + str(idx))
-            _show_pick(row)
-            st.markdown("---")
+        if top_df.empty:
+            st.info("No active plays currently qualified.")
+        else:
+            st.dataframe(top_df.head(TOP_PLAYS_LIMIT), use_container_width=True)
 
 # =========================================================
 # WATCHLIST
@@ -4775,40 +4758,23 @@ elif nav == "Watchlist":
     st.header("👀 Watchlist")
     st.caption("Near-qualified plays worth monitoring.")
 
-    current_api_mode = st.session_state.get("api_mode", "idle")
-    watch_df = _prep_df(st.session_state.get("snapshot_watchlist_df", pd.DataFrame()))
+    snapshot_df = _prep_df(st.session_state.get("snapshot_plays_df", pd.DataFrame()))
     snapshot_last_updated = _nav_text(st.session_state.get("snapshot_last_updated", ""))
 
-    if len(get_effective_odds_games()) == 0 and watch_df.empty:
-        if current_api_mode == "waiting_reset":
-            reset_expected = _nav_text(st.session_state.get("odds_api_reset_expected", ""))
-            if reset_expected:
-                st.warning("The Odds API is waiting for reset. Expected reset around " + reset_expected + ".")
-            else:
-                st.warning("The Odds API is waiting for reset.")
-        else:
-            st.warning("Press 'Refresh Live Odds' in the sidebar to load live odds.")
-    elif watch_df.empty:
-        st.info("No Watchlist plays currently qualified.")
-        if snapshot_last_updated:
-            st.caption("Last saved play snapshot: " + snapshot_last_updated)
+    if snapshot_df.empty:
+        st.warning("No watchlist data available.")
     else:
         if snapshot_last_updated:
-            st.caption("Last saved play snapshot: " + snapshot_last_updated)
+            st.caption("Snapshot locked: " + snapshot_last_updated)
 
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            st.metric("Watchlist Plays", len(watch_df))
-        with c2:
-            st.metric("Avg Edge", _nav_num(watch_df["edge"].mean(), 0.0, 2))
-        with c3:
-            st.metric("Avg True Confidence", _nav_num(watch_df["true_confidence"].mean(), 0.0, 1))
+        watch_df = snapshot_df[
+            snapshot_df["status"].astype(str).str.strip() == "Watchlist"
+        ].copy()
 
-        st.markdown("---")
-        for idx, (_, row) in enumerate(watch_df.head(WATCHLIST_LIMIT).iterrows(), start=1):
-            st.subheader("Watchlist Play #" + str(idx))
-            _show_pick(row)
-            st.markdown("---")
+        if watch_df.empty:
+            st.info("No watchlist plays currently.")
+        else:
+            st.dataframe(watch_df.head(WATCHLIST_LIMIT), use_container_width=True)
 
 # =========================================================
 # AI SLIP
@@ -4817,44 +4783,26 @@ elif nav == "AI Slip":
     st.header("🧠 AI Slip")
     st.caption("Best combined plays based on current slate.")
 
-    ai_df = _prep_df(st.session_state.get("snapshot_ai_slip_df", pd.DataFrame()))
-    parlay_df = _nav_df(st.session_state.get("snapshot_parlay_df", pd.DataFrame()))
+    snapshot_df = _prep_df(st.session_state.get("snapshot_plays_df", pd.DataFrame()))
     snapshot_last_updated = _nav_text(st.session_state.get("snapshot_last_updated", ""))
 
-    if ai_df.empty:
-        st.info("No AI plays available yet.")
-        if snapshot_last_updated:
-            st.caption("Last saved play snapshot: " + snapshot_last_updated)
+    if snapshot_df.empty:
+        st.warning("No plays available to build AI Slip.")
     else:
         if snapshot_last_updated:
-            st.caption("Last saved play snapshot: " + snapshot_last_updated)
+            st.caption("Snapshot locked: " + snapshot_last_updated)
 
-        st.subheader("Best Current AI Play")
-        _show_pick(ai_df.iloc[0])
+        top_df = snapshot_df[
+            snapshot_df["status"].astype(str).str.strip() == "Active"
+        ].copy()
 
-        st.markdown("---")
-        st.subheader("Top AI Options")
-        for idx, (_, row) in enumerate(ai_df.head(5).iterrows(), start=1):
-            st.write("AI Option #" + str(idx))
-            _show_pick(row)
-            st.markdown("---")
+        if len(top_df) < 2:
+            st.info("Not enough plays for AI Slip.")
+        else:
+            slip_df = top_df.head(3)
 
-    st.subheader("AI Parlay")
-    if isinstance(parlay_df, pd.DataFrame) and not parlay_df.empty:
-        row = parlay_df.iloc[0]
-        st.write("Approval Type:", _nav_text(row.get("approval_type", ""), "Primary"))
-        st.write("Leg Count:", _nav_text(row.get("leg_count", ""), "N/A"))
-        st.write("Odds:", _nav_text(row.get("combined_odds", row.get("combined_odds_int", "")), "N/A"))
-        st.write("Avg True Confidence:", _nav_text(row.get("avg_true_conf", ""), "N/A"))
-        st.write("Avg Edge:", _nav_text(row.get("avg_edge", ""), "N/A"))
-        st.write("Risk Label:", _nav_text(row.get("risk_label", ""), "N/A"))
-        st.write("Games:", _nav_text(row.get("games_text", ""), "N/A"))
-        st.write("Selections:", _nav_text(row.get("legs_text", ""), "N/A"))
-        reasons = _nav_text(row.get("reasons", ""), "")
-        if reasons:
-            st.write("Reasons:", reasons)
-    else:
-        st.info("No parlay available.")
+            st.subheader("Suggested Parlay")
+            st.dataframe(slip_df, use_container_width=True)
 
 # =========================================================
 # BET LOG

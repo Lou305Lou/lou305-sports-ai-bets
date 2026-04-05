@@ -58,7 +58,7 @@ PERSISTED_PLAYS_FILE = "persisted_plays_by_sport.json"
 
 ODDS_API_BASE = "https://api.the-odds-api.com/v4/sports"
 ODDS_REGIONS = "us"
-ODDS_MARKETS = "h2h,spreads,totals,player_points,player_rebounds,player_assists,player_threes,player_pra"
+ODDS_MARKETS = "h2h,spreads,totals"
 ODDS_ODDS_FORMAT = "american"
 ODDS_BOOKMAKERS = "draftkings,fanduel,betmgm,caesars,espnbet,betrivers"
 

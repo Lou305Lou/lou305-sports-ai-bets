@@ -2284,7 +2284,7 @@ def generate_mock_prop_rows_for_game(game_label, selected_sport, home_team, away
     return rows
 
 # =========================================================
-# DATA BUILD (CLEAN SAFE VERSION)
+# DATA BUILD (PERSISTENCE LOCK FIX - SAFE FOR YOUR STRUCTURE)
 # =========================================================
 def generate_ai_plays():
     selected_sport = get_selected_sport()
@@ -2298,12 +2298,6 @@ def generate_ai_plays():
         "h2h",
         "spreads",
         "totals",
-        "player_points",
-        "player_rebounds",
-        "player_assists",
-        "player_threes",
-        "player_pra",
-        "player_points_rebounds_assists",
     }
 
     for game in odds_games:
@@ -2337,28 +2331,14 @@ def generate_ai_plays():
 
                     line_value = outcome.get("point", None)
                     outcome_name = str(outcome.get("name", "")).strip()
-                    player_name = ""
-                    team_name = ""
-                    opponent = ""
-                    selection_name = outcome_name
 
-                    if market_key.startswith("player_"):
-                        player_name = str(outcome.get("description", "")).strip()
-                        if not player_name:
-                            continue
-                        selection_name = f"{player_name} {outcome_name} {line_value}".strip()
-                        normalized_market = market_key
-                    else:
-                        if market_key == "totals":
-                            selection_name = f"{outcome_name} {line_value}".strip() if line_value not in [None, ""] else outcome_name
-                        else:
-                            selection_name = outcome_name
-                            team_name = outcome_name
-                            opponent = away_team if team_name == home_team else home_team
+                    team_name = outcome_name
+                    opponent = away_team if team_name == home_team else home_team
 
                     implied_prob = american_to_implied_prob(odds_int)
                     true_prob = clamp(implied_prob + 0.03, 0.02, 0.95)
                     edge = round((true_prob - implied_prob) * 100.0, 2)
+
                     true_conf = calculate_true_confidence(
                         true_prob,
                         edge,
@@ -2383,8 +2363,7 @@ def generate_ai_plays():
                             "sport": selected_sport,
                             "game": game_label,
                             "market": normalized_market,
-                            "selection": selection_name,
-                            "player": player_name,
+                            "selection": outcome_name,
                             "team": team_name,
                             "opponent": opponent,
                             "line": line_value,
@@ -2397,12 +2376,6 @@ def generate_ai_plays():
                             "price_edge": edge,
                             "books": 1,
                             "books_seen": 1,
-                            "consensus_pct": 50.0,
-                            "consensus": "50%",
-                            "sharp_score": 50.0,
-                            "market_signal": 50.0,
-                            "matchup_score": 50.0,
-                            "historical_score": 50.0,
                             "true_confidence": true_conf,
                             "status": status,
                             "units": calculate_units(true_conf, status if status else "Watchlist"),
@@ -2410,30 +2383,12 @@ def generate_ai_plays():
                                 selected_sport,
                                 game_label,
                                 normalized_market,
-                                selection_name,
+                                outcome_name,
                                 line_value,
                             ),
                             "log_category": log_category,
-                            "sportsdata_note": "",
-                            "injury_flag": "",
-                            "lineup_flag": "",
-                            "model_score": calculate_model_score(true_prob, edge, 1),
-                            "context_score": 0.0,
                         }
                     )
-
-        if ENABLE_PLAYER_PROPS and selected_sport in PROP_TYPES_BY_SPORT:
-            try:
-                rows.extend(
-                    generate_mock_prop_rows_for_game(
-                        game_label=game_label,
-                        selected_sport=selected_sport,
-                        home_team=home_team,
-                        away_team=away_team,
-                    )
-                )
-            except Exception:
-                pass
 
     plays_df = pd.DataFrame(rows)
 
@@ -2443,24 +2398,17 @@ def generate_ai_plays():
     plays_df = normalize_dataframe_for_selected_sport(plays_df, selected_sport)
     plays_df = recalculate_play_metrics(plays_df)
 
-    if "status" not in plays_df.columns:
-        plays_df["status"] = ""
-
-    if "log_category" not in plays_df.columns:
-        plays_df["log_category"] = ""
-
-    plays_df["status"] = plays_df["status"].fillna("").astype(str).str.strip()
-    plays_df["log_category"] = plays_df["log_category"].fillna("").astype(str).str.strip()
-
     plays_df = plays_df.sort_values(
         by=["true_confidence", "edge"],
         ascending=[False, False],
     ).reset_index(drop=True)
 
-    if "play_id" in plays_df.columns:
-        plays_df["play_id"] = plays_df["play_id"].fillna("").astype(str).str.strip()
-        plays_df = plays_df[plays_df["play_id"] != ""].copy()
-        plays_df = plays_df.drop_duplicates(subset=["play_id"], keep="first").reset_index(drop=True)
+    # =====================================================
+    # 🔒 PERSISTENCE FIX (THIS IS THE KEY)
+    # =====================================================
+    st.session_state["generated_plays_df"] = plays_df.copy()
+    st.session_state["snapshot_plays_df"] = plays_df.copy()
+    st.session_state["snapshot_last_updated"] = pd.Timestamp.now().strftime("%Y-%m-%d %I:%M:%S %p")
 
     return plays_df
 

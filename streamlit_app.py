@@ -4675,46 +4675,42 @@ def _prep_df(df):
     return df
 
 # =========================================================
-# TOP PLAYS
+# TOP PLAYS (SNAPSHOT LOCKED)
 # =========================================================
 if nav == "Top Plays":
     st.header("🎯 Top Plays")
     st.caption("Up to 10 qualified plays only. No filler.")
 
-    current_api_mode = st.session_state.get("api_mode", "idle")
-    top_df = _prep_df(st.session_state.get("snapshot_top_plays_df", pd.DataFrame()))
-    snapshot_last_updated = _nav_text(st.session_state.get("snapshot_last_updated", ""))
+    snapshot_df = st.session_state.get("snapshot_plays_df", pd.DataFrame())
 
-    if len(get_effective_odds_games()) == 0 and top_df.empty:
-        if current_api_mode == "waiting_reset":
-            reset_expected = _nav_text(st.session_state.get("odds_api_reset_expected", ""))
-            if reset_expected:
-                st.warning("The Odds API is waiting for reset. Expected reset around " + reset_expected + ".")
-            else:
-                st.warning("The Odds API is waiting for reset.")
-        else:
-            st.warning("Press 'Refresh Live Odds' in the sidebar to load live odds.")
-    elif top_df.empty:
-        st.info("No Top Plays currently qualified.")
-        if snapshot_last_updated:
-            st.caption("Last saved play snapshot: " + snapshot_last_updated)
+    if snapshot_df.empty:
+        st.warning("Press 'Refresh Live Odds' in the sidebar to load plays.")
     else:
-        if snapshot_last_updated:
-            st.caption("Last saved play snapshot: " + snapshot_last_updated)
+        st.caption(f"Last saved play snapshot: {st.session_state.get('snapshot_last_updated','')}")
 
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            st.metric("Top Plays Shown", len(top_df))
-        with c2:
-            st.metric("Avg Edge", _nav_num(top_df["edge"].mean(), 0.0, 2))
-        with c3:
-            st.metric("Avg True Confidence", _nav_num(top_df["true_confidence"].mean(), 0.0, 1))
+        display_df = snapshot_df.copy()
 
-        st.markdown("---")
-        for idx, (_, row) in enumerate(top_df.head(TOP_PLAYS_LIMIT).iterrows(), start=1):
-            st.subheader("Top Play #" + str(idx))
-            _show_pick(row)
-            st.markdown("---")
+        top_df = display_df[
+            display_df["status"].astype(str).str.strip() == "Active"
+        ].copy()
+
+        if top_df.empty:
+            st.info("No active plays currently qualified.")
+        else:
+            top_df = top_df.head(10)
+
+            for i, row in top_df.iterrows():
+                st.markdown(f"""
+                ### 🎯 Top Play #{i+1}
+                Game: {row.get('game','')}
+                Pick: {row.get('selection','')}
+                Market: {row.get('market','')}
+                Book: {row.get('best_book','')}
+                Odds: {row.get('odds','')}
+                Edge: {row.get('edge','')}%
+                True Confidence: {row.get('true_confidence','')}%
+                Units: {row.get('units','')}
+                """)
 
 # =========================================================
 # WATCHLIST

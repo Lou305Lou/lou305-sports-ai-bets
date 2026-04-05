@@ -265,6 +265,40 @@ def get_locked_snapshot_df():
         return df.copy()
     return pd.DataFrame()
 
+def get_locked_tab_df(primary_key, fallback_statuses=None, limit=None):
+    df = _nav_df(st.session_state.get(primary_key, pd.DataFrame()))
+    if not df.empty:
+        df = _prep_df(df)
+        if limit is not None:
+            return df.head(limit).copy()
+        return df.copy()
+
+    base_df = _prep_df(get_locked_snapshot_df())
+    if base_df.empty:
+        return pd.DataFrame()
+
+    if fallback_statuses:
+        normalized_statuses = [str(x).strip() for x in fallback_statuses]
+        if "status" in base_df.columns:
+            filtered = base_df[
+                base_df["status"].astype(str).str.strip().isin(normalized_statuses)
+            ].copy()
+        else:
+            filtered = pd.DataFrame()
+    else:
+        filtered = base_df.copy()
+
+    if filtered.empty and primary_key == "snapshot_top_plays_df":
+        filtered = base_df.head(TOP_PLAYS_LIMIT).copy()
+        if not filtered.empty:
+            filtered["status"] = filtered.get("status", "").astype(str) if "status" in filtered.columns else "Fallback"
+            filtered["log_category"] = "Top Plays"
+
+    if limit is not None and not filtered.empty:
+        filtered = filtered.head(limit).copy()
+
+    return filtered.reset_index(drop=True)
+
 # =========================================================
 # BASIC HELPERS
 # =========================================================
@@ -4742,23 +4776,32 @@ if nav == "Top Plays":
     st.header("🎯 Top Plays")
     st.caption("Up to 10 qualified plays only. No filler.")
 
-    snapshot_df = get_locked_snapshot_df()
-    snapshot_last_updated = str(st.session_state.get("snapshot_last_updated", "")).strip()
+    top_df = get_locked_tab_df(
+        "snapshot_top_plays_df",
+        fallback_statuses=["Active", "Fallback"],
+        limit=TOP_PLAYS_LIMIT,
+    )
+    snapshot_last_updated = _nav_text(st.session_state.get("snapshot_last_updated", ""))
 
-    if snapshot_df.empty:
+    if top_df.empty:
         st.warning("Press 'Refresh Live Odds' in the sidebar to load plays.")
     else:
         if snapshot_last_updated:
             st.caption("Snapshot locked: " + snapshot_last_updated)
 
-        top_df = snapshot_df[
-            snapshot_df["status"].astype(str).str.strip() == "Active"
-        ].copy()
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.metric("Top Plays", len(top_df))
+        with c2:
+            st.metric("Avg Edge", _nav_num(top_df["edge"].mean(), 0.0, 2))
+        with c3:
+            st.metric("Avg True Confidence", _nav_num(top_df["true_confidence"].mean(), 0.0, 1))
 
-        if top_df.empty:
-            st.info("No active plays currently qualified.")
-        else:
-            st.dataframe(top_df.head(TOP_PLAYS_LIMIT), use_container_width=True)
+        st.markdown("---")
+        for idx, (_, row) in enumerate(top_df.iterrows(), start=1):
+            st.subheader("Top Play #" + str(idx))
+            _show_pick(row)
+            st.markdown("---")
 
 # =========================================================
 # WATCHLIST
@@ -4767,23 +4810,34 @@ elif nav == "Watchlist":
     st.header("👀 Watchlist")
     st.caption("Near-qualified plays worth monitoring.")
 
-    snapshot_df = get_locked_snapshot_df()
-    snapshot_last_updated = str(st.session_state.get("snapshot_last_updated", "")).strip()
+    watch_df = get_locked_tab_df(
+        "snapshot_watchlist_df",
+        fallback_statuses=["Watchlist"],
+        limit=WATCHLIST_LIMIT,
+    )
+    snapshot_last_updated = _nav_text(st.session_state.get("snapshot_last_updated", ""))
 
-    if snapshot_df.empty:
-        st.warning("No watchlist data available.")
+    if watch_df.empty:
+        st.info("No Watchlist plays currently qualified.")
+        if snapshot_last_updated:
+            st.caption("Snapshot locked: " + snapshot_last_updated)
     else:
         if snapshot_last_updated:
             st.caption("Snapshot locked: " + snapshot_last_updated)
 
-        watch_df = snapshot_df[
-            snapshot_df["status"].astype(str).str.strip() == "Watchlist"
-        ].copy()
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.metric("Watchlist Plays", len(watch_df))
+        with c2:
+            st.metric("Avg Edge", _nav_num(watch_df["edge"].mean(), 0.0, 2))
+        with c3:
+            st.metric("Avg True Confidence", _nav_num(watch_df["true_confidence"].mean(), 0.0, 1))
 
-        if watch_df.empty:
-            st.info("No watchlist plays currently.")
-        else:
-            st.dataframe(watch_df.head(WATCHLIST_LIMIT), use_container_width=True)
+        st.markdown("---")
+        for idx, (_, row) in enumerate(watch_df.iterrows(), start=1):
+            st.subheader("Watchlist Play #" + str(idx))
+            _show_pick(row)
+            st.markdown("---")
 
 # =========================================================
 # AI SLIP
@@ -4792,25 +4846,56 @@ elif nav == "AI Slip":
     st.header("🧠 AI Slip")
     st.caption("Best combined plays based on current slate.")
 
-    snapshot_df = get_locked_snapshot_df()
-    snapshot_last_updated = str(st.session_state.get("snapshot_last_updated", "")).strip()
+    ai_df = get_locked_tab_df(
+        "snapshot_ai_slip_df",
+        fallback_statuses=["Active", "Fallback"],
+        limit=5,
+    )
+    if ai_df.empty:
+        ai_df = get_locked_tab_df(
+            "snapshot_top_plays_df",
+            fallback_statuses=["Active", "Fallback"],
+            limit=5,
+        )
 
-    if snapshot_df.empty:
-        st.warning("No plays available to build AI Slip.")
+    parlay_df = _nav_df(st.session_state.get("snapshot_parlay_df", pd.DataFrame()))
+    snapshot_last_updated = _nav_text(st.session_state.get("snapshot_last_updated", ""))
+
+    if snapshot_last_updated:
+        st.caption("Snapshot locked: " + snapshot_last_updated)
+
+    if ai_df.empty:
+        st.info("No AI plays available yet.")
     else:
-        if snapshot_last_updated:
-            st.caption("Snapshot locked: " + snapshot_last_updated)
+        st.subheader("Best Current AI Play")
+        _show_pick(ai_df.iloc[0])
 
-        top_df = snapshot_df[
-            snapshot_df["status"].astype(str).str.strip() == "Active"
-        ].copy()
+        if len(ai_df) > 1:
+            st.markdown("---")
+            st.subheader("Top AI Options")
+            for idx, (_, row) in enumerate(ai_df.head(5).iterrows(), start=1):
+                st.write("AI Option #" + str(idx))
+                _show_pick(row)
+                st.markdown("---")
 
-        if len(top_df) < 2:
-            st.info("Not enough plays for AI Slip.")
-        else:
-            slip_df = top_df.head(3)
-            st.subheader("Suggested Parlay")
-            st.dataframe(slip_df, use_container_width=True)
+    st.subheader("AI Parlay")
+    if isinstance(parlay_df, pd.DataFrame) and not parlay_df.empty:
+        row = parlay_df.iloc[0]
+        st.write("Approval Type:", _nav_text(row.get("approval_type", ""), "Primary"))
+        st.write("Leg Count:", _nav_text(row.get("leg_count", ""), "N/A"))
+        st.write("Odds:", _nav_text(row.get("combined_odds", row.get("combined_odds_int", "")), "N/A"))
+        st.write("Avg True Confidence:", _nav_text(row.get("avg_true_conf", ""), "N/A"))
+        st.write("Total Edge:", _nav_text(row.get("total_edge", ""), "N/A"))
+        st.write("Summary:", _nav_text(row.get("summary", ""), "No summary available."))
+    elif len(ai_df) >= 2:
+        slip_df = ai_df.head(3).copy()
+        st.write("Suggested fallback parlay built from locked AI options:")
+        for idx, (_, row) in enumerate(slip_df.iterrows(), start=1):
+            st.write("Leg #" + str(idx))
+            _show_pick(row)
+            st.markdown("---")
+    else:
+        st.info("Not enough plays for AI Slip.")
 
 # =========================================================
 # BET LOG

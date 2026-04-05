@@ -4776,12 +4776,25 @@ if nav == "Top Plays":
     st.header("🎯 Top Plays")
     st.caption("Up to 10 qualified plays only. No filler.")
 
-    top_df = get_locked_tab_df(
-        "snapshot_top_plays_df",
-        fallback_statuses=["Active", "Fallback"],
-        limit=TOP_PLAYS_LIMIT,
-    )
-    snapshot_last_updated = _nav_text(st.session_state.get("snapshot_last_updated", ""))
+    snapshot_last_updated = str(st.session_state.get("snapshot_last_updated", "")).strip()
+
+    top_df = pd.DataFrame()
+    snapshot_top_df = st.session_state.get("snapshot_top_plays_df", pd.DataFrame())
+    snapshot_all_df = st.session_state.get("snapshot_plays_df", pd.DataFrame())
+
+    if isinstance(snapshot_top_df, pd.DataFrame) and not snapshot_top_df.empty:
+        top_df = snapshot_top_df.copy()
+    elif isinstance(snapshot_all_df, pd.DataFrame) and not snapshot_all_df.empty:
+        working_df = snapshot_all_df.copy()
+        if "status" in working_df.columns:
+            top_df = working_df[
+                working_df["status"].astype(str).str.strip().isin(["Active", "Fallback"])
+            ].copy()
+        else:
+            top_df = working_df.copy()
+
+    if isinstance(top_df, pd.DataFrame) and not top_df.empty:
+        top_df = _prep_df(top_df).head(TOP_PLAYS_LIMIT).reset_index(drop=True)
 
     if top_df.empty:
         st.warning("Press 'Refresh Live Odds' in the sidebar to load plays.")
@@ -4789,19 +4802,42 @@ if nav == "Top Plays":
         if snapshot_last_updated:
             st.caption("Snapshot locked: " + snapshot_last_updated)
 
-        c1, c2, c3 = st.columns(3)
-        with c1:
+        col1, col2, col3 = st.columns(3)
+        with col1:
             st.metric("Top Plays", len(top_df))
-        with c2:
+        with col2:
             st.metric("Avg Edge", _nav_num(top_df["edge"].mean(), 0.0, 2))
-        with c3:
+        with col3:
             st.metric("Avg True Confidence", _nav_num(top_df["true_confidence"].mean(), 0.0, 1))
 
         st.markdown("---")
+
+        renderable_count = 0
         for idx, (_, row) in enumerate(top_df.iterrows(), start=1):
-            st.subheader("Top Play #" + str(idx))
-            _show_pick(row)
-            st.markdown("---")
+            try:
+                st.subheader(f"Top Play #{idx}")
+                _show_pick(row)
+                st.markdown("---")
+                renderable_count += 1
+            except Exception:
+                try:
+                    st.subheader(f"Top Play #{idx}")
+                    st.write("Game:", _nav_text(row.get("game", ""), "N/A"))
+                    st.write("Pick:", _nav_text(row.get("selection", ""), "N/A"))
+                    st.write("Market:", _nav_text(row.get("market", ""), "N/A"))
+                    st.write("Book:", _nav_text(row.get("best_book", ""), "N/A"))
+                    st.write("Odds:", _nav_text(row.get("odds", ""), "N/A"))
+                    st.write("Edge:", _nav_text(row.get("edge", ""), "N/A"))
+                    st.write("True Confidence:", _nav_text(row.get("true_confidence", ""), "N/A"))
+                    st.write("Units:", _nav_text(row.get("units", ""), "N/A"))
+                    st.markdown("---")
+                    renderable_count += 1
+                except Exception:
+                    pass
+
+        if renderable_count == 0:
+            st.info("Top Plays data exists, but card rendering failed. Showing table fallback below.")
+            st.dataframe(top_df, use_container_width=True)
 
 # =========================================================
 # WATCHLIST

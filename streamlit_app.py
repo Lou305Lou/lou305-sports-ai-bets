@@ -1,3 +1,33 @@
+# ============================
+# STREAMLIT APP – CONNECT TO ENGINE
+# ============================
+
+import streamlit as st
+from engine import init_db, refresh_all_sports, analyze_cards_with_qwen
+
+# Initialize database
+init_db()
+st.title("Sports AI Bets – Engine Control")
+
+if st.button("Refresh Odds (All Sports)"):
+    refresh_all_sports()
+    st.success("Odds refreshed and cards saved.")
+
+if st.button("Run AI Selection (Qwen 3.6 Plus)"):
+    result = analyze_cards_with_qwen()
+    if result:
+        st.subheader("Engine State")
+        st.write(result.get("engine_state"))
+        st.subheader("Notes")
+        st.write(result.get("notes"))
+        st.subheader("Strong Cards")
+        st.json(result.get("strong_cards"))
+        st.subheader("Parlay Suggestions")
+        st.json(result.get("parlay_suggestions"))
+    else:
+        st.warning("No result from AI selection.")
+
+
 # =========================================================
 # IMPORTS + API CONFIG (CLEAN MASTER BLOCK)
 # =========================================================

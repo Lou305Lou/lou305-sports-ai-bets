@@ -282,46 +282,100 @@ def render_app_shell() -> None:
 
 # In your main file, after st.set_page_config(...), you will call:
 # render_app_shell()
-# ============================================================
-# ENGINE V36 — UNIFIED AI ENGINE (QWEN + CONTEXT + LEARNING)
-# ============================================================
+# ------------- CHUNK 237: V37 OPERATOR REPORT GENERATOR (DAILY/WEEKLY AUTO-REPORTS) -------------
 
-import os
-import json
-import hashlib
-import requests
-import pandas as pd
-from datetime import datetime
-from itertools import combinations
+import datetime
 
-from utils_v36 import (
-    safe_float, safe_int, clamp,
-    american_to_int, american_to_implied_prob,
-    calculate_market_signal, calculate_matchup_score,
-    calculate_historical_score, calculate_true_confidence,
-    normalize_dataframe_for_selected_sport,
-    recalc_rank_metrics_v36,
-)
+def _generate_daily_report(stats, insights):
+    """
+    Generate a structured daily operator report.
+    """
 
-from learning_v36 import (
-    enrich_play_learning_v36,
-    apply_learning_filters_v36,
-    load_learning_state,
-    save_learning_state,
-)
+    date = datetime.datetime.utcnow().strftime("%Y-%m-%d")
 
-from qwen_v36 import (
-    qwen_reasoning_on_play,
-    qwen_reasoning_on_parlay,
-    qwen_reasoning_on_slate,
-)
+    # Compute this outside the f-string to avoid nested braces
+    auto_dist = stats.get("autonomous_state_distribution", {"UNKNOWN": 1})
+    most_frequent_state = max(auto_dist, key=auto_dist.get)
 
-from context_v36 import (
-    fetch_news_context,
-    fetch_x_context,
-    fetch_injury_context,
-    fetch_line_movement_context,
-)
+    return f"""
+# 📅 V37 Daily Operator Report — {date}
+
+## 🏆 Master Engine
+- Average Master Score: `{stats.get("avg_master_score", 0):.4f}`
+
+## 🩺 System Health
+- Average Health Score: `{stats.get("avg_health_score", 0):.4f}`
+- Average Alert Count: `{stats.get("avg_alert_count", 0):.2f}`
+
+## 🧬 Meta-Brain
+- Average Meta-Confidence: `{stats.get("avg_meta_confidence", 0):.4f}`
+
+## 🚨 Safe Mode
+- Safe Mode Frequency: `{stats.get("safe_mode_frequency", 0):.2%}`
+
+## 🤖 Autonomous Mode
+- Most Frequent State: **{most_frequent_state}**
+
+## 🧠 AI Insights
+{insights}
+
+---
+Generated automatically by the V37 Operator Report Engine.
+"""
+
+
+def _generate_weekly_report(stats, insights):
+    """
+    Generate a structured weekly operator report.
+    """
+
+    date = datetime.datetime.utcnow().strftime("%Y-%m-%d")
+
+    return f"""
+# 📊 V37 Weekly Operator Report — Week Ending {date}
+
+## 🔎 System Overview
+This weekly report summarizes long-horizon performance, stability, and risk conditions across the V37 architecture.
+
+## 🏆 Master Engine Performance
+- Average Master Score: `{stats.get("avg_master_score", 0):.4f}`
+- Interpretation: {"Strong" if stats.get("avg_master_score",0)>0.75 else "Moderate" if stats.get("avg_master_score",0)>0.50 else "Weak"}
+
+## 🩺 System Health & Stability
+- Average Health Score: `{stats.get("avg_health_score", 0):.4f}`
+- Average Alert Count: `{stats.get("avg_alert_count", 0):.2f}`
+- Safe Mode Frequency: `{stats.get("safe_mode_frequency", 0):.2%}`
+
+## 🧬 Meta-Brain Confidence
+- Average Meta-Confidence: `{stats.get("avg_meta_confidence", 0):.4f}`
+
+## 🤖 Autonomous Mode Behavior
+- State Distribution:
+{stats.get("autonomous_state_distribution", {})}
+
+## 🧠 AI Insights
+{insights}
+
+---
+Generated automatically by the V37 Operator Report Engine.
+"""
+
+
+# ------------- CHUNK 238: V37 NOTIFICATION ENGINE (EMAIL/SMS/PUSH ROUTING) -------------
+
+import datetime
+
+def _default_notification_channels():
+    """
+    Default notification channels.
+    These are abstracted - actual delivery is handled externally.
+    """
+
+    return {
+        "email": True,
+        "sms": False,
+        "push": True,
+    }
 
 # ============================================================
 # MAIN ENGINE ENTRY

@@ -21720,6 +21720,10 @@ def _generate_daily_report(stats, insights):
 
     date = datetime.datetime.utcnow().strftime("%Y-%m-%d")
 
+    # Compute this outside the f-string to avoid nested braces
+    auto_dist = stats.get("autonomous_state_distribution", {"UNKNOWN": 1})
+    most_frequent_state = max(auto_dist, key=auto_dist.get)
+
     return f"""
 # 📅 V37 Daily Operator Report — {date}
 
@@ -21737,7 +21741,7 @@ def _generate_daily_report(stats, insights):
 - Safe Mode Frequency: `{stats.get("safe_mode_frequency", 0):.2%}`
 
 ## 🤖 Autonomous Mode
-- Most Frequent State: **{max(stats.get("autonomous_state_distribution", {'UNKNOWN':1}), key=stats.get("autonomous_state_distribution", {'UNKNOWN':1}).get)}**
+- Most Frequent State: **{most_frequent_state}**
 
 ## 🧠 AI Insights
 {insights}
@@ -21745,6 +21749,7 @@ def _generate_daily_report(stats, insights):
 ---
 Generated automatically by the V37 Operator Report Engine.
 """
+
 
 
 def _generate_weekly_report(stats, insights):

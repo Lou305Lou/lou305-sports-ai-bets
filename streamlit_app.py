@@ -21823,7 +21823,7 @@ def _log_notification(message, severity, channels):
 def _route_notification(message, severity, channels, enabled_channels):
     """
     Route a notification to the appropriate channels.
-    This is abstract — actual delivery is external.
+    This is abstract - actual delivery is external.
     """
 
     delivered = []

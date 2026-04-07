@@ -21617,7 +21617,6 @@ def render_v37_memory_visualizer():
 
     df = _memory_to_dataframe(buffer)
 
-
     # --- MASTER SCORE TREND ---
     st.subheader("🏆 Master Score Trend")
     fig = px.line(df, x="timestamp", y="master_score", title="Master Score Over Time")
@@ -21645,11 +21644,7 @@ def render_v37_memory_visualizer():
 
     # --- AUTONOMOUS MODE DISTRIBUTION ---
     st.subheader("🤖 Autonomous Mode Distribution")
-    fig = px.pie(
-        df,
-        names="auto_state",
-        title="Autonomous Mode State Distribution"
-    )
+    fig = px.pie(df, names="auto_state", title="Autonomous Mode State Distribution")
     st.plotly_chart(fig, use_container_width=True)
 
     # Export
@@ -21663,6 +21658,7 @@ def render_v37_memory_visualizer():
     st.json(st.session_state["v37_memory_visualizer_export"])
 
     st.success("V37 Memory Visualizer complete.")
+
 # ------------- CHUNK 236: V37 MEMORY INSIGHTS ENGINE (AI-GENERATED HISTORICAL INSIGHTS) -------------
 
 def _generate_memory_insights(stats):

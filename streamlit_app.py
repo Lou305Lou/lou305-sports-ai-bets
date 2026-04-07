@@ -11569,7 +11569,10 @@ def _collect_market_environment_opportunity_data():
         clusters.append("Compression Breakout Opportunity Cluster")
     if exhaustion_opp > 0.5 and drift_opp > 0.5:
         clusters.append("Exhaustion Reversal Opportunity Cluster")
-    if shock_opp > 0.5 and volatility_opp := vol_cycle_opp > 0.5:
+    volatility_opp = vol_cycle_opp > 0.5
+
+    if shock_opp > 0.5 and volatility_opp:
+
         clusters.append("Shock Fade Opportunity Cluster")
     if regime_alignment_opp > 0.5 and momentum_opp > 0.5:
         clusters.append("Regime Alignment Opportunity Cluster")

@@ -13658,7 +13658,8 @@ def _compute_micro_forecast_score(data):
     env = data["micro_environment_score"] or 0
     risk = data["micro_risk_score"] or 0
     opp = data["micro_opportunity_score"] or 0
-    conf = data["micro_confidence_score
+    conf = data["micro_confidence_score"]
+
 # ------------- CHUNK 112: MICRO NARRATIVE ENGINE -------------
 
 def _collect_micro_narrative_data():

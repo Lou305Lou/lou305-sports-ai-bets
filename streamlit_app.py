@@ -24280,9 +24280,10 @@ def _generate_operator_response(intent):
 def render_v37_operator_ai_assistant():
     """
     Full UI for the V37 Operator AI Assistant.
+    Conversational control interface for the entire V37 system.
     """
 
-    st.title("🗣️ V37 Operator AI Assistant")
+    st.title("V37 Operator AI Assistant")
     st.caption("Conversational control interface for the entire V37 system.")
 
     # Load or initialize state
@@ -24298,12 +24299,12 @@ def render_v37_operator_ai_assistant():
 
         _log_operator_interaction(query, response)
 
-        st.subheader("💬 Assistant Response")
+        st.subheader("Assistant Response")
         themed_card_container()
         st.json(response)
 
     # --- LOG ---
-    st.subheader("📜 Interaction Log")
+    st.subheader("Interaction Log")
     st.json(st.session_state["v37_operator_assistant_state"]["interaction_log"][-20:])
 
     # --- EXPORT ---
@@ -24317,4 +24318,5 @@ def render_v37_operator_ai_assistant():
     st.json(st.session_state["v37_operator_assistant_export"])
 
     st.success("V37 Operator AI Assistant loaded.")
+
 

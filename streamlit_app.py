@@ -21751,7 +21751,6 @@ Generated automatically by the V37 Operator Report Engine.
 """
 
 
-
 def _generate_weekly_report(stats, insights):
     """
     Generate a structured weekly operator report.
@@ -21779,6 +21778,16 @@ This weekly report summarizes long-horizon performance, stability, and risk cond
 
 ## 🤖 Autonomous Mode Behavior
 - State Distribution:
+{stats.get("autonomous_state_distribution", {})}
+
+## 🧠 AI Insights
+{insights}
+
+---
+Generated automatically by the V37 Operator Report Engine.
+"""
+
+
 # ------------- CHUNK 238: V37 NOTIFICATION ENGINE (EMAIL/SMS/PUSH ROUTING) -------------
 
 import datetime
@@ -21787,7 +21796,6 @@ def _default_notification_channels():
     """
     Default notification channels.
     These are abstracted - actual delivery is handled externally.
-
     """
 
     return {
@@ -21796,143 +21804,6 @@ def _default_notification_channels():
         "push": True,
     }
 
-
-def _default_routing_rules():
-    """
-    Default routing rules based on severity.
-    """
-
-    return {
-        "INFO": ["email"],
-        "WARNING": ["email", "push"],
-        "CRITICAL": ["email", "sms", "push"],
-    }
-
-
-def _log_notification(message, severity, channels):
-    """
-    Append a notification entry to the log.
-    """
-
-    if "v37_notification_log" not in st.session_state:
-        st.session_state["v37_notification_log"] = []
-
-    st.session_state["v37_notification_log"].append({
-        "timestamp": datetime.datetime.utcnow().isoformat(),
-        "message": message,
-        "severity": severity,
-        "channels": channels
-    })
-
-
-def _route_notification(message, severity, channels, enabled_channels):
-    """
-    Route a notification to the appropriate channels.
-    This is abstract - actual delivery is external.
-    """
-
-    delivered = []
-
-    for ch in channels:
-        if enabled_channels.get(ch, False):
-            delivered.append(ch)
-
-    _log_notification(message, severity, delivered)
-
-    return delivered
-
-
-def send_v37_notification(message, severity="INFO"):
-    """
-    Public function for sending notifications.
-    """
-
-    enabled_channels = st.session_state.get(
-        "v37_notification_channels",
-        _default_notification_channels()
-    )
-
-    routing_rules = st.session_state.get(
-        "v37_notification_routing",
-        _default_routing_rules()
-    )
-
-    channels = routing_rules.get(severity.upper(), ["email"])
-
-    delivered = _route_notification(
-        message,
-        severity.upper(),
-        channels,
-        enabled_channels
-    )
-
-    return delivered
-
-
-def render_v37_notification_engine():
-    """
-    Full UI for the V37 Notification Engine.
-    """
-
-    st.title("📣 V37 Notification Engine")
-    st.caption("Routing layer for Email, SMS, and Push notifications.")
-
-    # --- CHANNEL SETTINGS ---
-    st.subheader("🔧 Notification Channels")
-
-    channels = st.session_state.get(
-        "v37_notification_channels",
-        _default_notification_channels()
-    )
-
-    email_enabled = st.checkbox("Email", value=channels["email"])
-    sms_enabled = st.checkbox("SMS", value=channels["sms"])
-    push_enabled = st.checkbox("Push", value=channels["push"])
-
-    st.session_state["v37_notification_channels"] = {
-        "email": email_enabled,
-        "sms": sms_enabled,
-        "push": push_enabled
-    }
-
-    # --- ROUTING RULES ---
-    st.subheader("📡 Routing Rules")
-
-    routing = st.session_state.get(
-        "v37_notification_routing",
-        _default_routing_rules()
-    )
-
-    st.json(routing)
-
-    # --- SEND TEST NOTIFICATION ---
-    st.subheader("🧪 Send Test Notification")
-
-    msg = st.text_input("Message", "Test notification from V37")
-    severity = st.selectbox("Severity", ["INFO", "WARNING", "CRITICAL"])
-
-    if st.button("Send Notification"):
-        delivered = send_v37_notification(msg, severity)
-        st.success(f"Delivered via: {delivered}")
-
-    # --- NOTIFICATION LOG ---
-    st.subheader("📜 Notification Log")
-
-    st.json(st.session_state.get("v37_notification_log", []))
-
-    # --- EXPORT ---
-    st.session_state["v37_notification_export"] = {
-        "channels": st.session_state["v37_notification_channels"],
-        "routing": st.session_state.get("v37_notification_routing"),
-        "log_length": len(st.session_state.get("v37_notification_log", [])),
-        "notification_engine_ready": True
-    }
-
-    themed_card_container()
-    st.markdown("### Notification Export Object")
-    st.json(st.session_state["v37_notification_export"])
-
-    st.success("V37 Notification Engine complete.")
 # ------------- CHUNK 239: V37 OPERATOR CONSOLE 2.0 (UNIFIED CONTROL ROOM) -------------
 
 def render_v37_operator_console_v2():

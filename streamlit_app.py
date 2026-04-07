@@ -24318,5 +24318,3 @@ def render_v37_operator_ai_assistant():
     st.json(st.session_state["v37_operator_assistant_export"])
 
     st.success("V37 Operator AI Assistant loaded.")
-
-

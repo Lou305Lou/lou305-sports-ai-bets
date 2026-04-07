@@ -22634,7 +22634,7 @@ def _log_agent_action(action, details):
 
 def _determine_agent_mode(diagnostics, healing_state, opt_state):
     """
-    Determine the agent's operating mode.
+    # Determine the agent's operating mode.
     """
 
     # Critical conditions → HALT

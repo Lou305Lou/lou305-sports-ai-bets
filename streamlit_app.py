@@ -21781,7 +21781,8 @@ import datetime
 def _default_notification_channels():
     """
     Default notification channels.
-    These are abstracted — actual delivery is handled externally.
+    These are abstracted - actual delivery is handled externally.
+
     """
 
     return {

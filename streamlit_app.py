@@ -21459,7 +21459,6 @@ def _collect_memory_snapshot():
     """
     Collect a full snapshot of the V37 system state.
     """
-
     return {
         "timestamp": datetime.datetime.utcnow().isoformat(),
         "master": st.session_state.get("v37_master_export"),
@@ -21478,7 +21477,6 @@ def _append_to_memory(snapshot):
     Append snapshot to memory buffer.
     Maintain a rolling window of the last 500 entries.
     """
-
     if "v37_memory_buffer" not in st.session_state:
         st.session_state["v37_memory_buffer"] = []
 
@@ -21502,7 +21500,6 @@ def _compute_memory_stats(buffer):
     - safe mode frequency
     - autonomous mode distribution
     """
-
     if len(buffer) == 0:
         return {}
 
@@ -21517,7 +21514,6 @@ def _compute_memory_stats(buffer):
         master_scores.append(snap["master"].get("v37_master_score", 0))
         health_scores.append(snap["monitor"].get("system_health_score", 0))
         meta_conf.append(snap["meta"].get("meta_confidence", 0))
-
         alert_counts.append(len(snap["alerts"].get("alerts", [])))
 
         if snap["safe"].get("safe_mode_active"):
@@ -21541,7 +21537,6 @@ def render_v37_memory_engine():
     """
     Full UI for the V37 Memory Engine.
     """
-
     st.title("🧠 V37 Memory Engine")
     st.caption("Long-horizon memory system for storing and analyzing historical V37 states.")
 
@@ -21572,6 +21567,8 @@ def render_v37_memory_engine():
     st.json(st.session_state["v37_memory_export"])
 
     st.success("V37 Memory Engine complete.")
+
+
 # ------------- CHUNK 235: V37 MEMORY VISUALIZER (HISTORICAL CHARTS + TRENDS) -------------
 
 import pandas as pd
@@ -21581,7 +21578,6 @@ def _memory_to_dataframe(buffer):
     """
     Convert memory buffer into a pandas DataFrame for charting.
     """
-
     rows = []
     for snap in buffer:
         rows.append({
@@ -21610,7 +21606,6 @@ def render_v37_memory_visualizer():
     - Safe mode timeline
     - Autonomous mode distribution
     """
-
     st.title("📊 V37 Memory Visualizer")
     st.caption("Historical charts and long-horizon trend analysis for V37.")
 
@@ -21621,6 +21616,7 @@ def render_v37_memory_visualizer():
         return
 
     df = _memory_to_dataframe(buffer)
+
 
     # --- MASTER SCORE TREND ---
     st.subheader("🏆 Master Score Trend")

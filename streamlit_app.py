@@ -21659,6 +21659,7 @@ def render_v37_memory_visualizer():
 
     st.success("V37 Memory Visualizer complete.")
 
+
 # ------------- CHUNK 236: V37 MEMORY INSIGHTS ENGINE (AI-GENERATED HISTORICAL INSIGHTS) -------------
 
 def _generate_memory_insights(stats):
